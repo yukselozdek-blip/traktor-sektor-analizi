@@ -93,6 +93,7 @@ function navigateTo(page) {
         'hp-top-il-cat': ['Top 10 HP&İl Seg.', 'HP Segmentlerinde En Çok Satıldığı İller (Bahçe/Tarla)'],
         'obt-hp': ['OBT HP', 'Bahçe/Tarla HP Segment Analizi'],
         'brand-hp': ['Marka HP Detay', 'Marka Bazlı HP Segment Analizi'],
+        'hp-brand-matrix': ['HP Marka Matris', 'HP Segment Bazlı Marka Dağılımı'],
         'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
@@ -123,6 +124,7 @@ function navigateTo(page) {
         'hp-top-il-cat': loadHpTopIlCatPage,
         'obt-hp': loadObtHpPage,
         'brand-hp': loadBrandHpPage,
+        'hp-brand-matrix': loadHpBrandMatrixPage,
         'prov-top-brand': loadProvTopBrandPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
@@ -818,6 +820,109 @@ async function loadBrandHpPage() {
                         <tbody>${rows}</tbody>
                     </table>
                 </div>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// HP BRAND MATRIX PAGE
+// ============================================
+async function loadHpBrandMatrixPage() {
+    try {
+        const data = await API.getHpBrandMatrix();
+        if (!data) return;
+
+        const { years, max_year, max_month, prev_year, segments, total_market } = data;
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+        function cell(val, total) {
+            const pct = total > 0 ? (val * 100 / total).toFixed(1) : '0.0';
+            if (val === 0) return `<td class="hbm-cell-empty"></td>`;
+            return `<td><div class="obt-cell"><span class="obt-adet">${val.toLocaleString('tr-TR')}</span><span class="obt-pct">${pct}%</span></div></td>`;
+        }
+
+        let sectionsHtml = '';
+
+        segments.forEach(seg => {
+            const { hp, total: segTotal, brands } = seg;
+
+            // Header row
+            let header = `<th class="hbm-label-th">${hp} HP</th>`;
+            years.forEach(y => { header += `<th>${y}</th>`; });
+            for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
+            header += `<th>${prev_year} İLK ${max_month} AY</th>`;
+            header += `<th>${max_year} İLK ${max_month} AY</th>`;
+
+            // Brand rows
+            let rows = '';
+            brands.forEach(brand => {
+                // Skip brands with no sales at all in this segment
+                const hasAnySales = Object.values(brand.yearly).some(v => v > 0) || brand.prev_partial > 0 || brand.curr_partial > 0;
+                if (!hasAnySales) return;
+
+                let row = `<td class="hbm-brand-label">${brand.name}</td>`;
+                years.forEach(y => { row += cell(brand.yearly[y] || 0, segTotal.yearly[y] || 0); });
+                for (let m = 1; m <= max_month; m++) { row += cell(brand.months[m] || 0, segTotal.months[m] || 0); }
+                row += cell(brand.prev_partial, segTotal.prev_partial);
+                row += cell(brand.curr_partial, segTotal.curr_partial);
+                rows += `<tr class="hbm-brand-row">${row}</tr>`;
+            });
+
+            // TOPLAM row
+            let totalRow = `<td class="hbm-total-label">TOPLAM</td>`;
+            years.forEach(y => {
+                const v = segTotal.yearly[y] || 0;
+                totalRow += `<td class="hbm-total-val">${v.toLocaleString('tr-TR')}</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                const v = segTotal.months[m] || 0;
+                totalRow += `<td class="hbm-total-val">${v.toLocaleString('tr-TR')}</td>`;
+            }
+            totalRow += `<td class="hbm-total-val">${segTotal.prev_partial.toLocaleString('tr-TR')}</td>`;
+            totalRow += `<td class="hbm-total-val">${segTotal.curr_partial.toLocaleString('tr-TR')}</td>`;
+
+            // TOPLAM PAZAR İÇİNDE % row
+            let mktRow = `<td class="hbm-mkt-label">PAZAR İÇİNDE %</td>`;
+            years.forEach(y => {
+                const pct = (total_market.yearly[y] || 0) > 0 ? ((segTotal.yearly[y] || 0) / total_market.yearly[y] * 100).toFixed(1) : '0.0';
+                mktRow += `<td class="hbm-mkt-pct">${pct}%</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                const pct = (total_market.months[m] || 0) > 0 ? ((segTotal.months[m] || 0) / total_market.months[m] * 100).toFixed(1) : '0.0';
+                mktRow += `<td class="hbm-mkt-pct">${pct}%</td>`;
+            }
+            const prevMktPct = total_market.prev_partial > 0 ? (segTotal.prev_partial / total_market.prev_partial * 100).toFixed(1) : '0.0';
+            const currMktPct = total_market.curr_partial > 0 ? (segTotal.curr_partial / total_market.curr_partial * 100).toFixed(1) : '0.0';
+            mktRow += `<td class="hbm-mkt-pct">${prevMktPct}%</td>`;
+            mktRow += `<td class="hbm-mkt-pct">${currMktPct}%</td>`;
+
+            sectionsHtml += `
+                <div class="chart-card hbm-section">
+                    <table class="hbm-table">
+                        <thead><tr>${header}</tr></thead>
+                        <tbody>
+                            ${rows}
+                            <tr class="hbm-total-row">${totalRow}</tr>
+                            <tr class="hbm-mkt-row">${mktRow}</tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="bs-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>HP Segment - Marka Dağılımı</h2>
+                        <p>${years[0]} - ${max_year} · İlk ${max_month} ay · Adet + Pazar Payı</p>
+                    </div>
+                </div>
+                ${sectionsHtml}
             </div>
         `;
 

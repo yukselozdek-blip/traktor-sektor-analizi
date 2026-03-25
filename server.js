@@ -602,6 +602,84 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
     }
 });
 
+// HP Brand Matrix - HP segment bazlı tüm markalar (adet + %)
+app.get('/api/sales/hp-brand-matrix', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
+
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+
+        const allData = await pool.query(`
+            SELECT s.hp_range, b.name as brand_name, s.year, s.month, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.hp_range IS NOT NULL
+            GROUP BY s.hp_range, b.name, s.year, s.month
+        `);
+
+        const totalMarketData = await pool.query(`
+            SELECT year, month, SUM(quantity) as total
+            FROM sales_data WHERE hp_range IS NOT NULL
+            GROUP BY year, month
+        `);
+
+        // Organize: hp -> brand -> year_month -> total
+        const raw = {};
+        allData.rows.forEach(r => {
+            if (!raw[r.hp_range]) raw[r.hp_range] = {};
+            if (!raw[r.hp_range][r.brand_name]) raw[r.hp_range][r.brand_name] = {};
+            raw[r.hp_range][r.brand_name][`${r.year}_${r.month}`] = (raw[r.hp_range][r.brand_name][`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+        });
+
+        const totalMarketRaw = {};
+        totalMarketData.rows.forEach(r => {
+            totalMarketRaw[`${r.year}_${r.month}`] = (totalMarketRaw[`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+        });
+
+        function buildData(src) {
+            const d = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            years.forEach(y => { d.yearly[y] = 0; for (let m = 1; m <= 12; m++) d.yearly[y] += (src[`${y}_${m}`] || 0); });
+            for (let m = 1; m <= maxMonth; m++) {
+                d.months[m] = src[`${maxYear}_${m}`] || 0;
+                d.prev_partial += (src[`${prevYear}_${m}`] || 0);
+                d.curr_partial += (src[`${maxYear}_${m}`] || 0);
+            }
+            return d;
+        }
+
+        const totalMarket = buildData(totalMarketRaw);
+
+        const segments = hpOrder.map(hp => {
+            const hpBrands = raw[hp] || {};
+            const brands = [];
+            const segTotalRaw = {};
+
+            Object.entries(hpBrands).forEach(([brandName, brandRaw]) => {
+                const bd = buildData(brandRaw);
+                brands.push({ name: brandName, ...bd });
+                // Accumulate segment total
+                Object.entries(brandRaw).forEach(([k, v]) => { segTotalRaw[k] = (segTotalRaw[k] || 0) + v; });
+            });
+
+            const segTotal = buildData(segTotalRaw);
+            brands.sort((a, b) => b.curr_partial - a.curr_partial || b.prev_partial - a.prev_partial);
+
+            return { hp, total: segTotal, brands };
+        });
+
+        res.json({ years, max_year: maxYear, max_month: maxMonth, prev_year: prevYear, segments, total_market: totalMarket });
+    } catch (err) {
+        console.error('HP Brand matrix error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // Brand HP Detail - Marka bazlı HP segment analizi
 app.get('/api/sales/brand-hp-detail', authMiddleware, async (req, res) => {
     try {
