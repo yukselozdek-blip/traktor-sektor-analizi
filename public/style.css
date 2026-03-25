@@ -232,8 +232,17 @@ body {
 
 /* Dropdown option styling for dark theme */
 select option {
-    background: #1e293b;
-    color: #f1f5f9;
+    background: #1e293b !important;
+    color: #f1f5f9 !important;
+    padding: 8px 12px;
+}
+select option:hover,
+select option:checked {
+    background: #334155 !important;
+    color: #ffffff !important;
+}
+select {
+    color-scheme: dark;
 }
 
 .btn-icon {

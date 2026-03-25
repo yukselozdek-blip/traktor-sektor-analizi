@@ -224,7 +224,7 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
             FROM sales_data s
             WHERE s.year >= $2 AND s.year <= $3
             GROUP BY s.year ORDER BY s.year
-        `, [userBrandId || 0, maxYear - 11, maxYear - 2]);
+        `, [userBrandId || 0, maxYear - 11, maxYear - 1]);
 
         // 3. Son 2 yılın karşılaştırması (aynı ay aralığı: 1..maxMonth)
         // Eğer maxYear=2025, maxMonth=5 ise: 2024 ilk 5 ay vs 2025 ilk 5 ay

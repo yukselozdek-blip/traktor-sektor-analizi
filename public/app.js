@@ -134,13 +134,16 @@ function refreshData() {
 // ============================================
 async function loadHistoricalPage() {
     try {
-        const brandId = currentUser?.brand_id;
+        // Admin ise seçilen markayı kullan, değilse kendi markası
+        const brandId = historicalSelectedBrandId || currentUser?.brand_id;
         const historical = await API.getSalesHistorical(brandId);
         const { data, max_year, max_month, compare_months, pct_diff_market, pct_diff_brand } = historical;
 
         const fullYears = data.filter(d => !d.is_partial);
         const partials = data.filter(d => d.is_partial).sort((a, b) => a.year - b.year);
-        const brandName = currentUser?.brand?.name || 'Seçili Marka';
+        // Marka adını allBrands listesinden bul
+        const selectedBrand = allBrands.find(b => b.id === brandId);
+        const brandName = selectedBrand?.name || currentUser?.brand?.name || 'Seçili Marka';
         const brandColor = getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim();
 
         // Tüm labels: tam yıllar + kısmi yıllar
@@ -366,12 +369,13 @@ async function loadHistoricalPage() {
     }
 }
 
+let historicalSelectedBrandId = null;
+
 async function reloadHistorical() {
-    const brandId = document.getElementById('histBrandFilter')?.value;
-    // Re-fetch with new brand
-    const historical = await API.get(`/api/sales/historical?brand_id=${brandId}`);
-    // Reload page with new data
+    historicalSelectedBrandId = parseInt(document.getElementById('histBrandFilter')?.value) || null;
     API.clearCache();
+    Object.values(charts).forEach(c => c.destroy?.());
+    charts = {};
     loadHistoricalPage();
 }
 
