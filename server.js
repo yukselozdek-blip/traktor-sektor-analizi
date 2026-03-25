@@ -657,6 +657,83 @@ app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // ============================================
+// MANUAL SEED ENDPOINT (admin only)
+// ============================================
+app.post('/api/admin/seed-sales', async (req, res) => {
+    try {
+        const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
+        if (parseInt(salesCheck.rows[0].count) > 0) {
+            return res.json({ message: `Satış verisi zaten mevcut: ${salesCheck.rows[0].count} kayıt` });
+        }
+
+        const brandRows = await pool.query('SELECT id, slug FROM brands ORDER BY id');
+        const provRows = await pool.query('SELECT id FROM provinces ORDER BY id');
+        const categories = ['tarla', 'bahce'];
+        const cabinTypes = ['kabinli', 'rollbar'];
+        const driveTypes = ['2WD', '4WD'];
+        const hpRanges = ['0-50', '51-75', '76-100', '101-150', '150+'];
+        const gearConfigs = ['8+2', '8+8', '12+12', '16+16', '32+32', 'CVT'];
+        const brandWeights = {
+            'new-holland': 2.5, 'massey-ferguson': 2.0, 'john-deere': 1.8, 'case-ih': 1.5,
+            'tumosan': 1.4, 'hattat': 1.3, 'erkunt': 1.2, 'basak': 1.1,
+            'deutz-fahr': 1.0, 'kubota': 0.9, 'landini': 0.8, 'same': 0.7,
+            'fendt': 0.6, 'claas': 0.5, 'valtra': 0.4, 'solis': 0.5,
+            'antonio-carraro': 0.3, 'mccormick': 0.3, 'fiat': 0.2, 'yanmar': 0.2,
+            'ferrari-tractors': 0.15, 'karatas': 0.15, 'kioti': 0.2, 'tafe': 0.15
+        };
+
+        let salesCount = 0;
+        for (const brand of brandRows.rows) {
+            const weight = brandWeights[brand.slug] || 0.5;
+            const numProvinces = Math.min(81, Math.floor(20 + weight * 25));
+            const shuffled = [...provRows.rows].sort(() => Math.random() - 0.5);
+            const selectedProvs = shuffled.slice(0, numProvinces);
+            let values = []; let placeholders = []; let paramIdx = 1;
+
+            for (const prov of selectedProvs) {
+                for (let year = 2020; year <= 2025; year++) {
+                    for (let month = 1; month <= 12; month++) {
+                        if (year === 2025 && month > 3) continue;
+                        const cat = categories[Math.floor(Math.random() * categories.length)];
+                        const cabin = cabinTypes[Math.floor(Math.random() * cabinTypes.length)];
+                        const drive = driveTypes[Math.floor(Math.random() * driveTypes.length)];
+                        const hp = hpRanges[Math.floor(Math.random() * hpRanges.length)];
+                        const gear = gearConfigs[Math.floor(Math.random() * gearConfigs.length)];
+                        const seasonFactor = [0.6,0.7,1.0,1.2,1.1,0.9,0.8,0.7,0.9,1.0,0.8,0.5][month-1];
+                        const qty = Math.max(1, Math.floor((Math.random()*10+2)*weight*seasonFactor));
+                        placeholders.push(`($${paramIdx},$${paramIdx+1},$${paramIdx+2},$${paramIdx+3},$${paramIdx+4},$${paramIdx+5},$${paramIdx+6},$${paramIdx+7},$${paramIdx+8},$${paramIdx+9})`);
+                        values.push(brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear);
+                        paramIdx += 10; salesCount++;
+
+                        if (placeholders.length >= 200) {
+                            await pool.query(`INSERT INTO sales_data (brand_id,province_id,year,month,quantity,category,cabin_type,drive_type,hp_range,gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
+                            placeholders = []; values = []; paramIdx = 1;
+                        }
+                    }
+                }
+            }
+            if (placeholders.length > 0) {
+                await pool.query(`INSERT INTO sales_data (brand_id,province_id,year,month,quantity,category,cabin_type,drive_type,hp_range,gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
+            }
+            console.log(`  ✅ ${brand.slug} seed tamamlandı`);
+        }
+
+        // Demo kullanıcılar
+        const bcryptLib = require('bcryptjs');
+        const demoHash = await bcryptLib.hash('demo2024', 10);
+        for (const brand of brandRows.rows) {
+            await pool.query(`INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name) VALUES ($1,$2,$3,'brand_user',$4,$5) ON CONFLICT DO NOTHING`,
+                [`demo@${brand.slug}.com`, demoHash, `${brand.slug.toUpperCase()} Demo`, brand.id, `${brand.slug.toUpperCase()} Bayii`]);
+        }
+
+        res.json({ message: `✅ ${salesCount} satış kaydı ve ${brandRows.rows.length} demo kullanıcı oluşturuldu` });
+    } catch (err) {
+        console.error('Seed error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================
 // DB INIT
 // ============================================
 async function initDB() {
@@ -668,14 +745,10 @@ async function initDB() {
             console.log('✅ Veritabanı şeması yüklendi');
         }
 
-        // Check if data exists, seed if not
+        // Temel verileri seed et (markalar, iller, planlar, admin)
         const brandCheck = await pool.query('SELECT COUNT(*) FROM brands');
-        const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
-        const needsFullSeed = parseInt(brandCheck.rows[0].count) === 0;
-        const needsSalesData = parseInt(salesCheck.rows[0].count) === 0;
-
-        if (needsFullSeed || needsSalesData) {
-            console.log('🌱 İlk kurulum - seed çalıştırılıyor...');
+        if (parseInt(brandCheck.rows[0].count) === 0) {
+            console.log('🌱 Temel veriler seed ediliyor...');
             const { brands, provinces, subscriptionPlans } = require('./database/seed-data');
             const bcryptLib = require('bcryptjs');
 
@@ -691,81 +764,16 @@ async function initDB() {
                 await pool.query(`INSERT INTO subscription_plans (name, slug, price_monthly, price_yearly, features, max_users, has_ai_insights, has_competitor_analysis, has_weather_data, has_export) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
                     [plan.name, plan.slug, plan.price_monthly, plan.price_yearly, plan.features, plan.max_users, plan.has_ai_insights, plan.has_competitor_analysis, plan.has_weather_data, plan.has_export]);
             }
-            // Admin kullanıcı
             const hash = await bcryptLib.hash('admin2024', 10);
             await pool.query(`INSERT INTO users (email, password_hash, full_name, role) VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin') ON CONFLICT DO NOTHING`, [hash]);
+            console.log('✅ Temel veriler seed edildi');
+        }
 
-            // Demo kullanıcılar (her marka için)
-            console.log('🌱 Demo kullanıcılar oluşturuluyor...');
-            const demoHash = await bcryptLib.hash('demo2024', 10);
-            const brandRows = await pool.query('SELECT id, name, slug FROM brands ORDER BY id');
-            for (const brand of brandRows.rows) {
-                await pool.query(`INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name) VALUES ($1, $2, $3, 'brand_user', $4, $5) ON CONFLICT DO NOTHING`,
-                    [`demo@${brand.slug}.com`, demoHash, `${brand.name} Demo Kullanıcı`, brand.id, `${brand.name} Yetkili Bayii`]);
-            }
-
-            // Satış verileri oluştur (2020-2025)
-            console.log('🌱 Satış verileri oluşturuluyor...');
-            const provRows = await pool.query('SELECT id FROM provinces ORDER BY id');
-            const categories = ['tarla', 'bahce'];
-            const cabinTypes = ['kabinli', 'rollbar'];
-            const driveTypes = ['2WD', '4WD'];
-            const hpRanges = ['0-50', '51-75', '76-100', '101-150', '150+'];
-            const gearConfigs = ['8+2', '8+8', '12+12', '16+16', '32+32', 'CVT'];
-
-            // Marka ağırlıkları (gerçekçi pazar payı simülasyonu)
-            const brandWeights = {
-                'new-holland': 2.5, 'massey-ferguson': 2.0, 'john-deere': 1.8, 'case-ih': 1.5,
-                'tumosan': 1.4, 'hattat': 1.3, 'erkunt': 1.2, 'basak': 1.1,
-                'deutz-fahr': 1.0, 'kubota': 0.9, 'landini': 0.8, 'same': 0.7,
-                'fendt': 0.6, 'claas': 0.5, 'valtra': 0.4, 'solis': 0.5,
-                'antonio-carraro': 0.3, 'mccormick': 0.3, 'fiat': 0.2, 'yanmar': 0.2,
-                'ferrari-tractors': 0.15, 'karatas': 0.15, 'kioti': 0.2, 'tafe': 0.15
-            };
-
-            let salesCount = 0;
-            const batchSize = 500;
-            let values = [];
-            let placeholders = [];
-            let paramIdx = 1;
-
-            for (const brand of brandRows.rows) {
-                const weight = brandWeights[brand.slug] || 0.5;
-                const numProvinces = Math.min(81, Math.floor(20 + weight * 25));
-                const shuffled = [...provRows.rows].sort(() => Math.random() - 0.5);
-                const selectedProvs = shuffled.slice(0, numProvinces);
-
-                for (const prov of selectedProvs) {
-                    for (let year = 2020; year <= 2025; year++) {
-                        for (let month = 1; month <= 12; month++) {
-                            if (year === 2025 && month > 3) continue;
-                            const cat = categories[Math.floor(Math.random() * categories.length)];
-                            const cabin = cabinTypes[Math.floor(Math.random() * cabinTypes.length)];
-                            const drive = driveTypes[Math.floor(Math.random() * driveTypes.length)];
-                            const hp = hpRanges[Math.floor(Math.random() * hpRanges.length)];
-                            const gear = gearConfigs[Math.floor(Math.random() * gearConfigs.length)];
-                            const seasonFactor = [0.6, 0.7, 1.0, 1.2, 1.1, 0.9, 0.8, 0.7, 0.9, 1.0, 0.8, 0.5][month - 1];
-                            const qty = Math.max(1, Math.floor((Math.random() * 10 + 2) * weight * seasonFactor));
-
-                            placeholders.push(`($${paramIdx},$${paramIdx+1},$${paramIdx+2},$${paramIdx+3},$${paramIdx+4},$${paramIdx+5},$${paramIdx+6},$${paramIdx+7},$${paramIdx+8},$${paramIdx+9})`);
-                            values.push(brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear);
-                            paramIdx += 10;
-                            salesCount++;
-
-                            if (placeholders.length >= batchSize) {
-                                await pool.query(`INSERT INTO sales_data (brand_id, province_id, year, month, quantity, category, cabin_type, drive_type, hp_range, gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
-                                placeholders = []; values = []; paramIdx = 1;
-                            }
-                        }
-                    }
-                }
-            }
-            // Flush remaining
-            if (placeholders.length > 0) {
-                await pool.query(`INSERT INTO sales_data (brand_id, province_id, year, month, quantity, category, cabin_type, drive_type, hp_range, gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
-            }
-            console.log(`✅ ${salesCount} satış kaydı oluşturuldu`);
-            console.log('✅ Seed tamamlandı');
+        // Satış verisi yoksa bilgi ver
+        const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
+        console.log(`📊 Satış verisi: ${salesCheck.rows[0].count} kayıt`);
+        if (parseInt(salesCheck.rows[0].count) === 0) {
+            console.log('⚠️ Satış verisi yok! POST /api/admin/seed-sales endpoint\'ini çağırın');
         }
     } catch (err) {
         console.error('DB init hatası:', err.message);
