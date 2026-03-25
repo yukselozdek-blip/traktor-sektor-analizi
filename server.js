@@ -491,6 +491,56 @@ app.get('/api/sales/hp-top-provinces', authMiddleware, async (req, res) => {
     }
 });
 
+// HP Segment Top 10 Marka/Model (Bahçe/Tarla ayrımı)
+app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+        const categories = ['bahce', 'tarla'];
+
+        const result = await pool.query(`
+            SELECT s.hp_range, s.category, b.name as brand_name, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1 AND s.month <= $2 AND s.hp_range IS NOT NULL
+            GROUP BY s.hp_range, s.category, b.name
+            ORDER BY s.hp_range, s.category, total DESC
+        `, [maxYear, maxMonth]);
+
+        // Grupla: hp_range → category → [{brand, sales}]
+        const data = {};
+        result.rows.forEach(r => {
+            const key = `${r.hp_range}_${r.category}`;
+            if (!data[key]) data[key] = [];
+            data[key].push({ brand: r.brand_name, sales: parseInt(r.total) });
+        });
+
+        // Her kategori + HP segment için top 10
+        const catResults = {};
+        categories.forEach(cat => {
+            catResults[cat] = hpOrder.map(hp => {
+                const key = `${hp}_${cat}`;
+                const all = data[key] || [];
+                const segTotal = all.reduce((s, b) => s + b.sales, 0);
+                const top10 = all.slice(0, 10).map(b => ({
+                    brand: b.brand,
+                    sales: b.sales,
+                    share: segTotal > 0 ? parseFloat((b.sales * 100 / segTotal).toFixed(1)) : 0
+                }));
+                return { hp_range: hp, total: segTotal, items: top10 };
+            });
+        });
+
+        res.json({ year: maxYear, max_month: maxMonth, categories: catResults });
+    } catch (err) {
+        console.error('HP top models error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // HP Segment Tablosu - HP aralıklarına göre yıllık + aylık + karşılaştırma
 app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
     try {

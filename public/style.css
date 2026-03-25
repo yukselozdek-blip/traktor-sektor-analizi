@@ -1006,6 +1006,49 @@ select {
 @media (max-width: 1200px) { .ht-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) { .ht-grid { grid-template-columns: 1fr; } }
 
+/* HP & Model - Kategori satır düzeni */
+.htm-cat-section {
+    display: flex;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg-card);
+}
+.htm-cat-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    padding: 16px 10px;
+    font-weight: 800;
+    font-size: 16px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    letter-spacing: 2px;
+}
+.htm-cat-content {
+    flex: 1;
+    padding: 12px;
+    overflow-x: auto;
+}
+.htm-grid {
+    display: flex !important;
+    gap: 12px;
+    flex-wrap: nowrap;
+}
+.htm-card {
+    min-width: 220px;
+    flex-shrink: 0;
+}
+@media (max-width: 768px) {
+    .htm-cat-section { flex-direction: column; }
+    .htm-cat-label { writing-mode: horizontal-tb; transform: none; padding: 10px; min-width: auto; }
+    .htm-grid { flex-wrap: wrap; }
+}
+
 /* ============================================
    HARİTA 1 - TAM EKRAN
    ============================================ */
