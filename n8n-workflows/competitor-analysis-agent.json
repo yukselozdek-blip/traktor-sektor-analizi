@@ -1,0 +1,82 @@
+{
+  "name": "Rakip Analiz AI Ajanı",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "days", "daysInterval": 1 }]
+        }
+      },
+      "name": "Günlük Tetikleyici",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.id, b.name, b.slug, SUM(s.quantity) as total_sales, ROUND(SUM(s.quantity) * 100.0 / NULLIF((SELECT SUM(quantity) FROM sales_data WHERE year = EXTRACT(YEAR FROM CURRENT_DATE)), 0), 2) as market_share FROM brands b JOIN sales_data s ON b.id = s.brand_id WHERE s.year = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY b.id ORDER BY total_sales DESC",
+        "additionalFields": {}
+      },
+      "name": "Get Brand Sales",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.name as brand_name, s.category, s.cabin_type, s.drive_type, s.hp_range, s.gear_config, SUM(s.quantity) as total FROM sales_data s JOIN brands b ON s.brand_id = b.id WHERE s.year = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY b.name, s.category, s.cabin_type, s.drive_type, s.hp_range, s.gear_config",
+        "additionalFields": {}
+      },
+      "name": "Get Segment Data",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5-20241022",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Sen Türkiye traktör sektörünün uzman analistisin. Satış verileri, pazar payı, segment bazlı analizler yaparak markalara stratejik öneriler sunuyorsun. Kabinli/rollbar, 2WD/4WD, tarla/bahçe, beygir gücü aralıkları, şanzıman tipleri (8+2, 8+8, 12+12, 16+16, 32+32, CVT) gibi boyutlarda derinlemesine analiz yap."
+            },
+            {
+              "role": "user",
+              "content": "Aşağıdaki marka satış verilerini analiz et ve her marka için güçlü/zayıf yönleri, fırsatları ve tehditleri belirle:\n\nMarka Satışları: {{ JSON.stringify($('Get Brand Sales').all()) }}\n\nSegment Verileri: {{ JSON.stringify($('Get Segment Data').all()) }}\n\nHer marka için 2-3 cümlelik analiz ve öneri ver."
+            }
+          ]
+        }
+      },
+      "name": "AI Competitor Analysis",
+      "type": "n8n-nodes-base.anthropic",
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://app:3000/api/insights",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "insight_type", "value": "analysis" },
+            { "name": "title", "value": "Günlük Rakip Analizi Raporu" },
+            { "name": "content", "value": "={{ $json.message.content }}" },
+            { "name": "confidence_score", "value": "0.80" }
+          ]
+        }
+      },
+      "name": "Save Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [920, 400]
+    }
+  ],
+  "connections": {
+    "Günlük Tetikleyici": { "main": [
+      [ { "node": "Get Brand Sales", "type": "main", "index": 0 } ],
+      [ { "node": "Get Segment Data", "type": "main", "index": 0 } ]
+    ]},
+    "Get Brand Sales": { "main": [[ { "node": "AI Competitor Analysis", "type": "main", "index": 0 } ]] },
+    "Get Segment Data": { "main": [[ { "node": "AI Competitor Analysis", "type": "main", "index": 0 } ]] },
+    "AI Competitor Analysis": { "main": [[ { "node": "Save Analysis", "type": "main", "index": 0 } ]] }
+  }
+}

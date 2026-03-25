@@ -1,0 +1,82 @@
+{
+  "name": "Satış Tahmin AI Ajanı",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "days", "daysInterval": 7 }]
+        }
+      },
+      "name": "Haftalık Tetikleyici",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.name, s.year, s.month, SUM(s.quantity) as total, s.hp_range, s.category, s.cabin_type FROM sales_data s JOIN brands b ON s.brand_id = b.id WHERE s.year >= EXTRACT(YEAR FROM CURRENT_DATE) - 3 GROUP BY b.name, s.year, s.month, s.hp_range, s.category, s.cabin_type ORDER BY b.name, s.year, s.month",
+        "additionalFields": {}
+      },
+      "name": "Get Historical Sales",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.name as province_name, p.region, cd.crop_name, cd.cultivation_area_hectare, sd.soil_type FROM provinces p LEFT JOIN crop_data cd ON p.id = cd.province_id LEFT JOIN soil_data sd ON p.id = sd.province_id WHERE cd.year = EXTRACT(YEAR FROM CURRENT_DATE) - 1 LIMIT 500",
+        "additionalFields": {}
+      },
+      "name": "Get Agricultural Context",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5-20241022",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Sen bir tarım ekonomisi ve traktör pazarı uzmanısın. Geçmiş satış verileri, tarımsal veriler ve mevsimsel trendleri analiz ederek gelecek dönem satış tahminleri yapıyorsun. Her il için toprak yapısına ve yetiştirilen ekinlere göre hangi tip traktörlerin (beygir gücü, çekiş, şanzıman) daha uygun olduğunu öneriyorsun."
+            },
+            {
+              "role": "user",
+              "content": "Geçmiş 3 yıllık satış verilerini ve tarımsal bağlamı kullanarak önümüzdeki çeyrek için marka bazlı satış tahmini ve il bazlı traktör tipi önerisi yap:\n\nSatış Geçmişi: {{ JSON.stringify($('Get Historical Sales').all().slice(0, 200)) }}\n\nTarımsal Bağlam: {{ JSON.stringify($('Get Agricultural Context').all().slice(0, 100)) }}\n\nJSON formatında markalara ve illere özel tahminler ver."
+            }
+          ]
+        }
+      },
+      "name": "AI Forecast",
+      "type": "n8n-nodes-base.anthropic",
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://app:3000/api/insights",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "insight_type", "value": "forecast" },
+            { "name": "title", "value": "Haftalık Satış Tahmin Raporu" },
+            { "name": "content", "value": "={{ $json.message.content }}" },
+            { "name": "confidence_score", "value": "0.75" }
+          ]
+        }
+      },
+      "name": "Save Forecast",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [920, 400]
+    }
+  ],
+  "connections": {
+    "Haftalık Tetikleyici": { "main": [
+      [ { "node": "Get Historical Sales", "type": "main", "index": 0 } ],
+      [ { "node": "Get Agricultural Context", "type": "main", "index": 0 } ]
+    ]},
+    "Get Historical Sales": { "main": [[ { "node": "AI Forecast", "type": "main", "index": 0 } ]] },
+    "Get Agricultural Context": { "main": [[ { "node": "AI Forecast", "type": "main", "index": 0 } ]] },
+    "AI Forecast": { "main": [[ { "node": "Save Forecast", "type": "main", "index": 0 } ]] }
+  }
+}

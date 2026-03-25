@@ -1,0 +1,50 @@
+{
+  "name": "Hava Durumu Toplama & İklim Analizi",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 6 }]
+        }
+      },
+      "name": "6 Saatte Bir",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, latitude, longitude FROM provinces ORDER BY id",
+        "additionalFields": {}
+      },
+      "name": "Get Provinces",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.openweathermap.org/data/2.5/forecast?lat={{ $json.latitude }}&lon={{ $json.longitude }}&appid={{ $env.OPENWEATHERMAP_API_KEY }}&units=metric&lang=tr",
+        "options": {}
+      },
+      "name": "OpenWeatherMap API",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO weather_data (province_id, date, temp_min, temp_max, temp_avg, humidity_pct, rainfall_mm, weather_condition, is_forecast) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true) ON CONFLICT (province_id, date, is_forecast) DO UPDATE SET temp_min=$3, temp_max=$4, temp_avg=$5, humidity_pct=$6, rainfall_mm=$7, weather_condition=$8",
+        "additionalFields": {}
+      },
+      "name": "Save Weather",
+      "type": "n8n-nodes-base.postgres",
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "6 Saatte Bir": { "main": [[ { "node": "Get Provinces", "type": "main", "index": 0 } ]] },
+    "Get Provinces": { "main": [[ { "node": "OpenWeatherMap API", "type": "main", "index": 0 } ]] },
+    "OpenWeatherMap API": { "main": [[ { "node": "Save Weather", "type": "main", "index": 0 } ]] }
+  }
+}

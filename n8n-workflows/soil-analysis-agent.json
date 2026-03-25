@@ -1,0 +1,70 @@
+{
+  "name": "Toprak & Ekin Analiz AI Ajanı",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      },
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id, p.name, p.plate_code, p.region, p.soil_type, p.climate_zone, p.annual_rainfall_mm FROM provinces p ORDER BY p.id",
+        "additionalFields": {}
+      },
+      "name": "Get Provinces",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "1", "name": "PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5-20241022",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Sen bir tarım ve toprak uzmanısın. Türkiye'nin illerinin toprak yapısı, iklimi ve yetiştirilen ekinler hakkında detaylı bilgi sahibisin. Verilen il bilgisine göre toprak analizi yap ve traktör önerilerinde bulun."
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.name }} ili için toprak analizi yap. Bölge: {{ $json.region }}, İklim: {{ $json.climate_zone }}, Yağış: {{ $json.annual_rainfall_mm }}mm. Bu il için en uygun ekinleri, toprak tipini ve önerilen traktör özelliklerini (beygir gücü, çekiş tipi, şanzıman) JSON formatında ver."
+            }
+          ]
+        }
+      },
+      "name": "AI Soil Analysis",
+      "type": "n8n-nodes-base.anthropic",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://app:3000/api/insights",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "province_id", "value": "={{ $('Get Provinces').item.json.id }}" },
+            { "name": "insight_type", "value": "recommendation" },
+            { "name": "title", "value": "={{ $('Get Provinces').item.json.name }} - Toprak ve Ekin Analizi" },
+            { "name": "content", "value": "={{ $json.message.content }}" },
+            { "name": "confidence_score", "value": "0.85" }
+          ]
+        }
+      },
+      "name": "Save Insight",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": { "main": [[ { "node": "Get Provinces", "type": "main", "index": 0 } ]] },
+    "Get Provinces": { "main": [[ { "node": "AI Soil Analysis", "type": "main", "index": 0 } ]] },
+    "AI Soil Analysis": { "main": [[ { "node": "Save Insight", "type": "main", "index": 0 } ]] }
+  }
+}
