@@ -286,6 +286,124 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
     }
 });
 
+// Distribütör Özet Tablosu - Marka grupları
+app.get('/api/sales/distributor-summary', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+
+        // Distribütör grup tanımları (slug → grup adı)
+        const distributorGroups = {
+            'TÜRK TRAKTÖR\n(CNH)': ['new-holland', 'case-ih', 'fiat'],
+            'TÜMOSAN': ['tumosan'],
+            'MASSEY FERGUSON': ['massey-ferguson'],
+            'MAHINDRA GRUBU\n(ERKUNT&MAHINDRA)': ['erkunt'],
+            'SAME DEUTZ - FAHR': ['deutz-fahr', 'same'],
+            'HATTAT GRUBU\n(HATTAT&VALTRA)': ['hattat', 'valtra'],
+            'BAŞAK': ['basak'],
+            'KUBOTA': ['kubota'],
+            'JOHN DEERE': ['john-deere'],
+            'SOLIS': ['solis'],
+            'LANDINI': ['landini', 'mccormick'],
+            'ANTONIO CARRARO': ['antonio-carraro'],
+            'FENDT': ['fendt'],
+            'CLAAS': ['claas']
+        };
+
+        // Slug → brand_id mapping
+        const brandRows = await pool.query('SELECT id, slug FROM brands');
+        const slugToId = {};
+        brandRows.rows.forEach(r => { slugToId[r.slug] = r.id; });
+
+        // Tüm satış verisini çek
+        const allData = await pool.query(`
+            SELECT b.slug, s.year, s.month, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            GROUP BY b.slug, s.year, s.month ORDER BY b.slug, s.year, s.month
+        `);
+
+        // Slug bazlı veri
+        const slugData = {};
+        allData.rows.forEach(r => {
+            if (!slugData[r.slug]) slugData[r.slug] = {};
+            const key = `${r.year}_${r.month}`;
+            slugData[r.slug][key] = (slugData[r.slug][key] || 0) + parseInt(r.total);
+        });
+
+        // Grupları oluştur
+        const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
+        const groups = [];
+        const usedSlugs = new Set();
+
+        for (const [groupName, slugs] of Object.entries(distributorGroups)) {
+            const group = { name: groupName, yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            slugs.forEach(slug => {
+                usedSlugs.add(slug);
+                const sd = slugData[slug] || {};
+                // Yıllık toplamlar
+                years.forEach(y => {
+                    for (let m = 1; m <= 12; m++) {
+                        group.yearly[y] = (group.yearly[y] || 0) + (sd[`${y}_${m}`] || 0);
+                    }
+                });
+                // Son yıl aylık
+                for (let m = 1; m <= maxMonth; m++) {
+                    group.months[m] = (group.months[m] || 0) + (sd[`${maxYear}_${m}`] || 0);
+                }
+                // Partial
+                for (let m = 1; m <= maxMonth; m++) {
+                    group.prev_partial += (sd[`${prevYear}_${m}`] || 0);
+                    group.curr_partial += (sd[`${maxYear}_${m}`] || 0);
+                }
+            });
+            groups.push(group);
+        }
+
+        // Kalan markalar → UNKNOWN
+        const unknownGroup = { name: 'DİĞER', yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+        let hasUnknown = false;
+        for (const [slug, sd] of Object.entries(slugData)) {
+            if (usedSlugs.has(slug)) continue;
+            hasUnknown = true;
+            years.forEach(y => {
+                for (let m = 1; m <= 12; m++) {
+                    unknownGroup.yearly[y] = (unknownGroup.yearly[y] || 0) + (sd[`${y}_${m}`] || 0);
+                }
+            });
+            for (let m = 1; m <= maxMonth; m++) {
+                unknownGroup.months[m] = (unknownGroup.months[m] || 0) + (sd[`${maxYear}_${m}`] || 0);
+            }
+            for (let m = 1; m <= maxMonth; m++) {
+                unknownGroup.prev_partial += (sd[`${prevYear}_${m}`] || 0);
+                unknownGroup.curr_partial += (sd[`${maxYear}_${m}`] || 0);
+            }
+        }
+        if (hasUnknown) groups.push(unknownGroup);
+
+        // Sırala
+        groups.sort((a, b) => b.curr_partial - a.curr_partial);
+
+        // Toplam pazar
+        const totals = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+        groups.forEach(g => {
+            years.forEach(y => { totals.yearly[y] = (totals.yearly[y] || 0) + (g.yearly[y] || 0); });
+            for (let m = 1; m <= maxMonth; m++) { totals.months[m] = (totals.months[m] || 0) + (g.months[m] || 0); }
+            totals.prev_partial += g.prev_partial;
+            totals.curr_partial += g.curr_partial;
+        });
+
+        res.json({ min_year: minYear, max_year: maxYear, prev_year: prevYear, max_month: maxMonth, years, brands: groups, totals });
+    } catch (err) {
+        console.error('Distributor summary error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // Marka Özet Tablosu - Tüm markalar yıllık + aylık + karşılaştırma
 app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
     try {

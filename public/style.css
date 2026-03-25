@@ -941,3 +941,5 @@ select {
 }
 .bs-total-label { font-size: 13px !important; }
 .bs-total-val { color: #f1f5f9 !important; }
+.bs-main-name { font-weight: 700; }
+.bs-sub-name { font-size: 10px; color: #94a3b8; font-weight: 400; }

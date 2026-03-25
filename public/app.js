@@ -84,6 +84,7 @@ function navigateTo(page) {
         historical: ['Tarihsel Gelişim', 'Traktör Pazarı Yıllık Analiz'],
         'total-market': ['Toplam Pazar', 'Yıllık Aylık Karşılaştırma'],
         'brand-summary': ['Marka', 'Tüm Markalar Özet Tablosu'],
+        'distributor': ['Distribütör', 'Distribütör Bazlı Pazar Analizi'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
@@ -104,6 +105,7 @@ function navigateTo(page) {
         historical: loadHistoricalPage,
         'total-market': loadTotalMarketPage,
         'brand-summary': loadBrandSummaryPage,
+        'distributor': loadDistributorPage,
         map: loadMapPage,
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
@@ -461,6 +463,109 @@ async function loadBrandSummaryPage() {
                 <div class="tm-top-bar">
                     <div>
                         <h2>Marka Bazlı Pazar Analizi</h2>
+                        <p>${years[0]} - ${max_year} yılları arası · İlk ${max_month} ay karşılaştırması</p>
+                    </div>
+                </div>
+                <div class="chart-card" style="padding:16px; overflow-x:auto;">
+                    <table class="bs-table">
+                        <thead><tr>${header}</tr></thead>
+                        <tbody>${bodyRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// DİSTRİBÜTÖR PAGE
+// ============================================
+async function loadDistributorPage() {
+    try {
+        const summary = await API.getDistributorSummary();
+        if (!summary) return;
+
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const { years, brands, totals, max_month, max_year, prev_year } = summary;
+
+        // Header
+        let header = '<th>#</th><th>DİSTRİBÜTÖR</th><th></th>';
+        years.forEach(y => { header += `<th>${y}</th>`; });
+        for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
+        header += `<th>${prev_year} İLK ${max_month} AY</th>`;
+        header += `<th>${max_year} İLK ${max_month} AY</th>`;
+        header += '<th>% FARK</th>';
+
+        // Rows
+        let bodyRows = '';
+        brands.forEach((brand, idx) => {
+            const rank = idx + 1;
+            // İsim satırları (alt şirket bilgisi)
+            const nameParts = brand.name.split('\n');
+            const mainName = nameParts[0];
+            const subName = nameParts[1] || '';
+            const nameHtml = subName
+                ? `<span class="bs-main-name">${mainName}</span><br><span class="bs-sub-name">${subName}</span>`
+                : mainName;
+
+            // Adet row
+            let adetRow = `<td class="bs-rank" rowspan="2">${rank}</td>`;
+            adetRow += `<td class="bs-brand" rowspan="2">${nameHtml}</td>`;
+            adetRow += '<td class="bs-type">Adet</td>';
+            years.forEach(y => {
+                adetRow += `<td>${(brand.yearly[y] || 0).toLocaleString('tr-TR')}</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                adetRow += `<td>${(brand.months[m] || 0).toLocaleString('tr-TR')}</td>`;
+            }
+            adetRow += `<td class="bs-partial">${brand.prev_partial.toLocaleString('tr-TR')}</td>`;
+            adetRow += `<td class="bs-partial">${brand.curr_partial.toLocaleString('tr-TR')}</td>`;
+            const delta = brand.prev_partial > 0 ? ((brand.curr_partial - brand.prev_partial) * 100 / brand.prev_partial).toFixed(1) : '-';
+            const deltaClass = delta !== '-' && parseFloat(delta) >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+            adetRow += `<td class="bs-partial ${deltaClass}">${delta !== '-' ? '%' + delta : '-'}</td>`;
+
+            // % row
+            let pctRow = '<td class="bs-type">%</td>';
+            years.forEach(y => {
+                const share = totals.yearly[y] > 0 ? ((brand.yearly[y] || 0) * 100 / totals.yearly[y]).toFixed(1) : '0.0';
+                pctRow += `<td class="bs-pct">${share}%</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                const share = totals.months[m] > 0 ? ((brand.months[m] || 0) * 100 / totals.months[m]).toFixed(1) : '0.0';
+                pctRow += `<td class="bs-pct">${share}%</td>`;
+            }
+            const prevShare = totals.prev_partial > 0 ? (brand.prev_partial * 100 / totals.prev_partial).toFixed(1) : '0.0';
+            const currShare = totals.curr_partial > 0 ? (brand.curr_partial * 100 / totals.curr_partial).toFixed(1) : '0.0';
+            pctRow += `<td class="bs-partial bs-pct">${prevShare}%</td>`;
+            pctRow += `<td class="bs-partial bs-pct">${currShare}%</td>`;
+            pctRow += '<td></td>';
+
+            bodyRows += `<tr class="bs-row-adet">${adetRow}</tr><tr class="bs-row-pct">${pctRow}</tr>`;
+        });
+
+        // TOPLAM
+        let totalRow = '<td class="bs-rank"></td><td class="bs-brand bs-total-label">TOPLAM</td><td class="bs-type">Adet</td>';
+        years.forEach(y => {
+            totalRow += `<td class="bs-total-val">${(totals.yearly[y] || 0).toLocaleString('tr-TR')}</td>`;
+        });
+        for (let m = 1; m <= max_month; m++) {
+            totalRow += `<td class="bs-total-val">${(totals.months[m] || 0).toLocaleString('tr-TR')}</td>`;
+        }
+        totalRow += `<td class="bs-total-val bs-partial">${totals.prev_partial.toLocaleString('tr-TR')}</td>`;
+        totalRow += `<td class="bs-total-val bs-partial">${totals.curr_partial.toLocaleString('tr-TR')}</td>`;
+        const tDelta = totals.prev_partial > 0 ? ((totals.curr_partial - totals.prev_partial) * 100 / totals.prev_partial).toFixed(1) : '-';
+        const tDeltaClass = tDelta !== '-' && parseFloat(tDelta) >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+        totalRow += `<td class="bs-total-val bs-partial ${tDeltaClass}">${tDelta !== '-' ? '%' + tDelta : '-'}</td>`;
+        bodyRows += `<tr class="bs-row-total">${totalRow}</tr>`;
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="bs-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Distribütör Bazlı Pazar Analizi</h2>
                         <p>${years[0]} - ${max_year} yılları arası · İlk ${max_month} ay karşılaştırması</p>
                     </div>
                 </div>
