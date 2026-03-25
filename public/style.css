@@ -1008,45 +1008,32 @@ select {
 
 /* HP & Model - Kategori satır düzeni */
 .htm-cat-section {
-    display: flex;
-    margin-bottom: 20px;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    overflow: hidden;
-    background: var(--bg-card);
+    margin-bottom: 24px;
 }
-.htm-cat-label {
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-    transform: rotate(180deg);
-    padding: 16px 10px;
-    font-weight: 800;
-    font-size: 16px;
-    color: #fff;
+.htm-cat-header {
     display: flex;
     align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    letter-spacing: 2px;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.htm-cat-label {
+    padding: 8px 20px;
+    font-weight: 800;
+    font-size: 15px;
+    color: #fff;
+    border-radius: 6px;
+    letter-spacing: 1px;
 }
 .htm-cat-content {
-    flex: 1;
-    padding: 12px;
-    overflow-x: auto;
+    /* no overflow hidden */
 }
 .htm-grid {
-    display: flex !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
-    flex-wrap: nowrap;
 }
 .htm-card {
-    min-width: 220px;
-    flex-shrink: 0;
-}
-@media (max-width: 768px) {
-    .htm-cat-section { flex-direction: column; }
-    .htm-cat-label { writing-mode: horizontal-tb; transform: none; padding: 10px; min-width: auto; }
-    .htm-grid { flex-wrap: wrap; }
+    min-width: 0;
 }
 
 /* ============================================

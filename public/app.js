@@ -595,7 +595,9 @@ async function loadHpTopModelPage() {
             const color = catColors[catKey] || '#64748b';
             html += `
                 <div class="htm-cat-section">
-                    <div class="htm-cat-label" style="background:${color}">${label}</div>
+                    <div class="htm-cat-header">
+                        <div class="htm-cat-label" style="background:${color}">${label}</div>
+                    </div>
                     <div class="htm-cat-content">
                         <div class="ht-grid htm-grid">${buildCatRow(catKey, segments)}</div>
                     </div>
