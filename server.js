@@ -404,6 +404,68 @@ app.get('/api/sales/distributor-summary', authMiddleware, async (req, res) => {
     }
 });
 
+// HP Segment Tablosu - HP aralıklarına göre yıllık + aylık + karşılaştırma
+app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
+
+        // Tüm veriler hp_range bazlı
+        const allData = await pool.query(`
+            SELECT hp_range, year, month, SUM(quantity) as total
+            FROM sales_data
+            WHERE hp_range IS NOT NULL
+            GROUP BY hp_range, year, month ORDER BY hp_range, year, month
+        `);
+
+        // HP bazlı veri
+        const hpData = {};
+        allData.rows.forEach(r => {
+            if (!hpData[r.hp_range]) hpData[r.hp_range] = {};
+            const key = `${r.year}_${r.month}`;
+            hpData[r.hp_range][key] = (hpData[r.hp_range][key] || 0) + parseInt(r.total);
+        });
+
+        // HP sıralaması
+        const hpOrder = ['0-50', '51-75', '76-100', '101-150', '150+'];
+        const segments = [];
+
+        for (const hp of hpOrder) {
+            const sd = hpData[hp] || {};
+            const seg = { name: hp, yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            years.forEach(y => {
+                for (let m = 1; m <= 12; m++) { seg.yearly[y] = (seg.yearly[y] || 0) + (sd[`${y}_${m}`] || 0); }
+            });
+            for (let m = 1; m <= maxMonth; m++) {
+                seg.months[m] = (seg.months[m] || 0) + (sd[`${maxYear}_${m}`] || 0);
+                seg.prev_partial += (sd[`${prevYear}_${m}`] || 0);
+                seg.curr_partial += (sd[`${maxYear}_${m}`] || 0);
+            }
+            segments.push(seg);
+        }
+
+        // Toplam
+        const totals = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+        segments.forEach(s => {
+            years.forEach(y => { totals.yearly[y] = (totals.yearly[y] || 0) + (s.yearly[y] || 0); });
+            for (let m = 1; m <= maxMonth; m++) { totals.months[m] = (totals.months[m] || 0) + (s.months[m] || 0); }
+            totals.prev_partial += s.prev_partial;
+            totals.curr_partial += s.curr_partial;
+        });
+
+        res.json({ min_year: minYear, max_year: maxYear, prev_year: prevYear, max_month: maxMonth, years, segments, totals });
+    } catch (err) {
+        console.error('HP summary error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // Marka Özet Tablosu - Tüm markalar yıllık + aylık + karşılaştırma
 app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
     try {

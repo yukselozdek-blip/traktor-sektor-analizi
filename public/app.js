@@ -85,6 +85,7 @@ function navigateTo(page) {
         'total-market': ['Toplam Pazar', 'Yıllık Aylık Karşılaştırma'],
         'brand-summary': ['Marka', 'Tüm Markalar Özet Tablosu'],
         'distributor': ['Distribütör', 'Distribütör Bazlı Pazar Analizi'],
+        'hp-segment': ['HP Segment', 'Beygir Gücü Segment Dağılımı'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
@@ -106,6 +107,7 @@ function navigateTo(page) {
         'total-market': loadTotalMarketPage,
         'brand-summary': loadBrandSummaryPage,
         'distributor': loadDistributorPage,
+        'hp-segment': loadHpSegmentPage,
         map: loadMapPage,
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
@@ -474,6 +476,175 @@ async function loadBrandSummaryPage() {
                 </div>
             </div>
         `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// HP SEGMENT PAGE
+// ============================================
+async function loadHpSegmentPage() {
+    try {
+        const data = await API.getHpSummary();
+        if (!data) return;
+
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const { years, segments, totals, max_month, max_year, prev_year } = data;
+        const hpLabels = { '0-50': '0-50 HP', '51-75': '51-75 HP', '76-100': '76-100 HP', '101-150': '101-150 HP', '150+': '150+ HP' };
+        const hpColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6'];
+
+        // ---- ADET TABLOSU ----
+        let adetHeader = '<th>#</th><th>Adet</th>';
+        years.forEach(y => { adetHeader += `<th>${y}</th>`; });
+        for (let m = 1; m <= max_month; m++) { adetHeader += `<th>${monthNames[m - 1]}</th>`; }
+        adetHeader += `<th>${prev_year} İLK ${max_month} AY</th><th>${max_year} İLK ${max_month} AY</th><th>% FARK</th>`;
+
+        let adetRows = '';
+        segments.forEach((seg, idx) => {
+            let row = `<td class="bs-rank">${idx + 1}</td><td class="bs-brand">${hpLabels[seg.name] || seg.name}</td>`;
+            years.forEach(y => { row += `<td>${(seg.yearly[y] || 0).toLocaleString('tr-TR')}</td>`; });
+            for (let m = 1; m <= max_month; m++) { row += `<td>${(seg.months[m] || 0).toLocaleString('tr-TR')}</td>`; }
+            row += `<td class="bs-partial">${seg.prev_partial.toLocaleString('tr-TR')}</td>`;
+            row += `<td class="bs-partial">${seg.curr_partial.toLocaleString('tr-TR')}</td>`;
+            const delta = seg.prev_partial > 0 ? ((seg.curr_partial - seg.prev_partial) * 100 / seg.prev_partial).toFixed(1) : '-';
+            const dc = delta !== '-' && parseFloat(delta) >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+            row += `<td class="bs-partial ${dc}">${delta !== '-' ? '%' + delta : '-'}</td>`;
+            adetRows += `<tr class="bs-row-adet">${row}</tr>`;
+        });
+        // TOPLAM
+        let totalRow = '<td class="bs-rank"></td><td class="bs-brand bs-total-label">TOPLAM</td>';
+        years.forEach(y => { totalRow += `<td class="bs-total-val">${(totals.yearly[y] || 0).toLocaleString('tr-TR')}</td>`; });
+        for (let m = 1; m <= max_month; m++) { totalRow += `<td class="bs-total-val">${(totals.months[m] || 0).toLocaleString('tr-TR')}</td>`; }
+        totalRow += `<td class="bs-total-val bs-partial">${totals.prev_partial.toLocaleString('tr-TR')}</td>`;
+        totalRow += `<td class="bs-total-val bs-partial">${totals.curr_partial.toLocaleString('tr-TR')}</td>`;
+        const tDelta = totals.prev_partial > 0 ? ((totals.curr_partial - totals.prev_partial) * 100 / totals.prev_partial).toFixed(1) : '-';
+        const tdc = tDelta !== '-' && parseFloat(tDelta) >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+        totalRow += `<td class="bs-total-val bs-partial ${tdc}">${tDelta !== '-' ? '%' + tDelta : '-'}</td>`;
+        adetRows += `<tr class="bs-row-total">${totalRow}</tr>`;
+
+        // ---- % TABLOSU ----
+        let pctHeader = '<th>#</th><th>%</th>';
+        years.forEach(y => { pctHeader += `<th>${y}</th>`; });
+        for (let m = 1; m <= max_month; m++) { pctHeader += `<th>${monthNames[m - 1]}</th>`; }
+        pctHeader += `<th>${prev_year} İLK ${max_month} AY</th><th>${max_year} İLK ${max_month} AY</th><th></th>`;
+
+        let pctRows = '';
+        segments.forEach((seg, idx) => {
+            let row = `<td class="bs-rank">${idx + 1}</td><td class="bs-brand">${hpLabels[seg.name] || seg.name}</td>`;
+            years.forEach(y => {
+                const pct = totals.yearly[y] > 0 ? ((seg.yearly[y] || 0) * 100 / totals.yearly[y]).toFixed(1) : '0.0';
+                row += `<td class="bs-pct">${pct}%</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                const pct = totals.months[m] > 0 ? ((seg.months[m] || 0) * 100 / totals.months[m]).toFixed(1) : '0.0';
+                row += `<td class="bs-pct">${pct}%</td>`;
+            }
+            const prevPct = totals.prev_partial > 0 ? (seg.prev_partial * 100 / totals.prev_partial).toFixed(1) : '0.0';
+            const currPct = totals.curr_partial > 0 ? (seg.curr_partial * 100 / totals.curr_partial).toFixed(1) : '0.0';
+            row += `<td class="bs-partial bs-pct">${prevPct}%</td><td class="bs-partial bs-pct">${currPct}%</td><td></td>`;
+            pctRows += `<tr class="bs-row-pct">${row}</tr>`;
+        });
+        // TOPLAM %
+        let totalPctRow = '<td class="bs-rank"></td><td class="bs-brand bs-total-label">TOPLAM</td>';
+        years.forEach(() => { totalPctRow += '<td class="bs-total-val">100%</td>'; });
+        for (let m = 1; m <= max_month; m++) { totalPctRow += '<td class="bs-total-val">100%</td>'; }
+        totalPctRow += '<td class="bs-total-val bs-partial">100%</td><td class="bs-total-val bs-partial">100%</td><td></td>';
+        pctRows += `<tr class="bs-row-total">${totalPctRow}</tr>`;
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="bs-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Segment Dağılımı - HP Bazlı Analiz</h2>
+                        <p>${years[0]} - ${max_year} yılları arası · İlk ${max_month} ay karşılaştırması</p>
+                    </div>
+                </div>
+                <div class="chart-card" style="padding:16px; overflow-x:auto; margin-bottom:24px;">
+                    <h3 style="color:var(--text-primary);margin:0 0 12px;font-size:15px;">Adet Bazlı</h3>
+                    <table class="bs-table">
+                        <thead><tr>${adetHeader}</tr></thead>
+                        <tbody>${adetRows}</tbody>
+                    </table>
+                </div>
+                <div class="chart-card" style="padding:16px; overflow-x:auto; margin-bottom:24px;">
+                    <h3 style="color:var(--text-primary);margin:0 0 12px;font-size:15px;">Yüzde Bazlı</h3>
+                    <table class="bs-table">
+                        <thead><tr>${pctHeader}</tr></thead>
+                        <tbody>${pctRows}</tbody>
+                    </table>
+                </div>
+                <div class="chart-card" style="padding:24px;">
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;text-align:center;">Segment Dağılımı - ${max_year} İLK ${max_month} AY</h3>
+                    <div style="position:relative;height:400px;max-width:600px;margin:0 auto;">
+                        <canvas id="hpPieChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Pie Chart
+        const ctx = document.getElementById('hpPieChart').getContext('2d');
+        const pieData = segments.map(s => s.curr_partial);
+        const pieLabels = segments.map(s => hpLabels[s.name] || s.name);
+        charts.hpPie = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: pieLabels,
+                datasets: [{
+                    data: pieData,
+                    backgroundColor: hpColors,
+                    borderColor: '#0f172a',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#f1f5f9', font: { size: 12, family: 'Inter' }, padding: 16 }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#94a3b8',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function(ctx) {
+                                const val = ctx.raw;
+                                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = total > 0 ? (val * 100 / total).toFixed(1) : 0;
+                                return `${ctx.label}: ${val.toLocaleString('tr-TR')} adet (${pct}%)`;
+                            }
+                        }
+                    },
+                    datalabels: false
+                }
+            },
+            plugins: [{
+                id: 'pieLabels',
+                afterDraw(chart) {
+                    const { ctx, data } = chart;
+                    const total = data.datasets[0].data.reduce((a, b) => a + b, 0);
+                    chart.getDatasetMeta(0).data.forEach((arc, i) => {
+                        const val = data.datasets[0].data[i];
+                        const pct = total > 0 ? (val * 100 / total).toFixed(1) : 0;
+                        const { x, y } = arc.tooltipPosition();
+                        ctx.save();
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 11px Inter';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(`${val.toLocaleString('tr-TR')}`, x, y - 6);
+                        ctx.fillText(`${pct}%`, x, y + 8);
+                        ctx.restore();
+                    });
+                }
+            }]
+        });
 
     } catch (err) {
         showError(err);
