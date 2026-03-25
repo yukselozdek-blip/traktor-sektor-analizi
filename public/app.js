@@ -74,9 +74,10 @@ function navigateTo(page) {
     const pageContent = document.getElementById('pageContent');
     pageContent.innerHTML = '<div class="loading-screen"><div class="spinner"></div><p>Yükleniyor...</p></div>';
 
-    // Destroy old charts
+    // Destroy old charts and map
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; geoJsonLayer = null; }
 
     const titles = {
         dashboard: ['Dashboard', 'Genel Bakış'],
@@ -281,9 +282,13 @@ async function loadDashboard() {
 // ============================================
 // MAP PAGE
 // ============================================
+let leafletMap = null;
+let geoJsonLayer = null;
+let mapSalesData = null;
+
 async function loadMapPage() {
     try {
-        const salesByProvince = await API.getSalesByProvince(selectedYear, currentUser?.brand_id);
+        mapSalesData = await API.getSalesByProvince(selectedYear, currentUser?.brand_id);
         const content = document.getElementById('pageContent');
 
         content.innerHTML = `
@@ -307,15 +312,15 @@ async function loadMapPage() {
             <div class="card">
                 <div class="card-header"><h3><i class="fas fa-map-marked-alt"></i> Türkiye Satış Haritası</h3></div>
                 <div class="card-body">
-                    <div class="turkey-map-container" id="turkeyMapContainer">
-                        <canvas id="turkeyMapCanvas" width="900" height="500"></canvas>
-                        <div class="province-tooltip" id="mapTooltip"></div>
+                    <div class="turkey-map-container">
+                        <div id="turkeyMap"></div>
                     </div>
                     <div style="display:flex;justify-content:center;gap:24px;margin-top:16px;font-size:12px;color:var(--text-muted)">
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#1e40af;margin-right:4px"></span>Yüksek Satış</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#3b82f6;margin-right:4px"></span>Orta Satış</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#93c5fd;margin-right:4px"></span>Düşük Satış</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#334155;margin-right:4px"></span>Satış Yok</span>
+                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#1e40af;margin-right:4px"></span>Yüksek</span>
+                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#3b82f6;margin-right:4px"></span>Orta-Yüksek</span>
+                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#60a5fa;margin-right:4px"></span>Orta</span>
+                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#93c5fd;margin-right:4px"></span>Düşük</span>
+                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#1e293b;margin-right:4px"></span>Satış Yok</span>
                     </div>
                 </div>
             </div>
@@ -323,7 +328,7 @@ async function loadMapPage() {
             <div class="grid-2">
                 <div class="card">
                     <div class="card-header"><h3>İl Bazlı Satış Tablosu</h3></div>
-                    <div class="card-body">
+                    <div class="card-body" style="max-height:400px;overflow-y:auto">
                         <table class="data-table" id="provinceTable">
                             <thead><tr><th>#</th><th>İl</th><th>Bölge</th><th>Satış</th></tr></thead>
                             <tbody></tbody>
@@ -337,105 +342,170 @@ async function loadMapPage() {
             </div>
         `;
 
-        drawTurkeyMap(salesByProvince);
-        renderProvinceTable(salesByProvince);
-        renderRegionChart(salesByProvince);
+        initLeafletMap(mapSalesData);
+        renderProvinceTable(mapSalesData);
+        renderRegionChart(mapSalesData);
 
     } catch (err) {
         showError(err);
     }
 }
 
-function drawTurkeyMap(salesData) {
-    const canvas = document.getElementById('turkeyMapCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width;
-    const H = canvas.height;
+function initLeafletMap(salesData) {
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; }
 
-    ctx.clearRect(0, 0, W, H);
-
-    // Aggregate sales by province
-    const provinceSales = {};
-    (salesData || []).forEach(s => {
-        const key = s.plate_code;
-        if (!provinceSales[key]) provinceSales[key] = { ...s, total: 0 };
-        provinceSales[key].total += parseInt(s.total_sales);
+    leafletMap = L.map('turkeyMap', {
+        center: [39.0, 35.5],
+        zoom: 6,
+        minZoom: 5,
+        maxZoom: 10,
+        zoomControl: true,
+        attributionControl: false
     });
 
-    const maxSales = Math.max(...Object.values(provinceSales).map(p => p.total), 1);
+    // Dark tile layer
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd', maxZoom: 19
+    }).addTo(leafletMap);
 
-    // Draw provinces as circles on approximate positions
-    allProvinces.forEach(prov => {
-        const x = mapLngToX(prov.longitude, W);
-        const y = mapLatToY(prov.latitude, H);
-        const sales = provinceSales[prov.plate_code]?.total || 0;
-        const ratio = sales / maxSales;
-        const radius = 6 + ratio * 20;
-
-        // Color based on sales
-        let color;
-        if (sales === 0) color = '#334155';
-        else if (ratio < 0.33) color = '#93c5fd';
-        else if (ratio < 0.66) color = '#3b82f6';
-        else color = '#1e40af';
-
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.8;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Label
-        ctx.fillStyle = '#e2e8f0';
-        ctx.font = '9px Inter';
-        ctx.textAlign = 'center';
-        ctx.fillText(prov.plate_code, x, y + 3);
-    });
-
-    // Tooltip handling
-    canvas.onmousemove = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = (e.clientX - rect.left) * (W / rect.width);
-        const my = (e.clientY - rect.top) * (H / rect.height);
-        const tooltip = document.getElementById('mapTooltip');
-
-        let found = null;
-        allProvinces.forEach(prov => {
-            const x = mapLngToX(prov.longitude, W);
-            const y = mapLatToY(prov.latitude, H);
-            const sales = provinceSales[prov.plate_code]?.total || 0;
-            const radius = 6 + (sales / maxSales) * 20;
-            const dist = Math.sqrt((mx - x) ** 2 + (my - y) ** 2);
-            if (dist < radius + 5) found = { prov, sales };
-        });
-
-        if (found) {
-            tooltip.style.display = 'block';
-            tooltip.style.left = (e.clientX - document.getElementById('turkeyMapContainer').getBoundingClientRect().left + 10) + 'px';
-            tooltip.style.top = (e.clientY - document.getElementById('turkeyMapContainer').getBoundingClientRect().top - 10) + 'px';
-            tooltip.innerHTML = `
-                <h4>${found.prov.name} (${found.prov.plate_code})</h4>
-                <div class="tt-row"><span class="tt-label">Bölge:</span><span class="tt-value">${found.prov.region}</span></div>
-                <div class="tt-row"><span class="tt-label">Satış:</span><span class="tt-value">${formatNumber(found.sales)} adet</span></div>
-                <div class="tt-row"><span class="tt-label">Nüfus:</span><span class="tt-value">${formatNumber(found.prov.population)}</span></div>
-            `;
-        } else {
-            tooltip.style.display = 'none';
-        }
-    };
-
-    canvas.onmouseleave = () => {
-        document.getElementById('mapTooltip').style.display = 'none';
-    };
+    // Load GeoJSON
+    loadTurkeyGeoJSON(salesData);
 }
 
-function mapLngToX(lng, W) { return ((lng - 26) / (45 - 26)) * (W - 80) + 40; }
-function mapLatToY(lat, H) { return ((42.5 - lat) / (42.5 - 36)) * (H - 80) + 40; }
+async function loadTurkeyGeoJSON(salesData) {
+    try {
+        // Fetch Turkey provinces GeoJSON
+        const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+        const geoData = await response.json();
+
+        // Aggregate sales by province name
+        const provinceSales = {};
+        (salesData || []).forEach(s => {
+            const name = s.province_name;
+            if (!provinceSales[name]) provinceSales[name] = { total: 0, brands: {} };
+            provinceSales[name].total += parseInt(s.total_sales);
+            if (s.brand_name) {
+                if (!provinceSales[name].brands[s.brand_name]) provinceSales[name].brands[s.brand_name] = 0;
+                provinceSales[name].brands[s.brand_name] += parseInt(s.total_sales);
+            }
+        });
+
+        const allTotals = Object.values(provinceSales).map(p => p.total);
+        const maxSales = Math.max(...allTotals, 1);
+
+        // Province name mapping (GeoJSON name -> DB name)
+        const nameMap = {
+            'Afyon': 'Afyonkarahisar', 'Elâzığ': 'Elazığ', 'Içel': 'Mersin',
+            'Kahramanmaras': 'Kahramanmaraş', 'Kirikkale': 'Kırıkkale', 'Kirklareli': 'Kırklareli',
+            'Kirsehir': 'Kırşehir', 'Nevsehir': 'Nevşehir', 'Nigde': 'Niğde',
+            'Sanliurfa': 'Şanlıurfa', 'Sirnak': 'Şırnak', 'Kinkkale': 'Kırıkkale',
+            'K. Maras': 'Kahramanmaraş', 'Ağrı': 'Ağrı', 'Muş': 'Muş',
+            'Karabük': 'Karabük'
+        };
+
+        function getColor(sales) {
+            if (!sales || sales === 0) return '#1e293b';
+            const ratio = sales / maxSales;
+            if (ratio > 0.7) return '#1e40af';
+            if (ratio > 0.4) return '#3b82f6';
+            if (ratio > 0.2) return '#60a5fa';
+            return '#93c5fd';
+        }
+
+        if (geoJsonLayer) leafletMap.removeLayer(geoJsonLayer);
+
+        geoJsonLayer = L.geoJSON(geoData, {
+            style: function(feature) {
+                const name = feature.properties.name || feature.properties.Name;
+                const dbName = nameMap[name] || name;
+                const sales = provinceSales[dbName]?.total || 0;
+                return {
+                    fillColor: getColor(sales),
+                    weight: 1,
+                    opacity: 1,
+                    color: '#334155',
+                    fillOpacity: 0.85
+                };
+            },
+            onEachFeature: function(feature, layer) {
+                const name = feature.properties.name || feature.properties.Name;
+                const dbName = nameMap[name] || name;
+                const data = provinceSales[dbName];
+                const sales = data?.total || 0;
+                const prov = allProvinces.find(p => p.name === dbName);
+
+                // Tooltip
+                const topBrands = data ? Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,3) : [];
+                layer.bindTooltip(`
+                    <div style="font-size:13px;min-width:180px">
+                        <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
+                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                        <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
+                        ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
+                        ${topBrands.length > 0 ? `
+                            <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                            <div style="font-size:11px;color:#94a3b8">En Çok Satan Markalar:</div>
+                            ${topBrands.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])}</span></div>`).join('')}
+                        ` : ''}
+                    </div>
+                `, { sticky: true, className: 'map-tooltip' });
+
+                // Hover effect
+                layer.on('mouseover', function() {
+                    this.setStyle({ weight: 3, color: '#60a5fa', fillOpacity: 1 });
+                    this.bringToFront();
+                });
+                layer.on('mouseout', function() {
+                    geoJsonLayer.resetStyle(this);
+                });
+                layer.on('click', function() {
+                    // İl detayına git
+                    if (prov) {
+                        document.getElementById('pageContent').scrollTo(0, 0);
+                    }
+                });
+            }
+        }).addTo(leafletMap);
+
+        // Fit bounds to Turkey
+        leafletMap.fitBounds(geoJsonLayer.getBounds(), { padding: [20, 20] });
+
+    } catch (err) {
+        console.error('GeoJSON yükleme hatası:', err);
+        // Fallback: circle markers
+        drawCircleMarkers(salesData);
+    }
+}
+
+function drawCircleMarkers(salesData) {
+    const provinceSales = {};
+    (salesData || []).forEach(s => {
+        const name = s.province_name;
+        if (!provinceSales[name]) provinceSales[name] = 0;
+        provinceSales[name] += parseInt(s.total_sales);
+    });
+    const maxSales = Math.max(...Object.values(provinceSales), 1);
+
+    allProvinces.forEach(prov => {
+        const sales = provinceSales[prov.name] || 0;
+        const ratio = sales / maxSales;
+        let color = '#1e293b';
+        if (ratio > 0.7) color = '#1e40af';
+        else if (ratio > 0.4) color = '#3b82f6';
+        else if (ratio > 0.2) color = '#60a5fa';
+        else if (sales > 0) color = '#93c5fd';
+
+        L.circleMarker([parseFloat(prov.latitude), parseFloat(prov.longitude)], {
+            radius: 6 + ratio * 18,
+            fillColor: color,
+            color: '#475569',
+            weight: 1,
+            fillOpacity: 0.8
+        }).addTo(leafletMap)
+          .bindTooltip(`<strong>${prov.name}</strong> (${prov.plate_code})<br>Satış: ${formatNumber(sales)}`);
+    });
+}
 
 function renderProvinceTable(salesData) {
     const aggregated = {};
@@ -482,9 +552,11 @@ function renderRegionChart(salesData) {
 
 async function updateMap() {
     const brandId = document.getElementById('mapBrandFilter')?.value;
-    const salesData = await API.getSalesByProvince(selectedYear, brandId);
-    drawTurkeyMap(salesData);
-    renderProvinceTable(salesData);
+    mapSalesData = await API.getSalesByProvince(selectedYear, brandId);
+    if (leafletMap) {
+        loadTurkeyGeoJSON(mapSalesData);
+    }
+    renderProvinceTable(mapSalesData);
 }
 
 // ============================================
