@@ -286,6 +286,61 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
     }
 });
 
+// Toplam Pazar - Aylık karşılaştırma (2 yıl yan yana)
+app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
+    try {
+        // Son veri noktasını bul
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+
+        // Her iki yılın aylık toplam pazar verisi
+        const monthlyRes = await pool.query(`
+            SELECT year, month, SUM(quantity) as total
+            FROM sales_data
+            WHERE year IN ($1, $2)
+            GROUP BY year, month
+            ORDER BY year, month
+        `, [prevYear, maxYear]);
+
+        // Aylık veriyi düzenle
+        const months = {};
+        monthlyRes.rows.forEach(r => {
+            if (!months[r.month]) months[r.month] = {};
+            months[r.month][r.year] = parseInt(r.total);
+        });
+
+        // Sadece maxMonth'a kadar olan ayları döndür (son yılda veri olan)
+        const data = [];
+        let totalPrev = 0, totalCurr = 0;
+        for (let m = 1; m <= maxMonth; m++) {
+            const prev = months[m]?.[prevYear] || 0;
+            const curr = months[m]?.[maxYear] || 0;
+            const delta = prev > 0 ? parseFloat(((curr - prev) * 100 / prev).toFixed(1)) : null;
+            totalPrev += prev;
+            totalCurr += curr;
+            data.push({ month: m, prev_year: prev, curr_year: curr, delta_pct: delta });
+        }
+
+        const totalDelta = totalPrev > 0 ? parseFloat(((totalCurr - totalPrev) * 100 / totalPrev).toFixed(1)) : null;
+
+        res.json({
+            prev_year: prevYear,
+            curr_year: maxYear,
+            max_month: maxMonth,
+            months: data,
+            total_prev: totalPrev,
+            total_curr: totalCurr,
+            total_delta: totalDelta
+        });
+    } catch (err) {
+        console.error('Total market error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // İl bazlı satış verileri
 app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
     try {

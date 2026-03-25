@@ -829,3 +829,47 @@ select {
 @media (max-width: 480px) {
     .stats-grid { grid-template-columns: 1fr; }
 }
+
+/* ============================================
+   TOPLAM PAZAR TABLE
+   ============================================ */
+.tm-container { }
+.tm-header { margin-bottom: 20px; }
+.tm-header h2 { color: var(--text-primary); margin: 0; font-size: 20px; }
+.tm-header p { color: var(--text-secondary); margin: 4px 0 0; font-size: 13px; }
+
+.tm-table-card { margin-top: 0; }
+.tm-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+}
+.tm-table th {
+    background: #1e3a5f;
+    color: #f1f5f9;
+    padding: 10px 14px;
+    text-align: center;
+    font-weight: 600;
+    border: 1px solid #334155;
+    white-space: nowrap;
+}
+.tm-table td {
+    padding: 8px 14px;
+    text-align: center;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    white-space: nowrap;
+}
+.tm-year-label {
+    font-weight: 700;
+    text-align: left !important;
+    background: rgba(255,255,255,0.05);
+    min-width: 60px;
+}
+.tm-row-prev td { background: rgba(30,58,95,0.25); }
+.tm-row-curr td { background: rgba(46,125,50,0.25); }
+.tm-row-delta td { background: rgba(255,255,255,0.03); font-weight: 600; }
+.tm-delta-pos { color: #4ade80 !important; }
+.tm-delta-neg { color: #f87171 !important; }
+.tm-total { font-weight: 700; background: rgba(255,255,255,0.08) !important; }

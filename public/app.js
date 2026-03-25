@@ -82,6 +82,7 @@ function navigateTo(page) {
     const titles = {
         dashboard: ['Dashboard', 'Genel Bakış'],
         historical: ['Tarihsel Gelişim', 'Traktör Pazarı Yıllık Analiz'],
+        'total-market': ['Toplam Pazar', 'Yıllık Aylık Karşılaştırma'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
@@ -100,6 +101,7 @@ function navigateTo(page) {
     const loaders = {
         dashboard: loadDashboard,
         historical: loadHistoricalPage,
+        'total-market': loadTotalMarketPage,
         map: loadMapPage,
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
@@ -377,6 +379,131 @@ async function reloadHistorical() {
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
     loadHistoricalPage();
+}
+
+// ============================================
+// TOPLAM PAZAR PAGE
+// ============================================
+async function loadTotalMarketPage() {
+    try {
+        const data = await API.getTotalMarket();
+        if (!data) return;
+
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const prevYear = data.prev_year;
+        const currYear = data.curr_year;
+        const maxMonth = data.max_month;
+
+        // Build table rows
+        let headerCells = '<th></th>';
+        let prevCells = `<td class="tm-year-label">${prevYear}</td>`;
+        let currCells = `<td class="tm-year-label">${currYear}</td>`;
+        let deltaCells = '<td class="tm-year-label">Δ%</td>';
+
+        data.months.forEach(m => {
+            headerCells += `<th>${monthNames[m.month - 1]}</th>`;
+            prevCells += `<td>${m.prev_year.toLocaleString('tr-TR')}</td>`;
+            currCells += `<td>${m.curr_year.toLocaleString('tr-TR')}</td>`;
+            const deltaClass = m.delta_pct >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+            deltaCells += `<td class="${deltaClass}">${m.delta_pct !== null ? '%' + m.delta_pct.toLocaleString('tr-TR') : '-'}</td>`;
+        });
+
+        // Totals
+        headerCells += `<th>İLK ${maxMonth} AY</th><th>TOPLAM</th>`;
+        prevCells += `<td class="tm-total">${data.total_prev.toLocaleString('tr-TR')}</td><td class="tm-total">${data.total_prev.toLocaleString('tr-TR')}</td>`;
+        currCells += `<td class="tm-total">${data.total_curr.toLocaleString('tr-TR')}</td><td class="tm-total">${data.total_curr.toLocaleString('tr-TR')}</td>`;
+        const totalDeltaClass = data.total_delta >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+        deltaCells += `<td class="tm-total ${totalDeltaClass}">${data.total_delta !== null ? '%' + data.total_delta.toLocaleString('tr-TR') : '-'}</td>`;
+        deltaCells += `<td class="tm-total ${totalDeltaClass}">${data.total_delta !== null ? '%' + data.total_delta.toLocaleString('tr-TR') : '-'}</td>`;
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="tm-container">
+                <div class="tm-header">
+                    <h2>Toplam Traktör Pazarı (${prevYear} - ${currYear})</h2>
+                    <p>İlk ${maxMonth} ay karşılaştırması</p>
+                </div>
+                <div class="chart-card" style="padding:24px; margin-bottom:24px;">
+                    <canvas id="totalMarketChart" height="400"></canvas>
+                </div>
+                <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto;">
+                    <table class="tm-table">
+                        <thead><tr>${headerCells}</tr></thead>
+                        <tbody>
+                            <tr class="tm-row-prev">${prevCells}</tr>
+                            <tr class="tm-row-curr">${currCells}</tr>
+                            <tr class="tm-row-delta">${deltaCells}</tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        // Chart
+        const ctx = document.getElementById('totalMarketChart').getContext('2d');
+        charts.totalMarket = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.months.map(m => monthNames[m.month - 1]),
+                datasets: [
+                    {
+                        label: prevYear.toString(),
+                        data: data.months.map(m => m.prev_year),
+                        backgroundColor: '#1e3a5f',
+                        borderColor: '#1e3a5f',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    },
+                    {
+                        label: currYear.toString(),
+                        data: data.months.map(m => m.curr_year),
+                        backgroundColor: '#2e7d32',
+                        borderColor: '#2e7d32',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#f1f5f9', font: { size: 13, family: 'Inter' }, usePointStyle: true, padding: 20 }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#94a3b8',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('tr-TR')} adet`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#94a3b8', font: { size: 12 } },
+                        grid: { color: 'rgba(148,163,184,0.1)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { size: 11 },
+                            callback: v => v.toLocaleString('tr-TR')
+                        },
+                        grid: { color: 'rgba(148,163,184,0.1)' },
+                        title: { display: true, text: 'Pazar (Adet)', color: '#94a3b8' }
+                    }
+                }
+            }
+        });
+
+    } catch (err) {
+        showError(err);
+    }
 }
 
 // ============================================
