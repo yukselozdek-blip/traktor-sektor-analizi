@@ -81,6 +81,7 @@ function navigateTo(page) {
 
     const titles = {
         dashboard: ['Dashboard', 'Genel Bakış'],
+        historical: ['Tarihsel Gelişim', 'Traktör Pazarı Yıllık Analiz'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
@@ -98,6 +99,7 @@ function navigateTo(page) {
 
     const loaders = {
         dashboard: loadDashboard,
+        historical: loadHistoricalPage,
         map: loadMapPage,
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
@@ -125,6 +127,252 @@ function onYearChange() {
 function refreshData() {
     API.clearCache();
     navigateTo(currentPage);
+}
+
+// ============================================
+// HISTORICAL PAGE - Tarihsel Gelişim
+// ============================================
+async function loadHistoricalPage() {
+    try {
+        const brandId = currentUser?.brand_id;
+        const historical = await API.getSalesHistorical(brandId);
+        const { data, max_year, max_month, compare_months, pct_diff_market, pct_diff_brand } = historical;
+
+        const fullYears = data.filter(d => !d.is_partial);
+        const partials = data.filter(d => d.is_partial).sort((a, b) => a.year - b.year);
+        const brandName = currentUser?.brand?.name || 'Seçili Marka';
+        const brandColor = getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim();
+
+        // Tüm labels: tam yıllar + kısmi yıllar
+        const allLabels = [...fullYears.map(d => d.label), ...partials.map(d => d.label)];
+        const allMarket = [...fullYears.map(d => d.total_market), ...partials.map(d => d.total_market)];
+        const allBrand = [...fullYears.map(d => d.brand_sales), ...partials.map(d => d.brand_sales)];
+        const allShare = [...fullYears.map(d => d.brand_share_pct), ...partials.map(d => d.brand_share_pct)];
+
+        const content = document.getElementById('pageContent');
+
+        // Format % diff with arrow
+        function fmtDiff(val) {
+            if (val == null) return '-';
+            const cls = val >= 0 ? 'color:#22c55e' : 'color:#ef4444';
+            const arrow = val >= 0 ? '▲' : '▼';
+            return `<span style="${cls};font-weight:700">${arrow} %${Math.abs(val).toFixed(1)}</span>`;
+        }
+
+        content.innerHTML = `
+            <div class="filter-bar" style="align-items:center">
+                <div style="flex:1">
+                    <h3 style="margin:0;font-size:16px">Traktör Pazarı Tarihsel Gelişimi</h3>
+                    <span style="font-size:12px;color:var(--text-muted)">Son 12 yıl + dönemsel karşılaştırma</span>
+                </div>
+                ${currentUser?.role === 'admin' ? `
+                    <select id="histBrandFilter" onchange="reloadHistorical()" style="min-width:200px">
+                        ${allBrands.map(b => `<option value="${b.id}" ${b.id === brandId ? 'selected' : ''}>${b.name}</option>`).join('')}
+                    </select>
+                ` : ''}
+            </div>
+
+            <!-- Özet Kartları -->
+            <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:rgba(168,85,247,0.15);color:#a855f7"><i class="fas fa-chart-line"></i></div>
+                    <div class="stat-value">${formatNumber(partials[1]?.total_market || 0)}</div>
+                    <div class="stat-label">${partials[1]?.label || max_year} TOPLAM PAZAR</div>
+                    <div class="stat-change">${fmtDiff(pct_diff_market)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:rgba(59,130,246,0.15);color:${brandColor}"><i class="fas fa-tractor"></i></div>
+                    <div class="stat-value">${formatNumber(partials[1]?.brand_sales || 0)}</div>
+                    <div class="stat-label">${partials[1]?.label || max_year} ${brandName}</div>
+                    <div class="stat-change">${fmtDiff(pct_diff_brand)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:rgba(34,197,94,0.15);color:#22c55e"><i class="fas fa-percentage"></i></div>
+                    <div class="stat-value">%${partials[1]?.brand_share_pct || 0}</div>
+                    <div class="stat-label">${brandName} PAZAR PAYI</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-exchange-alt"></i></div>
+                    <div class="stat-value">${compare_months} Ay</div>
+                    <div class="stat-label">KARŞILAŞTIRMA DÖNEMİ</div>
+                </div>
+            </div>
+
+            <!-- Ana Grafik -->
+            <div class="card">
+                <div class="card-header">
+                    <h3><i class="fas fa-chart-area"></i> Traktör Pazarı Tarihsel Gelişimi (${fullYears[0]?.year || ''} - ${max_year})</h3>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container" style="height:420px"><canvas id="historicalChart"></canvas></div>
+                </div>
+            </div>
+
+            <!-- Veri Tablosu -->
+            <div class="card">
+                <div class="card-header">
+                    <h3><i class="fas fa-table"></i> Yıllık Veri Tablosu</h3>
+                </div>
+                <div class="card-body" style="overflow-x:auto">
+                    <table class="data-table" id="historicalTable">
+                        <thead>
+                            <tr>
+                                <th style="position:sticky;left:0;background:var(--bg-card);z-index:1"></th>
+                                ${fullYears.map(d => `<th style="text-align:center">${d.year}</th>`).join('')}
+                                <th style="text-align:center;border-left:2px solid var(--brand-primary)">${partials[0]?.label || ''}</th>
+                                <th style="text-align:center">${partials[1]?.label || ''}</th>
+                                <th style="text-align:center;font-weight:700;color:var(--brand-accent)">% FARK</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td style="position:sticky;left:0;background:var(--bg-card);font-weight:700;white-space:nowrap">Toplam Pazar</td>
+                                ${fullYears.map(d => `<td style="text-align:right">${formatNumber(d.total_market)}</td>`).join('')}
+                                <td style="text-align:right;border-left:2px solid var(--brand-primary);font-weight:600">${formatNumber(partials[0]?.total_market)}</td>
+                                <td style="text-align:right;font-weight:600">${formatNumber(partials[1]?.total_market)}</td>
+                                <td style="text-align:right">${fmtDiff(pct_diff_market)}</td>
+                            </tr>
+                            <tr style="background:rgba(59,130,246,0.05)">
+                                <td style="position:sticky;left:0;background:rgba(30,41,59,0.95);font-weight:700;color:${brandColor};white-space:nowrap">${brandName}</td>
+                                ${fullYears.map(d => `<td style="text-align:right">${formatNumber(d.brand_sales)}</td>`).join('')}
+                                <td style="text-align:right;border-left:2px solid var(--brand-primary);font-weight:600">${formatNumber(partials[0]?.brand_sales)}</td>
+                                <td style="text-align:right;font-weight:600">${formatNumber(partials[1]?.brand_sales)}</td>
+                                <td style="text-align:right">${fmtDiff(pct_diff_brand)}</td>
+                            </tr>
+                            <tr>
+                                <td style="position:sticky;left:0;background:var(--bg-card);font-weight:700;white-space:nowrap">${brandName} Pazar Payı</td>
+                                ${fullYears.map(d => `<td style="text-align:right">%${d.brand_share_pct}</td>`).join('')}
+                                <td style="text-align:right;border-left:2px solid var(--brand-primary);font-weight:600">%${partials[0]?.brand_share_pct || 0}</td>
+                                <td style="text-align:right;font-weight:600">%${partials[1]?.brand_share_pct || 0}</td>
+                                <td style="text-align:right">${(() => {
+                                    if (partials.length < 2) return '-';
+                                    const diff = partials[1].brand_share_pct - partials[0].brand_share_pct;
+                                    const cls = diff >= 0 ? 'color:#22c55e' : 'color:#ef4444';
+                                    return `<span style="${cls};font-weight:700">${diff >= 0 ? '+' : ''}${diff.toFixed(1)}p</span>`;
+                                })()}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        // ===== CHART =====
+        const ctx = document.getElementById('historicalChart');
+        const isPartialBorder = allLabels.map((_, i) => i >= fullYears.length);
+
+        charts.historical = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: allLabels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Toplam Pazar',
+                        data: allMarket,
+                        backgroundColor: allLabels.map((_, i) =>
+                            isPartialBorder[i] ? 'rgba(168,85,247,0.7)' : 'rgba(139,92,246,0.6)'
+                        ),
+                        borderColor: allLabels.map((_, i) =>
+                            isPartialBorder[i] ? '#a855f7' : '#8b5cf6'
+                        ),
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        yAxisID: 'y',
+                        order: 2
+                    },
+                    {
+                        type: 'line',
+                        label: `${brandName} Pazar Payı (%)`,
+                        data: allShare,
+                        borderColor: brandColor,
+                        backgroundColor: brandColor + '20',
+                        borderWidth: 3,
+                        pointBackgroundColor: brandColor,
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 5,
+                        pointHoverRadius: 8,
+                        tension: 0.3,
+                        fill: false,
+                        yAxisID: 'y1',
+                        order: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { size: 11, weight: '500' },
+                            maxRotation: 45,
+                            minRotation: 0
+                        }
+                    },
+                    y: {
+                        position: 'left',
+                        title: { display: true, text: 'Pazar (Adet)', color: '#94a3b8', font: { size: 12 } },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { size: 11 },
+                            callback: v => v >= 1000 ? (v/1000).toFixed(0) + '.000' : v
+                        }
+                    },
+                    y1: {
+                        position: 'right',
+                        title: { display: true, text: `${brandName} Pazar Payı (%)`, color: brandColor, font: { size: 12 } },
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            color: brandColor,
+                            font: { size: 11 },
+                            callback: v => '%' + v.toFixed(1)
+                        },
+                        min: 0
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: { color: '#94a3b8', padding: 16, font: { size: 12 }, usePointStyle: true, pointStyle: 'rectRounded' }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(15,23,42,0.95)',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#94a3b8',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        padding: 14,
+                        cornerRadius: 10,
+                        callbacks: {
+                            label: function(ctx) {
+                                if (ctx.dataset.yAxisID === 'y1') {
+                                    return `${ctx.dataset.label}: %${ctx.parsed.y.toFixed(1)}`;
+                                }
+                                return `${ctx.dataset.label}: ${formatNumber(ctx.parsed.y)} adet`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function reloadHistorical() {
+    const brandId = document.getElementById('histBrandFilter')?.value;
+    // Re-fetch with new brand
+    const historical = await API.get(`/api/sales/historical?brand_id=${brandId}`);
+    // Reload page with new data
+    API.clearCache();
+    loadHistoricalPage();
 }
 
 // ============================================

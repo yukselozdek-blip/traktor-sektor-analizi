@@ -204,6 +204,88 @@ app.get('/api/sales/summary', authMiddleware, async (req, res) => {
     }
 });
 
+// Tarihsel Gelişim - Yıllık toplam pazar + marka satışları
+app.get('/api/sales/historical', authMiddleware, async (req, res) => {
+    try {
+        const { brand_id } = req.query;
+        const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
+
+        // 1. Son veri noktasını bul (en son yıl ve ay)
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+
+        // 2. Son 12 yılın tam yıllık verileri (son 2 yıl hariç)
+        const yearlyRes = await pool.query(`
+            SELECT s.year,
+                   SUM(s.quantity) as total_market,
+                   SUM(CASE WHEN s.brand_id = $1 THEN s.quantity ELSE 0 END) as brand_sales
+            FROM sales_data s
+            WHERE s.year >= $2 AND s.year <= $3
+            GROUP BY s.year ORDER BY s.year
+        `, [userBrandId || 0, maxYear - 11, maxYear - 2]);
+
+        // 3. Son 2 yılın karşılaştırması (aynı ay aralığı: 1..maxMonth)
+        // Eğer maxYear=2025, maxMonth=5 ise: 2024 ilk 5 ay vs 2025 ilk 5 ay
+        const prevYear = maxYear - 1;
+        const compareRes = await pool.query(`
+            SELECT s.year,
+                   SUM(s.quantity) as total_market,
+                   SUM(CASE WHEN s.brand_id = $1 THEN s.quantity ELSE 0 END) as brand_sales
+            FROM sales_data s
+            WHERE s.year IN ($2, $3) AND s.month <= $4
+            GROUP BY s.year ORDER BY s.year
+        `, [userBrandId || 0, prevYear, maxYear, maxMonth]);
+
+        // Combine
+        const yearlyData = yearlyRes.rows.map(r => ({
+            year: r.year,
+            label: r.year.toString(),
+            total_market: parseInt(r.total_market),
+            brand_sales: parseInt(r.brand_sales),
+            brand_share_pct: r.total_market > 0 ? parseFloat((r.brand_sales * 100 / r.total_market).toFixed(1)) : 0,
+            is_partial: false
+        }));
+
+        // Add partial year comparisons
+        compareRes.rows.forEach(r => {
+            yearlyData.push({
+                year: r.year,
+                label: `${r.year} İLK ${maxMonth} AY`,
+                total_market: parseInt(r.total_market),
+                brand_sales: parseInt(r.brand_sales),
+                brand_share_pct: r.total_market > 0 ? parseFloat((r.brand_sales * 100 / r.total_market).toFixed(1)) : 0,
+                is_partial: true
+            });
+        });
+
+        // Calculate % difference between last 2 partial periods
+        const partials = yearlyData.filter(d => d.is_partial).sort((a, b) => a.year - b.year);
+        let pctDiffMarket = null, pctDiffBrand = null;
+        if (partials.length === 2) {
+            pctDiffMarket = partials[0].total_market > 0
+                ? parseFloat(((partials[1].total_market - partials[0].total_market) * 100 / partials[0].total_market).toFixed(1))
+                : null;
+            pctDiffBrand = partials[0].brand_sales > 0
+                ? parseFloat(((partials[1].brand_sales - partials[0].brand_sales) * 100 / partials[0].brand_sales).toFixed(1))
+                : null;
+        }
+
+        res.json({
+            data: yearlyData,
+            max_year: maxYear,
+            max_month: maxMonth,
+            compare_months: maxMonth,
+            pct_diff_market: pctDiffMarket,
+            pct_diff_brand: pctDiffBrand
+        });
+    } catch (err) {
+        console.error('Historical error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // İl bazlı satış verileri
 app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
     try {
