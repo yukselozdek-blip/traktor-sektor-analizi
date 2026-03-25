@@ -286,9 +286,12 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
     }
 });
 
-// Toplam Pazar - Aylık karşılaştırma (2 yıl yan yana)
+// Toplam Pazar - Aylık karşılaştırma (2 yıl yan yana, marka bazlı)
 app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
     try {
+        const { brand_id } = req.query;
+        const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
+
         // Son veri noktasını bul
         const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
         const maxYear = parseInt(latestRes.rows[0].max_year);
@@ -296,44 +299,67 @@ app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
 
-        // Her iki yılın aylık toplam pazar verisi
-        const monthlyRes = await pool.query(`
+        // Toplam pazar (tüm markalar) - aylık
+        const totalRes = await pool.query(`
             SELECT year, month, SUM(quantity) as total
             FROM sales_data
             WHERE year IN ($1, $2)
-            GROUP BY year, month
-            ORDER BY year, month
+            GROUP BY year, month ORDER BY year, month
         `, [prevYear, maxYear]);
 
-        // Aylık veriyi düzenle
-        const months = {};
-        monthlyRes.rows.forEach(r => {
-            if (!months[r.month]) months[r.month] = {};
-            months[r.month][r.year] = parseInt(r.total);
-        });
-
-        // Sadece maxMonth'a kadar olan ayları döndür (son yılda veri olan)
-        const data = [];
-        let totalPrev = 0, totalCurr = 0;
-        for (let m = 1; m <= maxMonth; m++) {
-            const prev = months[m]?.[prevYear] || 0;
-            const curr = months[m]?.[maxYear] || 0;
-            const delta = prev > 0 ? parseFloat(((curr - prev) * 100 / prev).toFixed(1)) : null;
-            totalPrev += prev;
-            totalCurr += curr;
-            data.push({ month: m, prev_year: prev, curr_year: curr, delta_pct: delta });
+        // Seçili marka - aylık
+        let brandRes = { rows: [] };
+        let brandName = null;
+        if (userBrandId) {
+            brandRes = await pool.query(`
+                SELECT year, month, SUM(quantity) as total
+                FROM sales_data
+                WHERE year IN ($1, $2) AND brand_id = $3
+                GROUP BY year, month ORDER BY year, month
+            `, [prevYear, maxYear, userBrandId]);
+            const brandInfo = await pool.query('SELECT name FROM brands WHERE id = $1', [userBrandId]);
+            brandName = brandInfo.rows[0]?.name || null;
         }
 
-        const totalDelta = totalPrev > 0 ? parseFloat(((totalCurr - totalPrev) * 100 / totalPrev).toFixed(1)) : null;
+        // Verileri düzenle
+        const totalMonths = {};
+        totalRes.rows.forEach(r => {
+            if (!totalMonths[r.month]) totalMonths[r.month] = {};
+            totalMonths[r.month][r.year] = parseInt(r.total);
+        });
+        const brandMonths = {};
+        brandRes.rows.forEach(r => {
+            if (!brandMonths[r.month]) brandMonths[r.month] = {};
+            brandMonths[r.month][r.year] = parseInt(r.total);
+        });
+
+        const data = [];
+        let tPrev = 0, tCurr = 0, bPrev = 0, bCurr = 0;
+        for (let m = 1; m <= maxMonth; m++) {
+            const tp = totalMonths[m]?.[prevYear] || 0;
+            const tc = totalMonths[m]?.[maxYear] || 0;
+            const bp = brandMonths[m]?.[prevYear] || 0;
+            const bc = brandMonths[m]?.[maxYear] || 0;
+            tPrev += tp; tCurr += tc; bPrev += bp; bCurr += bc;
+            data.push({
+                month: m,
+                total_prev: tp, total_curr: tc,
+                total_delta: tp > 0 ? parseFloat(((tc - tp) * 100 / tp).toFixed(1)) : null,
+                brand_prev: bp, brand_curr: bc,
+                brand_delta: bp > 0 ? parseFloat(((bc - bp) * 100 / bp).toFixed(1)) : null
+            });
+        }
 
         res.json({
             prev_year: prevYear,
             curr_year: maxYear,
             max_month: maxMonth,
+            brand_name: brandName,
             months: data,
-            total_prev: totalPrev,
-            total_curr: totalCurr,
-            total_delta: totalDelta
+            total_prev: tPrev, total_curr: tCurr,
+            total_delta: tPrev > 0 ? parseFloat(((tCurr - tPrev) * 100 / tPrev).toFixed(1)) : null,
+            brand_prev: bPrev, brand_curr: bCurr,
+            brand_delta: bPrev > 0 ? parseFloat(((bCurr - bPrev) * 100 / bPrev).toFixed(1)) : null
         });
     } catch (err) {
         console.error('Total market error:', err);
@@ -831,7 +857,7 @@ app.post('/api/admin/seed-sales', async (req, res) => {
             for (const prov of selectedProvs) {
                 for (let year = 2020; year <= 2025; year++) {
                     for (let month = 1; month <= 12; month++) {
-                        if (year === 2025 && month > 3) continue;
+                        if (year === 2025 && month > 5) continue;
                         const cat = categories[Math.floor(Math.random() * categories.length)];
                         const cabin = cabinTypes[Math.floor(Math.random() * cabinTypes.length)];
                         const drive = driveTypes[Math.floor(Math.random() * driveTypes.length)];

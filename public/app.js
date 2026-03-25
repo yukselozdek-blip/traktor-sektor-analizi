@@ -384,70 +384,140 @@ async function reloadHistorical() {
 // ============================================
 // TOPLAM PAZAR PAGE
 // ============================================
+let tmSelectedBrandId = null;
+
+async function reloadTotalMarket() {
+    tmSelectedBrandId = parseInt(document.getElementById('tmBrandFilter')?.value) || null;
+    API.clearCache();
+    Object.values(charts).forEach(c => c.destroy?.());
+    charts = {};
+    loadTotalMarketPage();
+}
+
 async function loadTotalMarketPage() {
     try {
-        const data = await API.getTotalMarket();
+        const [brands, data] = await Promise.all([
+            API.getBrands(),
+            API.getTotalMarket(tmSelectedBrandId)
+        ]);
         if (!data) return;
 
         const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
         const prevYear = data.prev_year;
         const currYear = data.curr_year;
         const maxMonth = data.max_month;
+        const brandName = data.brand_name || 'Marka Seçiniz';
 
-        // Build table rows
-        let headerCells = '<th></th>';
-        let prevCells = `<td class="tm-year-label">${prevYear}</td>`;
-        let currCells = `<td class="tm-year-label">${currYear}</td>`;
-        let deltaCells = '<td class="tm-year-label">Δ%</td>';
-
-        data.months.forEach(m => {
-            headerCells += `<th>${monthNames[m.month - 1]}</th>`;
-            prevCells += `<td>${m.prev_year.toLocaleString('tr-TR')}</td>`;
-            currCells += `<td>${m.curr_year.toLocaleString('tr-TR')}</td>`;
-            const deltaClass = m.delta_pct >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
-            deltaCells += `<td class="${deltaClass}">${m.delta_pct !== null ? '%' + m.delta_pct.toLocaleString('tr-TR') : '-'}</td>`;
+        // Brand selector options
+        let brandOptions = '<option value="">-- Marka Seçin --</option>';
+        (brands || []).forEach(b => {
+            brandOptions += `<option value="${b.id}" ${b.id === tmSelectedBrandId ? 'selected' : ''}>${b.name}</option>`;
         });
 
-        // Totals
-        headerCells += `<th>İLK ${maxMonth} AY</th><th>TOPLAM</th>`;
-        prevCells += `<td class="tm-total">${data.total_prev.toLocaleString('tr-TR')}</td><td class="tm-total">${data.total_prev.toLocaleString('tr-TR')}</td>`;
-        currCells += `<td class="tm-total">${data.total_curr.toLocaleString('tr-TR')}</td><td class="tm-total">${data.total_curr.toLocaleString('tr-TR')}</td>`;
-        const totalDeltaClass = data.total_delta >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
-        deltaCells += `<td class="tm-total ${totalDeltaClass}">${data.total_delta !== null ? '%' + data.total_delta.toLocaleString('tr-TR') : '-'}</td>`;
-        deltaCells += `<td class="tm-total ${totalDeltaClass}">${data.total_delta !== null ? '%' + data.total_delta.toLocaleString('tr-TR') : '-'}</td>`;
+        // ---- TOPLAM PAZAR TABLOSU ----
+        let tHeaderCells = '<th></th>';
+        let tPrevCells = `<td class="tm-year-label">${prevYear}</td>`;
+        let tCurrCells = `<td class="tm-year-label">${currYear}</td>`;
+        let tDeltaCells = '<td class="tm-year-label">Δ%</td>';
 
-        document.getElementById('pageContent').innerHTML = `
-            <div class="tm-container">
-                <div class="tm-header">
-                    <h2>Toplam Traktör Pazarı (${prevYear} - ${currYear})</h2>
-                    <p>İlk ${maxMonth} ay karşılaştırması</p>
-                </div>
+        data.months.forEach(m => {
+            tHeaderCells += `<th>${monthNames[m.month - 1]}</th>`;
+            tPrevCells += `<td>${m.total_prev.toLocaleString('tr-TR')}</td>`;
+            tCurrCells += `<td>${m.total_curr.toLocaleString('tr-TR')}</td>`;
+            const dc = m.total_delta >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+            tDeltaCells += `<td class="${dc}">${m.total_delta !== null ? '%' + m.total_delta.toLocaleString('tr-TR') : '-'}</td>`;
+        });
+        tHeaderCells += `<th>İLK ${maxMonth} AY</th>`;
+        tPrevCells += `<td class="tm-total">${data.total_prev.toLocaleString('tr-TR')}</td>`;
+        tCurrCells += `<td class="tm-total">${data.total_curr.toLocaleString('tr-TR')}</td>`;
+        const tdcT = data.total_delta >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+        tDeltaCells += `<td class="tm-total ${tdcT}">${data.total_delta !== null ? '%' + data.total_delta.toLocaleString('tr-TR') : '-'}</td>`;
+
+        // ---- MARKA TABLOSU ----
+        let brandTableHtml = '';
+        if (tmSelectedBrandId && data.brand_name) {
+            let bHeaderCells = '<th></th>';
+            let bPrevCells = `<td class="tm-year-label">${prevYear}</td>`;
+            let bCurrCells = `<td class="tm-year-label">${currYear}</td>`;
+            let bDeltaCells = '<td class="tm-year-label">Δ%</td>';
+            let bSharePrevCells = `<td class="tm-year-label">${brandName} Pazar Payı</td>`;
+
+            data.months.forEach(m => {
+                bHeaderCells += `<th>${monthNames[m.month - 1]}</th>`;
+                bPrevCells += `<td>${m.brand_prev.toLocaleString('tr-TR')}</td>`;
+                bCurrCells += `<td>${m.brand_curr.toLocaleString('tr-TR')}</td>`;
+                const dc = m.brand_delta >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+                bDeltaCells += `<td class="${dc}">${m.brand_delta !== null ? '%' + m.brand_delta.toLocaleString('tr-TR') : '-'}</td>`;
+                // Pazar payı
+                const sharePrev = m.total_curr > 0 ? (m.brand_curr * 100 / m.total_curr).toFixed(1) : '0.0';
+                bSharePrevCells += `<td>%${sharePrev}</td>`;
+            });
+            bHeaderCells += `<th>İLK ${maxMonth} AY</th>`;
+            bPrevCells += `<td class="tm-total">${data.brand_prev.toLocaleString('tr-TR')}</td>`;
+            bCurrCells += `<td class="tm-total">${data.brand_curr.toLocaleString('tr-TR')}</td>`;
+            const bdcT = data.brand_delta >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+            bDeltaCells += `<td class="tm-total ${bdcT}">${data.brand_delta !== null ? '%' + data.brand_delta.toLocaleString('tr-TR') : '-'}</td>`;
+            const totalShare = data.total_curr > 0 ? (data.brand_curr * 100 / data.total_curr).toFixed(1) : '0.0';
+            bSharePrevCells += `<td class="tm-total">%${totalShare}</td>`;
+
+            brandTableHtml = `
                 <div class="chart-card" style="padding:24px; margin-bottom:24px;">
-                    <canvas id="totalMarketChart" height="400"></canvas>
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;">${brandName} Aylık Karşılaştırma (${prevYear} - ${currYear})</h3>
+                    <canvas id="brandMarketChart" height="350"></canvas>
                 </div>
-                <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto;">
+                <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
                     <table class="tm-table">
-                        <thead><tr>${headerCells}</tr></thead>
+                        <thead><tr>${bHeaderCells}</tr></thead>
                         <tbody>
-                            <tr class="tm-row-prev">${prevCells}</tr>
-                            <tr class="tm-row-curr">${currCells}</tr>
-                            <tr class="tm-row-delta">${deltaCells}</tr>
+                            <tr class="tm-row-prev">${bPrevCells}</tr>
+                            <tr class="tm-row-curr">${bCurrCells}</tr>
+                            <tr class="tm-row-delta">${bDeltaCells}</tr>
+                            <tr class="tm-row-share">${bSharePrevCells}</tr>
                         </tbody>
                     </table>
                 </div>
+            `;
+        }
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="tm-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Toplam Traktör Pazarı (${prevYear} - ${currYear})</h2>
+                        <p>İlk ${maxMonth} ay karşılaştırması</p>
+                    </div>
+                    <select id="tmBrandFilter" class="year-select" onchange="reloadTotalMarket()" style="min-width:200px;">
+                        ${brandOptions}
+                    </select>
+                </div>
+                <div class="chart-card" style="padding:24px; margin-bottom:24px;">
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;">Toplam Pazar Aylık Karşılaştırma</h3>
+                    <canvas id="totalMarketChart" height="350"></canvas>
+                </div>
+                <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
+                    <table class="tm-table">
+                        <thead><tr>${tHeaderCells}</tr></thead>
+                        <tbody>
+                            <tr class="tm-row-prev">${tPrevCells}</tr>
+                            <tr class="tm-row-curr">${tCurrCells}</tr>
+                            <tr class="tm-row-delta">${tDeltaCells}</tr>
+                        </tbody>
+                    </table>
+                </div>
+                ${brandTableHtml}
             </div>
         `;
 
-        // Chart
-        const ctx = document.getElementById('totalMarketChart').getContext('2d');
-        charts.totalMarket = new Chart(ctx, {
+        // Toplam Pazar Chart
+        const ctx1 = document.getElementById('totalMarketChart').getContext('2d');
+        charts.totalMarket = new Chart(ctx1, {
             type: 'bar',
             data: {
                 labels: data.months.map(m => monthNames[m.month - 1]),
                 datasets: [
                     {
                         label: prevYear.toString(),
-                        data: data.months.map(m => m.prev_year),
+                        data: data.months.map(m => m.total_prev),
                         backgroundColor: '#1e3a5f',
                         borderColor: '#1e3a5f',
                         borderWidth: 1,
@@ -455,7 +525,7 @@ async function loadTotalMarketPage() {
                     },
                     {
                         label: currYear.toString(),
-                        data: data.months.map(m => m.curr_year),
+                        data: data.months.map(m => m.total_curr),
                         backgroundColor: '#2e7d32',
                         borderColor: '#2e7d32',
                         borderWidth: 1,
@@ -483,23 +553,74 @@ async function loadTotalMarketPage() {
                     }
                 },
                 scales: {
-                    x: {
-                        ticks: { color: '#94a3b8', font: { size: 12 } },
-                        grid: { color: 'rgba(148,163,184,0.1)' }
-                    },
+                    x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
                     y: {
                         beginAtZero: true,
-                        ticks: {
-                            color: '#94a3b8',
-                            font: { size: 11 },
-                            callback: v => v.toLocaleString('tr-TR')
-                        },
+                        ticks: { color: '#94a3b8', callback: v => v.toLocaleString('tr-TR') },
                         grid: { color: 'rgba(148,163,184,0.1)' },
                         title: { display: true, text: 'Pazar (Adet)', color: '#94a3b8' }
                     }
                 }
             }
         });
+
+        // Marka Chart
+        if (tmSelectedBrandId && data.brand_name) {
+            const ctx2 = document.getElementById('brandMarketChart').getContext('2d');
+            charts.brandMarket = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: data.months.map(m => monthNames[m.month - 1]),
+                    datasets: [
+                        {
+                            label: `${brandName} ${prevYear}`,
+                            data: data.months.map(m => m.brand_prev),
+                            backgroundColor: '#1e3a5f',
+                            borderColor: '#1e3a5f',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        },
+                        {
+                            label: `${brandName} ${currYear}`,
+                            data: data.months.map(m => m.brand_curr),
+                            backgroundColor: '#2e7d32',
+                            borderColor: '#2e7d32',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { color: '#f1f5f9', font: { size: 13, family: 'Inter' }, usePointStyle: true, padding: 20 }
+                        },
+                        tooltip: {
+                            backgroundColor: '#1e293b',
+                            titleColor: '#f1f5f9',
+                            bodyColor: '#94a3b8',
+                            borderColor: '#334155',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('tr-TR')} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#94a3b8', callback: v => v.toLocaleString('tr-TR') },
+                            grid: { color: 'rgba(148,163,184,0.1)' },
+                            title: { display: true, text: 'Adet', color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+        }
 
     } catch (err) {
         showError(err);

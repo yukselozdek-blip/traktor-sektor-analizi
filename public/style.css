@@ -834,9 +834,16 @@ select {
    TOPLAM PAZAR TABLE
    ============================================ */
 .tm-container { }
-.tm-header { margin-bottom: 20px; }
-.tm-header h2 { color: var(--text-primary); margin: 0; font-size: 20px; }
-.tm-header p { color: var(--text-secondary); margin: 4px 0 0; font-size: 13px; }
+.tm-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+.tm-top-bar h2 { color: var(--text-primary); margin: 0; font-size: 20px; }
+.tm-top-bar p { color: var(--text-secondary); margin: 4px 0 0; font-size: 13px; }
 
 .tm-table-card { margin-top: 0; }
 .tm-table {
@@ -873,3 +880,4 @@ select {
 .tm-delta-pos { color: #4ade80 !important; }
 .tm-delta-neg { color: #f87171 !important; }
 .tm-total { font-weight: 700; background: rgba(255,255,255,0.08) !important; }
+.tm-row-share td { background: rgba(99,102,241,0.15); color: #a5b4fc !important; font-weight: 600; }
