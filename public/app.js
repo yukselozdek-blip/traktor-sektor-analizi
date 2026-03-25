@@ -78,6 +78,7 @@ function navigateTo(page) {
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
     if (leafletMap) { leafletMap.remove(); leafletMap = null; geoJsonLayer = null; }
+    if (mapFullInstance) { mapFullInstance.remove(); mapFullInstance = null; mapFullGeoJson = null; }
 
     const titles = {
         dashboard: ['Dashboard', 'Genel Bakış'],
@@ -86,6 +87,7 @@ function navigateTo(page) {
         'brand-summary': ['Marka', 'Tüm Markalar Özet Tablosu'],
         'distributor': ['Distribütör', 'Distribütör Bazlı Pazar Analizi'],
         'hp-segment': ['HP Segment', 'Beygir Gücü Segment Dağılımı'],
+        'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
@@ -108,6 +110,7 @@ function navigateTo(page) {
         'brand-summary': loadBrandSummaryPage,
         'distributor': loadDistributorPage,
         'hp-segment': loadHpSegmentPage,
+        'map-full': loadMapFullPage,
         map: loadMapPage,
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
@@ -479,6 +482,165 @@ async function loadBrandSummaryPage() {
 
     } catch (err) {
         showError(err);
+    }
+}
+
+// ============================================
+// HARİTA 1 - TAM EKRAN FİLTRELİ HARİTA
+// ============================================
+let mapFullInstance = null;
+let mapFullGeoJson = null;
+
+async function loadMapFullPage() {
+    const hpSegments = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+    const gearConfigs = ['8+2', '8+8', '12+12', '16+16', '32+32', 'CVT'];
+
+    const brandOpts = allBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+    const hpOpts = hpSegments.map(h => `<option value="${h}">${h} HP</option>`).join('');
+    const gearOpts = gearConfigs.map(g => `<option value="${g}">${g}</option>`).join('');
+
+    document.getElementById('pageContent').innerHTML = `
+        <div class="mf-container">
+            <div class="mf-filters">
+                <select id="mfBrand" onchange="updateMapFull()">
+                    <option value="">Tüm Markalar</option>${brandOpts}
+                </select>
+                <select id="mfCabin" onchange="updateMapFull()">
+                    <option value="">Tüm Kabin</option>
+                    <option value="kabinli">Kabinli</option>
+                    <option value="rollbar">Rollbar</option>
+                </select>
+                <select id="mfDrive" onchange="updateMapFull()">
+                    <option value="">Tüm Çekiş</option>
+                    <option value="2WD">2WD</option>
+                    <option value="4WD">4WD</option>
+                </select>
+                <select id="mfGear" onchange="updateMapFull()">
+                    <option value="">Tüm Şanzıman</option>${gearOpts}
+                </select>
+                <select id="mfHp" onchange="updateMapFull()">
+                    <option value="">Tüm HP</option>${hpOpts}
+                </select>
+            </div>
+            <div class="mf-map-wrap">
+                <div id="mapFullContainer"></div>
+                <div class="mf-legend">
+                    <span><i style="background:#1e40af"></i>Yüksek</span>
+                    <span><i style="background:#3b82f6"></i>Orta-Yüksek</span>
+                    <span><i style="background:#60a5fa"></i>Orta</span>
+                    <span><i style="background:#93c5fd"></i>Düşük</span>
+                    <span><i style="background:#1e293b"></i>Satış Yok</span>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Harita oluştur
+    if (mapFullInstance) { mapFullInstance.remove(); mapFullInstance = null; }
+    mapFullInstance = L.map('mapFullContainer', {
+        center: [39.0, 35.5],
+        zoom: 6.5,
+        minZoom: 5,
+        maxZoom: 10,
+        zoomControl: true,
+        attributionControl: false
+    });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd', maxZoom: 19
+    }).addTo(mapFullInstance);
+
+    // İlk yükleme
+    await updateMapFull();
+}
+
+async function updateMapFull() {
+    const brandId = document.getElementById('mfBrand')?.value || '';
+    const filters = {
+        cabin_type: document.getElementById('mfCabin')?.value || '',
+        drive_type: document.getElementById('mfDrive')?.value || '',
+        hp_range: document.getElementById('mfHp')?.value || '',
+        gear_config: document.getElementById('mfGear')?.value || ''
+    };
+
+    const salesData = await API.getSalesByProvince(selectedYear, brandId, filters);
+    await renderMapFullGeoJSON(salesData);
+}
+
+async function renderMapFullGeoJSON(salesData) {
+    try {
+        const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+        const geoData = await response.json();
+
+        const provinceSales = {};
+        (salesData || []).forEach(s => {
+            const name = s.province_name;
+            if (!provinceSales[name]) provinceSales[name] = { total: 0, brands: {} };
+            provinceSales[name].total += parseInt(s.total_sales);
+            if (s.brand_name) {
+                if (!provinceSales[name].brands[s.brand_name]) provinceSales[name].brands[s.brand_name] = 0;
+                provinceSales[name].brands[s.brand_name] += parseInt(s.total_sales);
+            }
+        });
+
+        const allTotals = Object.values(provinceSales).map(p => p.total);
+        const maxSales = Math.max(...allTotals, 1);
+
+        const nameMap = {
+            'Afyon': 'Afyonkarahisar', 'Elâzığ': 'Elazığ', 'Içel': 'Mersin',
+            'Kahramanmaras': 'Kahramanmaraş', 'Kirikkale': 'Kırıkkale', 'Kirklareli': 'Kırklareli',
+            'Kirsehir': 'Kırşehir', 'Nevsehir': 'Nevşehir', 'Nigde': 'Niğde',
+            'Sanliurfa': 'Şanlıurfa', 'Sirnak': 'Şırnak', 'K. Maras': 'Kahramanmaraş'
+        };
+
+        function getColor(sales) {
+            if (!sales || sales === 0) return '#1e293b';
+            const ratio = sales / maxSales;
+            if (ratio > 0.7) return '#1e40af';
+            if (ratio > 0.4) return '#3b82f6';
+            if (ratio > 0.2) return '#60a5fa';
+            return '#93c5fd';
+        }
+
+        if (mapFullGeoJson) mapFullInstance.removeLayer(mapFullGeoJson);
+
+        mapFullGeoJson = L.geoJSON(geoData, {
+            style: function(feature) {
+                const name = feature.properties.name || feature.properties.Name;
+                const dbName = nameMap[name] || name;
+                const sales = provinceSales[dbName]?.total || 0;
+                return { fillColor: getColor(sales), weight: 1, opacity: 1, color: '#334155', fillOpacity: 0.85 };
+            },
+            onEachFeature: function(feature, layer) {
+                const name = feature.properties.name || feature.properties.Name;
+                const dbName = nameMap[name] || name;
+                const data = provinceSales[dbName];
+                const sales = data?.total || 0;
+                const prov = allProvinces.find(p => p.name === dbName);
+
+                const topBrands = data ? Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,5) : [];
+                layer.bindTooltip(`
+                    <div style="font-size:13px;min-width:200px">
+                        <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
+                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                        <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
+                        ${topBrands.length > 0 ? `
+                            <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                            <div style="font-size:11px;color:#94a3b8">En Çok Satan:</div>
+                            ${topBrands.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])}</span></div>`).join('')}
+                        ` : ''}
+                    </div>
+                `, { sticky: true, className: 'map-tooltip' });
+
+                layer.on('mouseover', function() { this.setStyle({ weight: 3, color: '#60a5fa', fillOpacity: 1 }); this.bringToFront(); });
+                layer.on('mouseout', function() { mapFullGeoJson.resetStyle(this); });
+            }
+        }).addTo(mapFullInstance);
+
+        mapFullInstance.fitBounds(mapFullGeoJson.getBounds(), { padding: [5, 5] });
+
+    } catch (err) {
+        console.error('MapFull GeoJSON error:', err);
     }
 }
 

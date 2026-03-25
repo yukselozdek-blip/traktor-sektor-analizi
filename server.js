@@ -653,10 +653,10 @@ app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
     }
 });
 
-// İl bazlı satış verileri
+// İl bazlı satış verileri (filtreleme destekli)
 app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
     try {
-        const { year, brand_id } = req.query;
+        const { year, brand_id, cabin_type, drive_type, hp_range, gear_config } = req.query;
         const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
         const targetYear = year || new Date().getFullYear();
 
@@ -670,10 +670,11 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
             WHERE s.year = $1
         `;
         const params = [targetYear];
-        if (userBrandId) {
-            params.push(userBrandId);
-            query += ` AND s.brand_id = $${params.length}`;
-        }
+        if (userBrandId) { params.push(userBrandId); query += ` AND s.brand_id = $${params.length}`; }
+        if (cabin_type) { params.push(cabin_type); query += ` AND s.cabin_type = $${params.length}`; }
+        if (drive_type) { params.push(drive_type); query += ` AND s.drive_type = $${params.length}`; }
+        if (hp_range) { params.push(hp_range); query += ` AND s.hp_range = $${params.length}`; }
+        if (gear_config) { params.push(gear_config); query += ` AND s.gear_config = $${params.length}`; }
         query += ' GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region, b.id, b.name, b.slug, b.primary_color ORDER BY total_sales DESC';
         const result = await pool.query(query, params);
         res.json(result.rows);
