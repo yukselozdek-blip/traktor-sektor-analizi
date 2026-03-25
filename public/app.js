@@ -644,7 +644,7 @@ async function loadObtHpPage() {
 
         function cell(val, total) {
             const pct = total > 0 ? (val * 100 / total).toFixed(1) : '0.0';
-            return `<td class="obt-cell"><span class="obt-adet">${val.toLocaleString('tr-TR')}</span><span class="obt-pct">${pct}%</span></td>`;
+            return `<td><div class="obt-cell"><span class="obt-adet">${val.toLocaleString('tr-TR')}</span><span class="obt-pct">${pct}%</span></div></td>`;
         }
 
         function buildTable(catKey, catData) {
