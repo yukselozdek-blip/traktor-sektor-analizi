@@ -881,3 +881,63 @@ select {
 .tm-delta-neg { color: #f87171 !important; }
 .tm-total { font-weight: 700; background: rgba(255,255,255,0.08) !important; }
 .tm-row-share td { background: rgba(99,102,241,0.15); color: #a5b4fc !important; font-weight: 600; }
+
+/* ============================================
+   BRAND SUMMARY TABLE
+   ============================================ */
+.bs-container { }
+.bs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: 'Inter', sans-serif;
+    white-space: nowrap;
+}
+.bs-table th {
+    background: #1e3a5f;
+    color: #f1f5f9;
+    padding: 8px 10px;
+    text-align: center;
+    font-weight: 600;
+    border: 1px solid #2d4a6f;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+.bs-table td {
+    padding: 5px 8px;
+    text-align: right;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+}
+.bs-rank {
+    text-align: center !important;
+    font-weight: 700;
+    color: #94a3b8 !important;
+    width: 30px;
+    vertical-align: middle;
+}
+.bs-brand {
+    text-align: left !important;
+    font-weight: 700;
+    color: #f1f5f9 !important;
+    min-width: 130px;
+    vertical-align: middle;
+}
+.bs-type {
+    text-align: center !important;
+    font-weight: 600;
+    color: #94a3b8 !important;
+    width: 35px;
+}
+.bs-row-adet td { background: rgba(255,255,255,0.02); }
+.bs-row-pct td { background: rgba(255,255,255,0.05); }
+.bs-pct { color: #94a3b8 !important; font-size: 11px; }
+.bs-partial { font-weight: 700; background: rgba(59,130,246,0.1) !important; }
+.bs-row-total td {
+    background: rgba(255,255,255,0.1) !important;
+    font-weight: 700;
+    border-top: 2px solid #64748b;
+}
+.bs-total-label { font-size: 13px !important; }
+.bs-total-val { color: #f1f5f9 !important; }

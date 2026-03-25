@@ -92,5 +92,6 @@ const API = {
     async getNotifications() { return this.get('/api/notifications'); },
     async markNotificationRead(id) { return this.put(`/api/notifications/${id}/read`); },
     async getWorkflows() { return this.get('/api/workflows'); },
-    async getTotalMarket(brandId) { return this.get(`/api/sales/total-market?brand_id=${brandId || ''}`); }
+    async getTotalMarket(brandId) { return this.get(`/api/sales/total-market?brand_id=${brandId || ''}`); },
+    async getBrandSummary() { return this.get('/api/sales/brand-summary'); }
 };

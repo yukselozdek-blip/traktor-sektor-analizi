@@ -83,6 +83,7 @@ function navigateTo(page) {
         dashboard: ['Dashboard', 'Genel Bakış'],
         historical: ['Tarihsel Gelişim', 'Traktör Pazarı Yıllık Analiz'],
         'total-market': ['Toplam Pazar', 'Yıllık Aylık Karşılaştırma'],
+        'brand-summary': ['Marka', 'Tüm Markalar Özet Tablosu'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
@@ -102,6 +103,7 @@ function navigateTo(page) {
         dashboard: loadDashboard,
         historical: loadHistoricalPage,
         'total-market': loadTotalMarketPage,
+        'brand-summary': loadBrandSummaryPage,
         map: loadMapPage,
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
@@ -379,6 +381,101 @@ async function reloadHistorical() {
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
     loadHistoricalPage();
+}
+
+// ============================================
+// MARKA (BRAND SUMMARY) PAGE
+// ============================================
+async function loadBrandSummaryPage() {
+    try {
+        const summary = await API.getBrandSummary();
+        if (!summary) return;
+
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const { years, brands, totals, max_month, max_year, prev_year } = summary;
+
+        // Header row
+        let header = '<th>#</th><th>MARKA</th><th></th>';
+        years.forEach(y => { header += `<th>${y}</th>`; });
+        for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
+        header += `<th>${prev_year} İLK ${max_month} AY</th>`;
+        header += `<th>${max_year} İLK ${max_month} AY</th>`;
+        header += '<th>% FARK</th>';
+
+        // Brand rows
+        let bodyRows = '';
+        brands.forEach((brand, idx) => {
+            const rank = idx + 1;
+            // Adet row
+            let adetRow = `<td class="bs-rank" rowspan="2">${rank}</td>`;
+            adetRow += `<td class="bs-brand" rowspan="2">${brand.name}</td>`;
+            adetRow += '<td class="bs-type">Adet</td>';
+            years.forEach(y => {
+                adetRow += `<td>${(brand.yearly[y] || 0).toLocaleString('tr-TR')}</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                adetRow += `<td>${(brand.months[m] || 0).toLocaleString('tr-TR')}</td>`;
+            }
+            adetRow += `<td class="bs-partial">${brand.prev_partial.toLocaleString('tr-TR')}</td>`;
+            adetRow += `<td class="bs-partial">${brand.curr_partial.toLocaleString('tr-TR')}</td>`;
+            const brandDelta = brand.prev_partial > 0 ? ((brand.curr_partial - brand.prev_partial) * 100 / brand.prev_partial).toFixed(1) : '-';
+            const brandDeltaClass = brandDelta !== '-' && parseFloat(brandDelta) >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+            adetRow += `<td class="bs-partial ${brandDeltaClass}">${brandDelta !== '-' ? '%' + brandDelta : '-'}</td>`;
+
+            // % row (pazar payı)
+            let pctRow = '<td class="bs-type">%</td>';
+            years.forEach(y => {
+                const share = totals.yearly[y] > 0 ? ((brand.yearly[y] || 0) * 100 / totals.yearly[y]).toFixed(1) : '0.0';
+                pctRow += `<td class="bs-pct">${share}%</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                const share = totals.months[m] > 0 ? ((brand.months[m] || 0) * 100 / totals.months[m]).toFixed(1) : '0.0';
+                pctRow += `<td class="bs-pct">${share}%</td>`;
+            }
+            const prevShare = totals.prev_partial > 0 ? ((brand.prev_partial) * 100 / totals.prev_partial).toFixed(1) : '0.0';
+            const currShare = totals.curr_partial > 0 ? ((brand.curr_partial) * 100 / totals.curr_partial).toFixed(1) : '0.0';
+            pctRow += `<td class="bs-partial bs-pct">${prevShare}%</td>`;
+            pctRow += `<td class="bs-partial bs-pct">${currShare}%</td>`;
+            pctRow += '<td></td>';
+
+            bodyRows += `<tr class="bs-row-adet">${adetRow}</tr><tr class="bs-row-pct">${pctRow}</tr>`;
+        });
+
+        // TOPLAM row
+        let totalAdet = '<td class="bs-rank"></td><td class="bs-brand bs-total-label">TOPLAM</td><td class="bs-type">Adet</td>';
+        years.forEach(y => {
+            totalAdet += `<td class="bs-total-val">${(totals.yearly[y] || 0).toLocaleString('tr-TR')}</td>`;
+        });
+        for (let m = 1; m <= max_month; m++) {
+            totalAdet += `<td class="bs-total-val">${(totals.months[m] || 0).toLocaleString('tr-TR')}</td>`;
+        }
+        totalAdet += `<td class="bs-total-val bs-partial">${totals.prev_partial.toLocaleString('tr-TR')}</td>`;
+        totalAdet += `<td class="bs-total-val bs-partial">${totals.curr_partial.toLocaleString('tr-TR')}</td>`;
+        const totalDelta = totals.prev_partial > 0 ? ((totals.curr_partial - totals.prev_partial) * 100 / totals.prev_partial).toFixed(1) : '-';
+        const totalDeltaClass = totalDelta !== '-' && parseFloat(totalDelta) >= 0 ? 'tm-delta-pos' : 'tm-delta-neg';
+        totalAdet += `<td class="bs-total-val bs-partial ${totalDeltaClass}">${totalDelta !== '-' ? '%' + totalDelta : '-'}</td>`;
+        bodyRows += `<tr class="bs-row-total">${totalAdet}</tr>`;
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="bs-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Marka Bazlı Pazar Analizi</h2>
+                        <p>${years[0]} - ${max_year} yılları arası · İlk ${max_month} ay karşılaştırması</p>
+                    </div>
+                </div>
+                <div class="chart-card" style="padding:16px; overflow-x:auto;">
+                    <table class="bs-table">
+                        <thead><tr>${header}</tr></thead>
+                        <tbody>${bodyRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
 }
 
 // ============================================

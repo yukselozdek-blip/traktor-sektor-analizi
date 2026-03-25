@@ -286,6 +286,112 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
     }
 });
 
+// Marka Özet Tablosu - Tüm markalar yıllık + aylık + karşılaştırma
+app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
+    try {
+        // Son veri noktası
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+
+        // 1. Yıllık toplamlar (tüm yıllar, marka bazlı) - son yıl hariç (partial)
+        const yearlyRes = await pool.query(`
+            SELECT b.id as brand_id, b.name as brand_name, s.year, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.year >= $1 AND s.year <= $2
+            GROUP BY b.id, b.name, s.year ORDER BY b.name, s.year
+        `, [minYear, prevYear]);
+
+        // 2. Son yılın aylık verileri (marka bazlı)
+        const monthlyRes = await pool.query(`
+            SELECT b.id as brand_id, b.name as brand_name, s.month, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1
+            GROUP BY b.id, b.name, s.month ORDER BY b.name, s.month
+        `, [maxYear]);
+
+        // 3. Önceki yılın ilk N ayı (marka bazlı)
+        const prevPartialRes = await pool.query(`
+            SELECT b.id as brand_id, b.name as brand_name, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1 AND s.month <= $2
+            GROUP BY b.id, b.name ORDER BY b.name
+        `, [prevYear, maxMonth]);
+
+        // 4. Son yılın ilk N ayı (marka bazlı) = aylık toplamların toplamı
+        const currPartialRes = await pool.query(`
+            SELECT b.id as brand_id, b.name as brand_name, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1 AND s.month <= $2
+            GROUP BY b.id, b.name ORDER BY b.name
+        `, [maxYear, maxMonth]);
+
+        // 5. Yıllık toplam pazar
+        const yearlyTotalRes = await pool.query(`
+            SELECT year, SUM(quantity) as total FROM sales_data
+            WHERE year >= $1 AND year <= $2
+            GROUP BY year ORDER BY year
+        `, [minYear, prevYear]);
+
+        // 6. Son yıl aylık toplam pazar
+        const monthlyTotalRes = await pool.query(`
+            SELECT month, SUM(quantity) as total FROM sales_data
+            WHERE year = $1 GROUP BY month ORDER BY month
+        `, [maxYear]);
+
+        // 7. Önceki yıl partial toplam
+        const prevPartialTotalRes = await pool.query(`
+            SELECT SUM(quantity) as total FROM sales_data WHERE year = $1 AND month <= $2
+        `, [prevYear, maxMonth]);
+
+        // 8. Son yıl partial toplam
+        const currPartialTotalRes = await pool.query(`
+            SELECT SUM(quantity) as total FROM sales_data WHERE year = $1 AND month <= $2
+        `, [maxYear, maxMonth]);
+
+        // Veriyi düzenle
+        const brands = {};
+        const allBrands = await pool.query('SELECT id, name FROM brands ORDER BY name');
+        allBrands.rows.forEach(b => {
+            brands[b.id] = { id: b.id, name: b.name, yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+        });
+
+        yearlyRes.rows.forEach(r => { if (brands[r.brand_id]) brands[r.brand_id].yearly[r.year] = parseInt(r.total); });
+        monthlyRes.rows.forEach(r => { if (brands[r.brand_id]) brands[r.brand_id].months[r.month] = parseInt(r.total); });
+        prevPartialRes.rows.forEach(r => { if (brands[r.brand_id]) brands[r.brand_id].prev_partial = parseInt(r.total); });
+        currPartialRes.rows.forEach(r => { if (brands[r.brand_id]) brands[r.brand_id].curr_partial = parseInt(r.total); });
+
+        // Toplam pazar
+        const totals = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+        yearlyTotalRes.rows.forEach(r => { totals.yearly[r.year] = parseInt(r.total); });
+        monthlyTotalRes.rows.forEach(r => { totals.months[r.month] = parseInt(r.total); });
+        totals.prev_partial = parseInt(prevPartialTotalRes.rows[0]?.total || 0);
+        totals.curr_partial = parseInt(currPartialTotalRes.rows[0]?.total || 0);
+
+        // Markaları curr_partial'a göre sırala (büyükten küçüğe)
+        const sortedBrands = Object.values(brands)
+            .filter(b => b.curr_partial > 0 || b.prev_partial > 0)
+            .sort((a, b) => b.curr_partial - a.curr_partial);
+
+        res.json({
+            min_year: minYear,
+            max_year: maxYear,
+            prev_year: prevYear,
+            max_month: maxMonth,
+            years: Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i),
+            brands: sortedBrands,
+            totals
+        });
+    } catch (err) {
+        console.error('Brand summary error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // Toplam Pazar - Aylık karşılaştırma (2 yıl yan yana, marka bazlı)
 app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
     try {
