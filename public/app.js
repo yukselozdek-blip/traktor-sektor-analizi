@@ -91,6 +91,7 @@ function navigateTo(page) {
         'hp-top-il': ['Top 10 HP&İl', 'HP Segmentlerinde En Çok Satıldığı İller'],
         'hp-top-model': ['Top 10 HP&Model', 'HP Segmentlerinde En Çok Satan Marka/Model'],
         'hp-top-il-cat': ['Top 10 HP&İl Seg.', 'HP Segmentlerinde En Çok Satıldığı İller (Bahçe/Tarla)'],
+        'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
@@ -118,6 +119,7 @@ function navigateTo(page) {
         'hp-top-il': loadHpTopIlPage,
         'hp-top-model': loadHpTopModelPage,
         'hp-top-il-cat': loadHpTopIlCatPage,
+        'prov-top-brand': loadProvTopBrandPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
         sales: loadSalesPage,
@@ -616,6 +618,62 @@ async function loadHpTopModelPage() {
                     </div>
                 </div>
                 ${html}
+                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// TOP 10 İL & MARKA PAGE
+// ============================================
+async function loadProvTopBrandPage() {
+    try {
+        const data = await API.getProvinceTopBrands();
+        if (!data) return;
+
+        const { year, max_month, provinces } = data;
+        const monthNames = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+        const periodLabel = `${monthNames[max_month - 1].toUpperCase()} ${year}`;
+
+        let cards = '';
+        provinces.forEach(prov => {
+            if (prov.total === 0) return;
+            let rows = '';
+            prov.brands.forEach(b => {
+                rows += `<tr>
+                    <td class="ht-brand">${b.brand}</td>
+                    <td class="ht-sales">${b.sales.toLocaleString('tr-TR')}</td>
+                    <td class="ht-share">${b.share}%</td>
+                </tr>`;
+            });
+
+            cards += `
+                <div class="ht-card">
+                    <div class="ht-card-header" style="background:rgba(34,197,94,0.15);">
+                        <span class="ht-hp-label" style="color:#4ade80;">${prov.province}</span>
+                    </div>
+                    <table class="ht-table">
+                        <thead><tr><th>Marka</th><th>Adet</th><th>%</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                        <tfoot><tr><td class="ht-total-label">İl Toplam</td><td class="ht-total-val">${prov.total.toLocaleString('tr-TR')}</td><td></td></tr></tfoot>
+                    </table>
+                </div>
+            `;
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="ht-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>EN ÇOK SATAN İLK 10 MARKA (İL BAZINDA)</h2>
+                        <p>${periodLabel} (Y.B)*</p>
+                    </div>
+                </div>
+                <div class="ht-grid">${cards}</div>
                 <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;

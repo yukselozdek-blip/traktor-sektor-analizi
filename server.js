@@ -541,6 +541,54 @@ app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
     }
 });
 
+// İl bazlı Top 10 Marka
+app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+
+        // İl bazlı toplam satış (sıralama için)
+        const provTotals = await pool.query(`
+            SELECT p.name as province_name, SUM(s.quantity) as total
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            WHERE s.year = $1 AND s.month <= $2
+            GROUP BY p.name ORDER BY total DESC
+        `, [maxYear, maxMonth]);
+
+        // İl + marka bazlı detay
+        const result = await pool.query(`
+            SELECT p.name as province_name, b.name as brand_name, SUM(s.quantity) as total
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1 AND s.month <= $2
+            GROUP BY p.name, b.name ORDER BY p.name, total DESC
+        `, [maxYear, maxMonth]);
+
+        const brandData = {};
+        result.rows.forEach(r => {
+            if (!brandData[r.province_name]) brandData[r.province_name] = [];
+            brandData[r.province_name].push({ brand: r.brand_name, sales: parseInt(r.total) });
+        });
+
+        const provinces = provTotals.rows.map(p => {
+            const all = brandData[p.province_name] || [];
+            const provTotal = parseInt(p.total);
+            const top10 = all.slice(0, 10).map(b => ({
+                brand: b.brand,
+                sales: b.sales,
+                share: provTotal > 0 ? parseFloat((b.sales * 100 / provTotal).toFixed(1)) : 0
+            }));
+            return { province: p.province_name, total: provTotal, brands: top10 };
+        });
+
+        res.json({ year: maxYear, max_month: maxMonth, provinces });
+    } catch (err) {
+        console.error('Province top brands error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // HP Segment Top 10 İl (Bahçe/Tarla ayrımı)
 app.get('/api/sales/hp-top-provinces-cat', authMiddleware, async (req, res) => {
     try {
