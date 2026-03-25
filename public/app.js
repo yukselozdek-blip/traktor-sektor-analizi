@@ -92,6 +92,7 @@ function navigateTo(page) {
         'hp-top-model': ['Top 10 HP&Model', 'HP Segmentlerinde En Çok Satan Marka/Model'],
         'hp-top-il-cat': ['Top 10 HP&İl Seg.', 'HP Segmentlerinde En Çok Satıldığı İller (Bahçe/Tarla)'],
         'obt-hp': ['OBT HP', 'Bahçe/Tarla HP Segment Analizi'],
+        'brand-hp': ['Marka HP Detay', 'Marka Bazlı HP Segment Analizi'],
         'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
@@ -121,6 +122,7 @@ function navigateTo(page) {
         'hp-top-model': loadHpTopModelPage,
         'hp-top-il-cat': loadHpTopIlCatPage,
         'obt-hp': loadObtHpPage,
+        'brand-hp': loadBrandHpPage,
         'prov-top-brand': loadProvTopBrandPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
@@ -701,6 +703,121 @@ async function loadObtHpPage() {
                     </div>
                 </div>
                 ${html}
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// BRAND HP DETAIL PAGE
+// ============================================
+async function loadBrandHpPage() {
+    try {
+        const brands = await API.getBrands();
+        const brandId = window._brandHpSelectedBrand || (brands && brands[0] ? brands[0].id : '');
+        window._brandHpSelectedBrand = brandId;
+        const data = await API.getBrandHpDetail(brandId);
+        if (!data) return;
+
+        const { brand_name, years, max_year, max_month, prev_year, segments } = data;
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+        let brandOpts = '';
+        if (brands) brands.forEach(b => {
+            brandOpts += `<option value="${b.id}" ${b.id === brandId ? 'selected' : ''}>${b.name}</option>`;
+        });
+
+        const totalMarket = segments[0]; // Toplam Pazar
+
+        // Header
+        let header = `<th class="bhp-label-th">&nbsp;</th>`;
+        years.forEach(y => { header += `<th>${y}</th>`; });
+        for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
+        header += `<th>${prev_year} İLK ${max_month} AY</th>`;
+        header += `<th>${max_year} İLK ${max_month} AY</th>`;
+        header += `<th>Seg.<br>Ağırlık %</th>`;
+        header += `<th>${brand_name}<br>${max_year} P.Payı</th>`;
+        header += `<th>${brand_name}<br>${prev_year} P.Payı</th>`;
+        header += `<th>P.Payı<br>Değişim</th>`;
+
+        // Build rows
+        let rows = '';
+        segments.forEach((seg, idx) => {
+            const isTotal = idx === 0;
+
+            // Row 1: Market total (HP label row)
+            let r1 = `<td class="bhp-hp-label ${isTotal ? 'bhp-total-label' : ''}">${seg.hp}${!isTotal ? ' HP' : ''}</td>`;
+            years.forEach(y => { r1 += `<td class="bhp-market">${(seg.market.yearly[y] || 0).toLocaleString('tr-TR')}</td>`; });
+            for (let m = 1; m <= max_month; m++) { r1 += `<td class="bhp-market">${(seg.market.months[m] || 0).toLocaleString('tr-TR')}</td>`; }
+            r1 += `<td class="bhp-market bhp-partial">${seg.market.prev_partial.toLocaleString('tr-TR')}</td>`;
+            r1 += `<td class="bhp-market bhp-partial">${seg.market.curr_partial.toLocaleString('tr-TR')}</td>`;
+            // Segment weight
+            const segWeight = isTotal ? '' : (totalMarket.market.curr_partial > 0 ? (seg.market.curr_partial / totalMarket.market.curr_partial * 100).toFixed(1) + '%' : '-');
+            r1 += `<td class="bhp-weight">${segWeight}</td>`;
+            // Brand share current/prev
+            const bsCurr = seg.market.curr_partial > 0 ? (seg.brand.curr_partial / seg.market.curr_partial * 100).toFixed(1) : '0.0';
+            const bsPrev = seg.market.prev_partial > 0 ? (seg.brand.prev_partial / seg.market.prev_partial * 100).toFixed(1) : '0.0';
+            const bsChange = (parseFloat(bsCurr) - parseFloat(bsPrev)).toFixed(1);
+            r1 += `<td class="bhp-share">${bsCurr}%</td>`;
+            r1 += `<td class="bhp-share">${bsPrev}%</td>`;
+            r1 += `<td class="bhp-change ${parseFloat(bsChange) >= 0 ? 'bhp-up' : 'bhp-down'}">${parseFloat(bsChange) >= 0 ? '' : ''}${bsChange}%</td>`;
+            rows += `<tr class="bhp-market-row ${isTotal ? 'bhp-total-group' : ''}">${r1}</tr>`;
+
+            // Row 2: Brand Adet
+            let r2 = `<td class="bhp-row-label">${brand_name} Adet</td>`;
+            years.forEach(y => { r2 += `<td class="bhp-brand">${(seg.brand.yearly[y] || 0).toLocaleString('tr-TR')}</td>`; });
+            for (let m = 1; m <= max_month; m++) { r2 += `<td class="bhp-brand">${(seg.brand.months[m] || 0).toLocaleString('tr-TR')}</td>`; }
+            r2 += `<td class="bhp-brand bhp-partial">${seg.brand.prev_partial.toLocaleString('tr-TR')}</td>`;
+            r2 += `<td class="bhp-brand bhp-partial">${seg.brand.curr_partial.toLocaleString('tr-TR')}</td>`;
+            r2 += `<td></td><td></td><td></td><td></td>`;
+            rows += `<tr class="bhp-brand-row ${isTotal ? 'bhp-total-group' : ''}">${r2}</tr>`;
+
+            // Row 3: Brand %
+            let r3 = `<td class="bhp-row-label">${brand_name} %</td>`;
+            years.forEach(y => {
+                const pct = (seg.market.yearly[y] || 0) > 0 ? ((seg.brand.yearly[y] || 0) / seg.market.yearly[y] * 100).toFixed(1) : '0.0';
+                r3 += `<td class="bhp-pct">${pct}%</td>`;
+            });
+            for (let m = 1; m <= max_month; m++) {
+                const pct = (seg.market.months[m] || 0) > 0 ? ((seg.brand.months[m] || 0) / seg.market.months[m] * 100).toFixed(1) : '0.0';
+                r3 += `<td class="bhp-pct">${pct}%</td>`;
+            }
+            const prevPct = seg.market.prev_partial > 0 ? (seg.brand.prev_partial / seg.market.prev_partial * 100).toFixed(1) : '0.0';
+            const currPct = seg.market.curr_partial > 0 ? (seg.brand.curr_partial / seg.market.curr_partial * 100).toFixed(1) : '0.0';
+            r3 += `<td class="bhp-pct">${prevPct}%</td>`;
+            r3 += `<td class="bhp-pct">${currPct}%</td>`;
+            r3 += `<td></td><td></td><td></td><td></td>`;
+            rows += `<tr class="bhp-pct-row ${isTotal ? 'bhp-total-group' : ''}">${r3}</tr>`;
+
+            // Spacer row between segments
+            if (!isTotal) {
+                const colCount = 1 + years.length + max_month + 6;
+                rows += `<tr class="bhp-spacer"><td colspan="${colCount}"></td></tr>`;
+            }
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="bs-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Marka HP Segment Analizi</h2>
+                        <p>${years[0]} - ${max_year} · İlk ${max_month} ay karşılaştırması</p>
+                    </div>
+                    <div>
+                        <select class="tm-brand-select" onchange="window._brandHpSelectedBrand=this.value; loadBrandHpPage();">
+                            ${brandOpts}
+                        </select>
+                    </div>
+                </div>
+                <div class="chart-card" style="padding:16px;overflow-x:auto;">
+                    <table class="bhp-table">
+                        <thead><tr>${header}</tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
             </div>
         `;
 

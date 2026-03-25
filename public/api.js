@@ -101,5 +101,6 @@ const API = {
     async getHpTopModels() { return this.get('/api/sales/hp-top-models'); },
     async getHpTopProvincesCat() { return this.get('/api/sales/hp-top-provinces-cat'); },
     async getObtHp() { return this.get('/api/sales/obt-hp'); },
-    async getProvinceTopBrands(year) { return this.get(`/api/sales/province-top-brands?year=${year || ''}`); }
+    async getProvinceTopBrands(year) { return this.get(`/api/sales/province-top-brands?year=${year || ''}`); },
+    async getBrandHpDetail(brandId) { return this.get(`/api/sales/brand-hp-detail?brand_id=${brandId || ''}`); }
 };

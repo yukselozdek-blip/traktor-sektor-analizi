@@ -602,6 +602,98 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
     }
 });
 
+// Brand HP Detail - Marka bazlı HP segment analizi
+app.get('/api/sales/brand-hp-detail', authMiddleware, async (req, res) => {
+    try {
+        const brandId = req.query.brand_id || '';
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
+
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+
+        let brandName = 'Tüm Markalar';
+        if (brandId) {
+            const brandRes = await pool.query('SELECT name FROM brands WHERE id = $1', [brandId]);
+            if (brandRes.rows.length > 0) brandName = brandRes.rows[0].name;
+        }
+
+        // Market data by hp_range
+        const marketData = await pool.query(`
+            SELECT hp_range, year, month, SUM(quantity) as total
+            FROM sales_data WHERE hp_range IS NOT NULL
+            GROUP BY hp_range, year, month
+        `);
+
+        // Brand data
+        let brandData = { rows: [] };
+        if (brandId) {
+            brandData = await pool.query(`
+                SELECT hp_range, year, month, SUM(quantity) as total
+                FROM sales_data WHERE hp_range IS NOT NULL AND brand_id = $1
+                GROUP BY hp_range, year, month
+            `, [brandId]);
+        }
+
+        const marketRaw = {};
+        const marketTotalRaw = {};
+        marketData.rows.forEach(r => {
+            if (!marketRaw[r.hp_range]) marketRaw[r.hp_range] = {};
+            marketRaw[r.hp_range][`${r.year}_${r.month}`] = (marketRaw[r.hp_range][`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+            marketTotalRaw[`${r.year}_${r.month}`] = (marketTotalRaw[`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+        });
+
+        const brandRaw = {};
+        const brandTotalRaw = {};
+        brandData.rows.forEach(r => {
+            if (!brandRaw[r.hp_range]) brandRaw[r.hp_range] = {};
+            brandRaw[r.hp_range][`${r.year}_${r.month}`] = (brandRaw[r.hp_range][`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+            brandTotalRaw[`${r.year}_${r.month}`] = (brandTotalRaw[`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+        });
+
+        function buildSeg(mRaw, bRaw) {
+            const market = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            const brand = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            years.forEach(y => {
+                market.yearly[y] = 0; brand.yearly[y] = 0;
+                for (let m = 1; m <= 12; m++) {
+                    market.yearly[y] += (mRaw[`${y}_${m}`] || 0);
+                    brand.yearly[y] += ((bRaw || {})[`${y}_${m}`] || 0);
+                }
+            });
+            for (let m = 1; m <= maxMonth; m++) {
+                market.months[m] = mRaw[`${maxYear}_${m}`] || 0;
+                brand.months[m] = (bRaw || {})[`${maxYear}_${m}`] || 0;
+                market.prev_partial += (mRaw[`${prevYear}_${m}`] || 0);
+                brand.prev_partial += ((bRaw || {})[`${prevYear}_${m}`] || 0);
+                market.curr_partial += (mRaw[`${maxYear}_${m}`] || 0);
+                brand.curr_partial += ((bRaw || {})[`${maxYear}_${m}`] || 0);
+            }
+            return { market, brand };
+        }
+
+        const segments = [];
+        // Toplam Pazar
+        const totalSeg = buildSeg(marketTotalRaw, brandTotalRaw);
+        segments.push({ hp: 'Toplam Pazar', ...totalSeg });
+        // HP segments
+        hpOrder.forEach(hp => {
+            const seg = buildSeg(marketRaw[hp] || {}, brandRaw[hp] || {});
+            segments.push({ hp, ...seg });
+        });
+
+        res.json({ brand_id: brandId, brand_name: brandName, years, max_year: maxYear, max_month: maxMonth, prev_year: prevYear, segments });
+    } catch (err) {
+        console.error('Brand HP detail error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // OBT HP - Bahçe/Tarla HP segment yıllık + aylık + karşılaştırma
 app.get('/api/sales/obt-hp', authMiddleware, async (req, res) => {
     try {
