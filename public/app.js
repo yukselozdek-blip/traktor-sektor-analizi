@@ -90,6 +90,7 @@ function navigateTo(page) {
         'hp-top': ['Top 10 HP&Marka', 'HP Segmentlerinde En Çok Satan Markalar'],
         'hp-top-il': ['Top 10 HP&İl', 'HP Segmentlerinde En Çok Satıldığı İller'],
         'hp-top-model': ['Top 10 HP&Model', 'HP Segmentlerinde En Çok Satan Marka/Model'],
+        'hp-top-il-cat': ['Top 10 HP&İl Seg.', 'HP Segmentlerinde En Çok Satıldığı İller (Bahçe/Tarla)'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
@@ -116,6 +117,7 @@ function navigateTo(page) {
         'hp-top': loadHpTopPage,
         'hp-top-il': loadHpTopIlPage,
         'hp-top-model': loadHpTopModelPage,
+        'hp-top-il-cat': loadHpTopIlCatPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
         sales: loadSalesPage,
@@ -610,6 +612,80 @@ async function loadHpTopModelPage() {
                 <div class="tm-top-bar">
                     <div>
                         <h2>EN ÇOK SATAN İLK 10 MARKA/MODEL (HP SEGMENTİ BAZINDA)</h2>
+                        <p>${periodLabel} (Y.B)*</p>
+                    </div>
+                </div>
+                ${html}
+                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// TOP 10 HP & İL (BAHÇE/TARLA) PAGE
+// ============================================
+async function loadHpTopIlCatPage() {
+    try {
+        const data = await API.getHpTopProvincesCat();
+        if (!data) return;
+
+        const { year, max_month, categories } = data;
+        const monthNames = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+        const periodLabel = `${monthNames[max_month - 1]} ${year}`;
+
+        const catLabels = { 'bahce': 'Bahçe', 'tarla': 'Tarla' };
+        const catColors = { 'bahce': '#dc2626', 'tarla': '#2563eb' };
+
+        function buildCatRow(segments) {
+            let cards = '';
+            segments.forEach(seg => {
+                let rows = '';
+                seg.items.forEach(item => {
+                    rows += `<tr>
+                        <td class="ht-brand">${item.province}</td>
+                        <td class="ht-sales">${item.sales.toLocaleString('tr-TR')}</td>
+                        <td class="ht-share">${item.share}%</td>
+                    </tr>`;
+                });
+                cards += `
+                    <div class="ht-card htm-card">
+                        <div class="ht-card-header"><span class="ht-hp-label">${seg.hp_range}</span></div>
+                        <table class="ht-table">
+                            <thead><tr><th>İl</th><th>Adet</th><th>%</th></tr></thead>
+                            <tbody>${rows}</tbody>
+                            <tfoot><tr><td class="ht-total-label">Segment Toplam</td><td class="ht-total-val">${seg.total.toLocaleString('tr-TR')}</td><td></td></tr></tfoot>
+                        </table>
+                    </div>
+                `;
+            });
+            return cards;
+        }
+
+        let html = '';
+        for (const [catKey, segments] of Object.entries(categories)) {
+            const label = catLabels[catKey] || catKey;
+            const color = catColors[catKey] || '#64748b';
+            html += `
+                <div class="htm-cat-section">
+                    <div class="htm-cat-header">
+                        <div class="htm-cat-label" style="background:${color}">${label}</div>
+                    </div>
+                    <div class="htm-cat-content">
+                        <div class="ht-grid htm-grid">${buildCatRow(segments)}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="ht-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>EN ÇOK SATAN İLK 10 İL (HP SEGMENTİ BAZINDA)</h2>
                         <p>${periodLabel} (Y.B)*</p>
                     </div>
                 </div>

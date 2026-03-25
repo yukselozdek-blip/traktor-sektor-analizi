@@ -541,6 +541,54 @@ app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
     }
 });
 
+// HP Segment Top 10 İl (Bahçe/Tarla ayrımı)
+app.get('/api/sales/hp-top-provinces-cat', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+
+        const result = await pool.query(`
+            SELECT s.hp_range, s.category, p.name as province_name, SUM(s.quantity) as total
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            WHERE s.year = $1 AND s.month <= $2 AND s.hp_range IS NOT NULL
+            GROUP BY s.hp_range, s.category, p.name
+            ORDER BY s.hp_range, s.category, total DESC
+        `, [maxYear, maxMonth]);
+
+        const data = {};
+        result.rows.forEach(r => {
+            const key = `${r.hp_range}_${r.category}`;
+            if (!data[key]) data[key] = [];
+            data[key].push({ province: r.province_name, sales: parseInt(r.total) });
+        });
+
+        const categories = ['bahce', 'tarla'];
+        const catResults = {};
+        categories.forEach(cat => {
+            catResults[cat] = hpOrder.map(hp => {
+                const key = `${hp}_${cat}`;
+                const all = data[key] || [];
+                const segTotal = all.reduce((s, p) => s + p.sales, 0);
+                const top10 = all.slice(0, 10).map(p => ({
+                    province: p.province,
+                    sales: p.sales,
+                    share: segTotal > 0 ? parseFloat((p.sales * 100 / segTotal).toFixed(1)) : 0
+                }));
+                return { hp_range: hp, total: segTotal, items: top10 };
+            });
+        });
+
+        res.json({ year: maxYear, max_month: maxMonth, categories: catResults });
+    } catch (err) {
+        console.error('HP top provinces cat error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // HP Segment Tablosu - HP aralıklarına göre yıllık + aylık + karşılaştırma
 app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
     try {
