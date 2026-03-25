@@ -632,7 +632,7 @@ async function loadHpTopModelPage() {
 // ============================================
 async function loadProvTopBrandPage() {
     try {
-        const data = await API.getProvinceTopBrands();
+        const data = await API.getProvinceTopBrands(selectedYear);
         if (!data) return;
 
         const { year, max_month, provinces } = data;

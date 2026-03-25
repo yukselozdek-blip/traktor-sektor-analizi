@@ -544,10 +544,23 @@ app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
 // İl bazlı Top 10 Marka
 app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
     try {
+        const { year } = req.query;
+
+        // Hedef yıl ve ay aralığı
+        let targetYear, maxMonth;
         const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
-        const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
-        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const dbMaxYear = parseInt(latestRes.rows[0].max_year);
+
+        if (year && parseInt(year) < dbMaxYear) {
+            // Geçmiş yıl: 12 ay tam veri
+            targetYear = parseInt(year);
+            maxMonth = 12;
+        } else {
+            // Son yıl veya belirtilmemiş: partial data
+            targetYear = year ? parseInt(year) : dbMaxYear;
+            const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [targetYear]);
+            maxMonth = parseInt(latestMonthRes.rows[0]?.max_month || 12);
+        }
 
         // İl bazlı toplam satış (sıralama için)
         const provTotals = await pool.query(`
@@ -555,7 +568,7 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
             FROM sales_data s JOIN provinces p ON s.province_id = p.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY p.name ORDER BY total DESC
-        `, [maxYear, maxMonth]);
+        `, [targetYear, maxMonth]);
 
         // İl + marka bazlı detay
         const result = await pool.query(`
@@ -563,7 +576,7 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
             FROM sales_data s JOIN provinces p ON s.province_id = p.id JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY p.name, b.name ORDER BY p.name, total DESC
-        `, [maxYear, maxMonth]);
+        `, [targetYear, maxMonth]);
 
         const brandData = {};
         result.rows.forEach(r => {
@@ -582,7 +595,7 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
             return { province: p.province_name, total: provTotal, brands: top10 };
         });
 
-        res.json({ year: maxYear, max_month: maxMonth, provinces });
+        res.json({ year: targetYear, max_month: maxMonth, provinces });
     } catch (err) {
         console.error('Province top brands error:', err);
         res.status(500).json({ error: 'Sunucu hatası' });
