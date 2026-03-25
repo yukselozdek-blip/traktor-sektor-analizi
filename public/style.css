@@ -945,6 +945,68 @@ select {
 .bs-sub-name { font-size: 10px; color: #94a3b8; font-weight: 400; }
 
 /* ============================================
+   TOP 10 HP & MARKA
+   ============================================ */
+.ht-container { }
+.ht-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+.ht-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.ht-card-header {
+    background: rgba(59,130,246,0.15);
+    padding: 10px 14px;
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+}
+.ht-hp-label {
+    font-weight: 700;
+    font-size: 15px;
+    color: #60a5fa;
+}
+.ht-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.ht-table th {
+    padding: 6px 10px;
+    text-align: left;
+    color: #64748b;
+    font-weight: 600;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border-color);
+}
+.ht-table th:nth-child(2),
+.ht-table th:nth-child(3) { text-align: right; }
+.ht-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid rgba(51,65,85,0.3);
+    color: #e2e8f0;
+}
+.ht-brand { font-weight: 600; }
+.ht-sales { text-align: right; }
+.ht-share { text-align: right; color: #94a3b8; }
+.ht-table tbody tr:hover { background: rgba(59,130,246,0.08); }
+.ht-table tfoot td {
+    padding: 8px 10px;
+    border-top: 2px solid #334155;
+    font-weight: 700;
+    color: #f1f5f9;
+}
+.ht-total-label { }
+.ht-total-val { text-align: right; }
+
+@media (max-width: 1200px) { .ht-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 768px) { .ht-grid { grid-template-columns: 1fr; } }
+
+/* ============================================
    HARİTA 1 - TAM EKRAN
    ============================================ */
 .mf-container {

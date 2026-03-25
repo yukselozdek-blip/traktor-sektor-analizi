@@ -95,5 +95,6 @@ const API = {
     async getTotalMarket(brandId) { return this.get(`/api/sales/total-market?brand_id=${brandId || ''}`); },
     async getBrandSummary() { return this.get('/api/sales/brand-summary'); },
     async getDistributorSummary() { return this.get('/api/sales/distributor-summary'); },
-    async getHpSummary() { return this.get('/api/sales/hp-summary'); }
+    async getHpSummary() { return this.get('/api/sales/hp-summary'); },
+    async getHpTopBrands() { return this.get('/api/sales/hp-top-brands'); }
 };
