@@ -21,6 +21,7 @@ const pool = new Pool({
 });
 
 // Middleware
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '10mb' }));
@@ -723,10 +724,16 @@ async function initDB() {
             };
 
             let salesCount = 0;
+            const batchSize = 500;
+            let values = [];
+            let placeholders = [];
+            let paramIdx = 1;
+
             for (const brand of brandRows.rows) {
                 const weight = brandWeights[brand.slug] || 0.5;
                 const numProvinces = Math.min(81, Math.floor(20 + weight * 25));
-                const selectedProvs = provRows.rows.sort(() => Math.random() - 0.5).slice(0, numProvinces);
+                const shuffled = [...provRows.rows].sort(() => Math.random() - 0.5);
+                const selectedProvs = shuffled.slice(0, numProvinces);
 
                 for (const prov of selectedProvs) {
                     for (let year = 2020; year <= 2025; year++) {
@@ -740,12 +747,22 @@ async function initDB() {
                             const seasonFactor = [0.6, 0.7, 1.0, 1.2, 1.1, 0.9, 0.8, 0.7, 0.9, 1.0, 0.8, 0.5][month - 1];
                             const qty = Math.max(1, Math.floor((Math.random() * 10 + 2) * weight * seasonFactor));
 
-                            await pool.query(`INSERT INTO sales_data (brand_id, province_id, year, month, quantity, category, cabin_type, drive_type, hp_range, gear_config) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
-                                [brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear]);
+                            placeholders.push(`($${paramIdx},$${paramIdx+1},$${paramIdx+2},$${paramIdx+3},$${paramIdx+4},$${paramIdx+5},$${paramIdx+6},$${paramIdx+7},$${paramIdx+8},$${paramIdx+9})`);
+                            values.push(brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear);
+                            paramIdx += 10;
                             salesCount++;
+
+                            if (placeholders.length >= batchSize) {
+                                await pool.query(`INSERT INTO sales_data (brand_id, province_id, year, month, quantity, category, cabin_type, drive_type, hp_range, gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
+                                placeholders = []; values = []; paramIdx = 1;
+                            }
                         }
                     }
                 }
+            }
+            // Flush remaining
+            if (placeholders.length > 0) {
+                await pool.query(`INSERT INTO sales_data (brand_id, province_id, year, month, quantity, category, cabin_type, drive_type, hp_range, gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
             }
             console.log(`✅ ${salesCount} satış kaydı oluşturuldu`);
             console.log('✅ Seed tamamlandı');
