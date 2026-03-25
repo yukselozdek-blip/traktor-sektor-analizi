@@ -304,14 +304,14 @@ app.get('/api/sales/distributor-summary', authMiddleware, async (req, res) => {
             'MASSEY FERGUSON': ['massey-ferguson'],
             'MAHINDRA GRUBU\n(ERKUNT&MAHINDRA)': ['erkunt'],
             'SAME DEUTZ - FAHR': ['deutz-fahr', 'same'],
-            'HATTAT GRUBU\n(HATTAT&VALTRA)': ['hattat', 'valtra'],
+            'HATTAT': ['hattat'],
+            'KUTLUCAN\n(FENDT&VALTRA)': ['fendt', 'valtra'],
             'BAŞAK': ['basak'],
             'KUBOTA': ['kubota'],
             'JOHN DEERE': ['john-deere'],
             'SOLIS': ['solis'],
             'LANDINI': ['landini', 'mccormick'],
             'ANTONIO CARRARO': ['antonio-carraro'],
-            'FENDT': ['fendt'],
             'CLAAS': ['claas']
         };
 
