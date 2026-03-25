@@ -68,7 +68,7 @@ const API = {
     async me() { return this.get('/api/auth/me'); },
 
     // Data endpoints
-    async getDashboard() { return this.get('/api/dashboard'); },
+    async getDashboard(year) { return this.get(`/api/dashboard?year=${year || ''}`); },
     async getBrands() { return this.get('/api/brands'); },
     async getProvinces(region) { return this.get(`/api/provinces${region ? `?region=${region}` : ''}`); },
     async getSalesSummary(year) { return this.get(`/api/sales/summary?year=${year || ''}`); },

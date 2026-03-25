@@ -4,7 +4,7 @@
 
 let currentUser = null;
 let currentPage = 'dashboard';
-let selectedYear = new Date().getFullYear();
+let selectedYear = 2025; // Varsayılan: veri bulunan en son yıl
 let charts = {};
 let allBrands = [];
 let allProvinces = [];
@@ -132,7 +132,7 @@ function refreshData() {
 async function loadDashboard() {
     try {
         const [dashboard, marketShare, summary] = await Promise.all([
-            API.getDashboard(),
+            API.getDashboard(selectedYear),
             API.getMarketShare(selectedYear),
             API.getSalesSummary(selectedYear)
         ]);

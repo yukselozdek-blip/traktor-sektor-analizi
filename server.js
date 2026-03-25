@@ -588,7 +588,8 @@ app.get('/api/workflows', authMiddleware, async (req, res) => {
 app.get('/api/dashboard', authMiddleware, async (req, res) => {
     try {
         const userBrandId = req.user.brand_id;
-        const currentYear = new Date().getFullYear();
+        const { year } = req.query;
+        const currentYear = year ? parseInt(year) : new Date().getFullYear();
 
         const [totalSales, brandSales, provinceCount, marketShare, topProvinces, monthlyTrend] = await Promise.all([
             pool.query('SELECT SUM(quantity) as total FROM sales_data WHERE year = $1', [currentYear]),
