@@ -463,7 +463,7 @@ async function loadTotalMarketPage() {
             brandTableHtml = `
                 <div class="chart-card" style="padding:24px; margin-bottom:24px;">
                     <h3 style="color:var(--text-primary);margin:0 0 16px;">${brandName} Aylık Karşılaştırma (${prevYear} - ${currYear})</h3>
-                    <canvas id="brandMarketChart" height="350"></canvas>
+                    <div style="position:relative;height:350px;"><canvas id="brandMarketChart"></canvas></div>
                 </div>
                 <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
                     <table class="tm-table">
@@ -492,7 +492,7 @@ async function loadTotalMarketPage() {
                 </div>
                 <div class="chart-card" style="padding:24px; margin-bottom:24px;">
                     <h3 style="color:var(--text-primary);margin:0 0 16px;">Toplam Pazar Aylık Karşılaştırma</h3>
-                    <canvas id="totalMarketChart" height="350"></canvas>
+                    <div style="position:relative;height:350px;"><canvas id="totalMarketChart"></canvas></div>
                 </div>
                 <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
                     <table class="tm-table">
