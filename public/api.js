@@ -96,5 +96,6 @@ const API = {
     async getBrandSummary() { return this.get('/api/sales/brand-summary'); },
     async getDistributorSummary() { return this.get('/api/sales/distributor-summary'); },
     async getHpSummary() { return this.get('/api/sales/hp-summary'); },
-    async getHpTopBrands() { return this.get('/api/sales/hp-top-brands'); }
+    async getHpTopBrands() { return this.get('/api/sales/hp-top-brands'); },
+    async getHpTopProvinces() { return this.get('/api/sales/hp-top-provinces'); }
 };

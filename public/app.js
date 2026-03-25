@@ -88,6 +88,7 @@ function navigateTo(page) {
         'distributor': ['Distribütör', 'Distribütör Bazlı Pazar Analizi'],
         'hp-segment': ['HP Segment', 'Beygir Gücü Segment Dağılımı'],
         'hp-top': ['Top 10 HP&Marka', 'HP Segmentlerinde En Çok Satan Markalar'],
+        'hp-top-il': ['Top 10 HP&İl', 'HP Segmentlerinde En Çok Satıldığı İller'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
@@ -112,6 +113,7 @@ function navigateTo(page) {
         'distributor': loadDistributorPage,
         'hp-segment': loadHpSegmentPage,
         'hp-top': loadHpTopPage,
+        'hp-top-il': loadHpTopIlPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
         sales: loadSalesPage,
@@ -532,6 +534,63 @@ async function loadHpTopPage() {
                 <div class="tm-top-bar">
                     <div>
                         <h2>HP SEGMENTLERİNDE EN ÇOK SATAN İLK 10 MARKA</h2>
+                        <p>${periodLabel} (Y.B)*</p>
+                    </div>
+                </div>
+                <div class="ht-grid">${cards}</div>
+                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// TOP 10 HP & İL PAGE
+// ============================================
+async function loadHpTopIlPage() {
+    try {
+        const data = await API.getHpTopProvinces();
+        if (!data) return;
+
+        const { year, max_month, segments } = data;
+        const monthNames = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+        const periodLabel = `${monthNames[max_month - 1].toUpperCase()} ${year}`;
+
+        let cards = '';
+        segments.forEach(seg => {
+            if (seg.total === 0) return;
+            let rows = '';
+            seg.provinces.forEach(p => {
+                rows += `
+                    <tr>
+                        <td class="ht-brand">${p.province}</td>
+                        <td class="ht-sales">${p.sales.toLocaleString('tr-TR')}</td>
+                        <td class="ht-share">${p.share}%</td>
+                    </tr>`;
+            });
+
+            cards += `
+                <div class="ht-card">
+                    <div class="ht-card-header">
+                        <span class="ht-hp-label">(${seg.hp_range})</span>
+                    </div>
+                    <table class="ht-table">
+                        <thead><tr><th>İl</th><th>Adet</th><th>%</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                        <tfoot><tr><td class="ht-total-label">İl Toplam</td><td class="ht-total-val">${seg.total.toLocaleString('tr-TR')}</td><td></td></tr></tfoot>
+                    </table>
+                </div>
+            `;
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="ht-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>HP SEGMENTLERİNİN EN ÇOK SATILDIĞI İLK 10 İL</h2>
                         <p>${periodLabel} (Y.B)*</p>
                     </div>
                 </div>
