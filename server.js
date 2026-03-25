@@ -823,6 +823,17 @@ app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 // ============================================
 // MANUAL SEED ENDPOINT (admin only)
 // ============================================
+app.post('/api/admin/reseed-sales', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM sales_data');
+        console.log('🗑️ Eski satış verisi silindi, yeniden seed ediliyor...');
+        // Forward to seed-sales
+        res.redirect(307, '/api/admin/seed-sales');
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/admin/seed-sales', async (req, res) => {
     try {
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
