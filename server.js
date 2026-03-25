@@ -602,6 +602,82 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
     }
 });
 
+// OBT HP - Bahçe/Tarla HP segment yıllık + aylık + karşılaştırma
+app.get('/api/sales/obt-hp', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
+
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+        const categories = ['bahce', 'tarla'];
+
+        const allData = await pool.query(`
+            SELECT category, hp_range, year, month, SUM(quantity) as total
+            FROM sales_data WHERE hp_range IS NOT NULL
+            GROUP BY category, hp_range, year, month
+            ORDER BY category, hp_range, year, month
+        `);
+
+        // Organize: cat → hp → year_month → total
+        const raw = {};
+        allData.rows.forEach(r => {
+            const key = `${r.category}_${r.hp_range}`;
+            if (!raw[key]) raw[key] = {};
+            raw[key][`${r.year}_${r.month}`] = (raw[key][`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+        });
+
+        // Category totals
+        const catTotalRaw = {};
+        allData.rows.forEach(r => {
+            if (!catTotalRaw[r.category]) catTotalRaw[r.category] = {};
+            catTotalRaw[r.category][`${r.year}_${r.month}`] = (catTotalRaw[r.category][`${r.year}_${r.month}`] || 0) + parseInt(r.total);
+        });
+
+        function buildSegment(catKey, hpKey) {
+            const sd = raw[`${catKey}_${hpKey}`] || {};
+            const seg = { hp: hpKey, yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            years.forEach(y => { for (let m = 1; m <= 12; m++) seg.yearly[y] = (seg.yearly[y] || 0) + (sd[`${y}_${m}`] || 0); });
+            for (let m = 1; m <= maxMonth; m++) {
+                seg.months[m] = sd[`${maxYear}_${m}`] || 0;
+                seg.prev_partial += (sd[`${prevYear}_${m}`] || 0);
+                seg.curr_partial += (sd[`${maxYear}_${m}`] || 0);
+            }
+            return seg;
+        }
+
+        function buildCatTotal(catKey) {
+            const sd = catTotalRaw[catKey] || {};
+            const tot = { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 };
+            years.forEach(y => { for (let m = 1; m <= 12; m++) tot.yearly[y] = (tot.yearly[y] || 0) + (sd[`${y}_${m}`] || 0); });
+            for (let m = 1; m <= maxMonth; m++) {
+                tot.months[m] = sd[`${maxYear}_${m}`] || 0;
+                tot.prev_partial += (sd[`${prevYear}_${m}`] || 0);
+                tot.curr_partial += (sd[`${maxYear}_${m}`] || 0);
+            }
+            return tot;
+        }
+
+        const result = {};
+        categories.forEach(cat => {
+            result[cat] = {
+                segments: hpOrder.map(hp => buildSegment(cat, hp)),
+                total: buildCatTotal(cat)
+            };
+        });
+
+        res.json({ min_year: minYear, max_year: maxYear, prev_year: prevYear, max_month: maxMonth, years, categories: result });
+    } catch (err) {
+        console.error('OBT HP error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // HP Segment Top 10 İl (Bahçe/Tarla ayrımı)
 app.get('/api/sales/hp-top-provinces-cat', authMiddleware, async (req, res) => {
     try {

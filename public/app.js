@@ -91,6 +91,7 @@ function navigateTo(page) {
         'hp-top-il': ['Top 10 HP&İl', 'HP Segmentlerinde En Çok Satıldığı İller'],
         'hp-top-model': ['Top 10 HP&Model', 'HP Segmentlerinde En Çok Satan Marka/Model'],
         'hp-top-il-cat': ['Top 10 HP&İl Seg.', 'HP Segmentlerinde En Çok Satıldığı İller (Bahçe/Tarla)'],
+        'obt-hp': ['OBT HP', 'Bahçe/Tarla HP Segment Analizi'],
         'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
@@ -119,6 +120,7 @@ function navigateTo(page) {
         'hp-top-il': loadHpTopIlPage,
         'hp-top-model': loadHpTopModelPage,
         'hp-top-il-cat': loadHpTopIlCatPage,
+        'obt-hp': loadObtHpPage,
         'prov-top-brand': loadProvTopBrandPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
@@ -619,6 +621,86 @@ async function loadHpTopModelPage() {
                 </div>
                 ${html}
                 <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// OBT HP PAGE
+// ============================================
+async function loadObtHpPage() {
+    try {
+        const data = await API.getObtHp();
+        if (!data) return;
+
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const { years, categories, max_month, max_year, prev_year } = data;
+        const catLabels = { 'bahce': 'Bahçe', 'tarla': 'Tarla' };
+        const catColors = { 'bahce': '#dc2626', 'tarla': '#2563eb' };
+
+        function cell(val, total) {
+            const pct = total > 0 ? (val * 100 / total).toFixed(1) : '0.0';
+            return `<td class="obt-cell"><span class="obt-adet">${val.toLocaleString('tr-TR')}</span><span class="obt-pct">${pct}%</span></td>`;
+        }
+
+        function buildTable(catKey, catData) {
+            const { segments, total } = catData;
+            const color = catColors[catKey];
+            const label = catLabels[catKey];
+
+            // Header
+            let header = `<th class="obt-cat-th" style="background:${color}">${label}</th>`;
+            years.forEach(y => { header += `<th>${y}</th>`; });
+            for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
+            header += `<th>${prev_year} İLK ${max_month} AY</th><th>${max_year} İLK ${max_month} AY</th>`;
+
+            // Category total row
+            let totalRow = `<td class="obt-label obt-total-row">${label} Toplam</td>`;
+            years.forEach(y => { totalRow += cell(total.yearly[y] || 0, total.yearly[y] || 0); });
+            for (let m = 1; m <= max_month; m++) { totalRow += cell(total.months[m] || 0, total.months[m] || 0); }
+            totalRow += cell(total.prev_partial, total.prev_partial);
+            totalRow += cell(total.curr_partial, total.curr_partial);
+
+            // Segment rows
+            let segRows = '';
+            segments.forEach(seg => {
+                let row = `<td class="obt-label">${seg.hp}</td>`;
+                years.forEach(y => { row += cell(seg.yearly[y] || 0, total.yearly[y] || 0); });
+                for (let m = 1; m <= max_month; m++) { row += cell(seg.months[m] || 0, total.months[m] || 0); }
+                row += cell(seg.prev_partial, total.prev_partial);
+                row += cell(seg.curr_partial, total.curr_partial);
+                segRows += `<tr>${row}</tr>`;
+            });
+
+            return `
+                <table class="obt-table">
+                    <thead><tr>${header}</tr></thead>
+                    <tbody>
+                        <tr class="obt-total-tr">${totalRow}</tr>
+                        ${segRows}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        let html = '';
+        for (const [catKey, catData] of Object.entries(categories)) {
+            html += `<div class="chart-card" style="padding:16px;overflow-x:auto;margin-bottom:20px;">${buildTable(catKey, catData)}</div>`;
+        }
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="bs-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Bahçe / Tarla HP Segment Analizi</h2>
+                        <p>${years[0]} - ${max_year} · İlk ${max_month} ay karşılaştırması · Adet + Pazar Payı</p>
+                    </div>
+                </div>
+                ${html}
             </div>
         `;
 
