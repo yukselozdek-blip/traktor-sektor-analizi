@@ -230,6 +230,12 @@ body {
     cursor: pointer;
 }
 
+/* Dropdown option styling for dark theme */
+select option {
+    background: #1e293b;
+    color: #f1f5f9;
+}
+
 .btn-icon {
     width: 40px;
     height: 40px;
