@@ -432,8 +432,8 @@ app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
             hpData[r.hp_range][key] = (hpData[r.hp_range][key] || 0) + parseInt(r.total);
         });
 
-        // HP sıralaması
-        const hpOrder = ['0-50', '51-75', '76-100', '101-150', '150+'];
+        // HP sıralaması (standart segmentler)
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
         const segments = [];
 
         for (const hp of hpOrder) {
@@ -1132,7 +1132,7 @@ app.post('/api/admin/seed-sales', async (req, res) => {
         const categories = ['tarla', 'bahce'];
         const cabinTypes = ['kabinli', 'rollbar'];
         const driveTypes = ['2WD', '4WD'];
-        const hpRanges = ['0-50', '51-75', '76-100', '101-150', '150+'];
+        const hpRanges = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
         const gearConfigs = ['8+2', '8+8', '12+12', '16+16', '32+32', 'CVT'];
         const brandWeights = {
             'new-holland': 2.5, 'massey-ferguson': 2.0, 'john-deere': 1.8, 'case-ih': 1.5,

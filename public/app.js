@@ -492,8 +492,8 @@ async function loadHpSegmentPage() {
 
         const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
         const { years, segments, totals, max_month, max_year, prev_year } = data;
-        const hpLabels = { '0-50': '0-50 HP', '51-75': '51-75 HP', '76-100': '76-100 HP', '101-150': '101-150 HP', '150+': '150+ HP' };
-        const hpColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6'];
+        const hpLabels = { '1-39': '1-39', '40-49': '40-49', '50-54': '50-54', '55-59': '55-59', '60-69': '60-69', '70-79': '70-79', '80-89': '80-89', '90-99': '90-99', '100-109': '100-109', '110-119': '110-119', '120+': '120-120+' };
+        const hpColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#2980b9', '#c0392b', '#27ae60', '#8e44ad'];
 
         // ---- ADET TABLOSU ----
         let adetHeader = '<th>#</th><th>Adet</th>';
