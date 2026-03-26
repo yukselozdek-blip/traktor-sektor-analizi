@@ -95,6 +95,7 @@ function navigateTo(page) {
         'brand-hp': ['Marka HP Detay', 'Marka Bazlı HP Segment Analizi'],
         'hp-brand-matrix': ['HP Marka Matris', 'HP Segment Bazlı Marka Dağılımı'],
         'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
+        'brand-compare': ['Marka Karşılaştırma', 'Dinamik Marka Kıyaslama Paneli'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
@@ -126,6 +127,7 @@ function navigateTo(page) {
         'brand-hp': loadBrandHpPage,
         'hp-brand-matrix': loadHpBrandMatrixPage,
         'prov-top-brand': loadProvTopBrandPage,
+        'brand-compare': loadBrandComparePage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
         sales: loadSalesPage,
@@ -3032,6 +3034,369 @@ function chartOptions(yLabel) {
     };
 }
 
+// ============================================
+// BRAND COMPARE PAGE
+// ============================================
+function fmtNum(n) {
+    if (n == null || isNaN(n)) return '-';
+    const abs = Math.abs(n);
+    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + ' M';
+    if (abs >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + ' B';
+    return n.toLocaleString('tr-TR');
+}
+function fmtPrice(n) {
+    if (!n || n === 0) return '-';
+    const abs = Math.abs(n);
+    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + ' M ₺';
+    if (abs >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + ' B ₺';
+    return n.toLocaleString('tr-TR') + ' ₺';
+}
+function fmtPct(n, dec = 1) { return n != null ? n.toFixed(dec) + '%' : '-'; }
+
+async function loadBrandComparePage() {
+    try {
+        if (!allBrands || allBrands.length === 0) allBrands = await API.getBrands();
+        const b1Id = window._bc_brand1 || (allBrands[0]?.id);
+        const b2Id = window._bc_brand2 || (allBrands[1]?.id || allBrands[0]?.id);
+
+        // Seed models if needed (one-time)
+        try { await API.seedModels(); } catch(e) {}
+
+        const data = await API.getBrandCompare(b1Id, b2Id);
+        if (!data) return;
+
+        const { brand1, brand2, years, max_year, max_month, prev_year, total_market } = data;
+        const d1 = brand1.data, d2 = brand2.data;
+        const monthNames = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
+
+        let b1Opts = '', b2Opts = '';
+        allBrands.forEach(b => {
+            b1Opts += `<option value="${b.id}" ${b.id == b1Id ? 'selected' : ''}>${b.name}</option>`;
+            b2Opts += `<option value="${b.id}" ${b.id == b2Id ? 'selected' : ''}>${b.name}</option>`;
+        });
+
+        // Winner helper
+        function win(v1, v2, higher = true) {
+            if (v1 === v2) return ['', ''];
+            return higher ? (v1 > v2 ? ['bc-winner', ''] : ['', 'bc-winner']) : (v1 < v2 ? ['bc-winner', ''] : ['', 'bc-winner']);
+        }
+
+        // KPI cards data
+        const kpis = [
+            { label: `${max_year} Satış (İlk ${max_month} Ay)`, v1: d1.currPartial, v2: d2.currPartial, fmt: fmtNum, higher: true },
+            { label: `${prev_year} Satış (İlk ${max_month} Ay)`, v1: d1.prevPartial, v2: d2.prevPartial, fmt: fmtNum, higher: true },
+            { label: 'YoY Büyüme', v1: d1.yoyGrowth, v2: d2.yoyGrowth, fmt: fmtPct, higher: true },
+            { label: `Pazar Payı (${max_year})`, v1: d1.marketShare[max_year], v2: d2.marketShare[max_year], fmt: fmtPct, higher: true },
+            { label: 'Ort. Fiyat', v1: d1.avgPrice, v2: d2.avgPrice, fmt: fmtPrice, higher: false },
+            { label: 'Min Fiyat', v1: d1.minPrice, v2: d2.minPrice, fmt: fmtPrice, higher: false },
+            { label: 'Max Fiyat', v1: d1.maxPrice, v2: d2.maxPrice, fmt: fmtPrice, higher: false },
+            { label: 'Model Sayısı', v1: d1.models.length, v2: d2.models.length, fmt: fmtNum, higher: true }
+        ];
+
+        let kpiRows = '';
+        kpis.forEach(k => {
+            const [w1, w2] = win(k.v1, k.v2, k.higher);
+            kpiRows += `<tr>
+                <td class="bc-kpi-val ${w1}">${k.fmt(k.v1)}</td>
+                <td class="bc-kpi-label">${k.label}</td>
+                <td class="bc-kpi-val ${w2}">${k.fmt(k.v2)}</td>
+            </tr>`;
+        });
+
+        // Yearly trend table
+        let yearHeaders = '', yearRow1 = '', yearRow2 = '', yearRowMkt = '';
+        years.forEach(y => {
+            yearHeaders += `<th>${y}</th>`;
+            yearRow1 += `<td>${fmtNum(d1.yearly[y])}</td>`;
+            yearRow2 += `<td>${fmtNum(d2.yearly[y])}</td>`;
+            yearRowMkt += `<td>${fmtNum(total_market[y])}</td>`;
+        });
+
+        // Monthly trend for chart
+        const monthLabels = [];
+        const monthD1 = [], monthD2 = [];
+        for (let m = 1; m <= max_month; m++) {
+            monthLabels.push(monthNames[m - 1]);
+            monthD1.push(d1.monthly[m] || 0);
+            monthD2.push(d2.monthly[m] || 0);
+        }
+
+        // Market share trend for chart
+        const shareLabels = years.map(String);
+        const shareD1 = years.map(y => d1.marketShare[y]?.toFixed(1) || 0);
+        const shareD2 = years.map(y => d2.marketShare[y]?.toFixed(1) || 0);
+
+        // HP distribution comparison
+        const allHpSet = new Set();
+        d1.hpDist.forEach(h => allHpSet.add(h.hp));
+        d2.hpDist.forEach(h => allHpSet.add(h.hp));
+        const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+        const sortedHp = hpOrder.filter(h => allHpSet.has(h));
+        const hpMap1 = {}, hpMap2 = {};
+        d1.hpDist.forEach(h => { hpMap1[h.hp] = h; });
+        d2.hpDist.forEach(h => { hpMap2[h.hp] = h; });
+
+        let hpRows = '';
+        sortedHp.forEach(hp => {
+            const h1 = hpMap1[hp] || { qty: 0, pct: 0 };
+            const h2 = hpMap2[hp] || { qty: 0, pct: 0 };
+            hpRows += `<tr>
+                <td class="bc-hp-val">${fmtNum(h1.qty)}<span class="bc-sub">${fmtPct(h1.pct)}</span></td>
+                <td class="bc-hp-label">${hp} HP</td>
+                <td class="bc-hp-val">${fmtNum(h2.qty)}<span class="bc-sub">${fmtPct(h2.pct)}</span></td>
+            </tr>`;
+        });
+
+        // Top provinces
+        let provRows = '';
+        const maxProv = Math.max(d1.topProvinces.length, d2.topProvinces.length);
+        for (let i = 0; i < maxProv; i++) {
+            const p1 = d1.topProvinces[i], p2 = d2.topProvinces[i];
+            provRows += `<tr>
+                <td class="bc-prov-val">${p1 ? `${p1.name} <span class="bc-sub">${fmtNum(p1.qty)}</span>` : '-'}</td>
+                <td class="bc-prov-rank">${i + 1}</td>
+                <td class="bc-prov-val">${p2 ? `${p2.name} <span class="bc-sub">${fmtNum(p2.qty)}</span>` : '-'}</td>
+            </tr>`;
+        }
+
+        // Category split
+        const cat1Total = (d1.categories.tarla || 0) + (d1.categories.bahce || 0);
+        const cat2Total = (d2.categories.tarla || 0) + (d2.categories.bahce || 0);
+        const cat1TarlaPct = cat1Total > 0 ? ((d1.categories.tarla || 0) / cat1Total * 100) : 0;
+        const cat1BahcePct = cat1Total > 0 ? ((d1.categories.bahce || 0) / cat1Total * 100) : 0;
+        const cat2TarlaPct = cat2Total > 0 ? ((d2.categories.tarla || 0) / cat2Total * 100) : 0;
+        const cat2BahcePct = cat2Total > 0 ? ((d2.categories.bahce || 0) / cat2Total * 100) : 0;
+
+        // Drive type split
+        const drv1_4wd = d1.driveTypes['4WD'] || 0;
+        const drv1_2wd = d1.driveTypes['2WD'] || 0;
+        const drv1Total = drv1_4wd + drv1_2wd;
+        const drv2_4wd = d2.driveTypes['4WD'] || 0;
+        const drv2_2wd = d2.driveTypes['2WD'] || 0;
+        const drv2Total = drv2_4wd + drv2_2wd;
+
+        // Price comparison table - match models by similar HP
+        let priceRows = '';
+        const m1 = d1.models.filter(m => m.price > 0);
+        const m2 = d2.models.filter(m => m.price > 0);
+        // Group by HP range for price comparison
+        const priceHpRanges = {};
+        m1.forEach(m => {
+            const hr = m.hp < 40 ? '1-39' : m.hp < 50 ? '40-49' : m.hp < 55 ? '50-54' : m.hp < 60 ? '55-59' : m.hp < 70 ? '60-69' : m.hp < 80 ? '70-79' : m.hp < 90 ? '80-89' : m.hp < 100 ? '90-99' : m.hp < 110 ? '100-109' : m.hp < 120 ? '110-119' : '120+';
+            if (!priceHpRanges[hr]) priceHpRanges[hr] = { m1: [], m2: [] };
+            priceHpRanges[hr].m1.push(m);
+        });
+        m2.forEach(m => {
+            const hr = m.hp < 40 ? '1-39' : m.hp < 50 ? '40-49' : m.hp < 55 ? '50-54' : m.hp < 60 ? '55-59' : m.hp < 70 ? '60-69' : m.hp < 80 ? '70-79' : m.hp < 90 ? '80-89' : m.hp < 100 ? '90-99' : m.hp < 110 ? '100-109' : m.hp < 120 ? '110-119' : '120+';
+            if (!priceHpRanges[hr]) priceHpRanges[hr] = { m1: [], m2: [] };
+            priceHpRanges[hr].m2.push(m);
+        });
+
+        hpOrder.forEach(hr => {
+            const g = priceHpRanges[hr];
+            if (!g) return;
+            const maxLen = Math.max(g.m1.length, g.m2.length);
+            for (let i = 0; i < maxLen; i++) {
+                const p1 = g.m1[i], p2 = g.m2[i];
+                const price1 = p1?.price || 0, price2 = p2?.price || 0;
+                const diff = (price1 && price2) ? price1 - price2 : null;
+                const diffClass = diff ? (diff < 0 ? 'bc-cheaper' : diff > 0 ? 'bc-expensive' : '') : '';
+                priceRows += `<tr>
+                    <td class="bc-model-cell">${p1 ? `<span class="bc-model-name">${p1.name}</span><span class="bc-model-hp">${p1.hp} HP</span>` : '-'}</td>
+                    <td class="bc-price-cell ${price1 && price2 && price1 <= price2 ? 'bc-cheaper' : ''}">${p1 ? fmtPrice(price1) : '-'}</td>
+                    <td class="bc-hp-range-cell">${i === 0 ? hr + ' HP' : ''}</td>
+                    <td class="bc-price-cell ${price1 && price2 && price2 <= price1 ? 'bc-cheaper' : ''}">${p2 ? fmtPrice(price2) : '-'}</td>
+                    <td class="bc-model-cell">${p2 ? `<span class="bc-model-name">${p2.name}</span><span class="bc-model-hp">${p2.hp} HP</span>` : '-'}</td>
+                </tr>`;
+            }
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+        <div class="bc-container">
+            <!-- Brand Selectors -->
+            <div class="bc-selectors">
+                <div class="bc-sel-left">
+                    <div class="bc-brand-badge" style="background:${brand1.primary_color}"><i class="fas fa-tractor"></i></div>
+                    <select class="bc-select" onchange="window._bc_brand1=parseInt(this.value);loadBrandComparePage()">${b1Opts}</select>
+                </div>
+                <div class="bc-vs">VS</div>
+                <div class="bc-sel-right">
+                    <select class="bc-select" onchange="window._bc_brand2=parseInt(this.value);loadBrandComparePage()">${b2Opts}</select>
+                    <div class="bc-brand-badge" style="background:${brand2.primary_color}"><i class="fas fa-tractor"></i></div>
+                </div>
+            </div>
+
+            <!-- KPI Comparison -->
+            <div class="bc-section">
+                <div class="bc-section-title"><i class="fas fa-chart-line"></i> Temel Göstergeler</div>
+                <table class="bc-kpi-table">
+                    <thead>
+                        <tr>
+                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th class="bc-kpi-mid">Metrik</th>
+                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                        </tr>
+                    </thead>
+                    <tbody>${kpiRows}</tbody>
+                </table>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="bc-charts-row">
+                <div class="bc-chart-card">
+                    <div class="bc-chart-title"><i class="fas fa-chart-bar"></i> ${max_year} Aylık Satış Trendi</div>
+                    <div style="position:relative;height:280px;"><canvas id="bcMonthlyChart"></canvas></div>
+                </div>
+                <div class="bc-chart-card">
+                    <div class="bc-chart-title"><i class="fas fa-percentage"></i> Pazar Payı Trendi</div>
+                    <div style="position:relative;height:280px;"><canvas id="bcShareChart"></canvas></div>
+                </div>
+            </div>
+
+            <!-- Yearly Sales -->
+            <div class="bc-section">
+                <div class="bc-section-title"><i class="fas fa-calendar-alt"></i> Yıllık Satış Karşılaştırması</div>
+                <div style="overflow-x:auto">
+                    <table class="bc-year-table">
+                        <thead><tr><th>Marka</th>${yearHeaders}</tr></thead>
+                        <tbody>
+                            <tr class="bc-row-market"><td>Toplam Pazar</td>${yearRowMkt}</tr>
+                            <tr style="color:${brand1.primary_color}"><td>${brand1.name}</td>${yearRow1}</tr>
+                            <tr style="color:${brand2.primary_color}"><td>${brand2.name}</td>${yearRow2}</tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Middle panels row -->
+            <div class="bc-panels-row">
+                <!-- HP Distribution -->
+                <div class="bc-panel">
+                    <div class="bc-section-title"><i class="fas fa-horse-head"></i> HP Segment Dağılımı</div>
+                    <table class="bc-mirror-table">
+                        <thead><tr>
+                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th class="bc-mid-col">Segment</th>
+                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                        </tr></thead>
+                        <tbody>${hpRows}</tbody>
+                    </table>
+                </div>
+
+                <!-- Top Provinces -->
+                <div class="bc-panel">
+                    <div class="bc-section-title"><i class="fas fa-map-marker-alt"></i> En Çok Satılan İller</div>
+                    <table class="bc-mirror-table">
+                        <thead><tr>
+                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th class="bc-mid-col">#</th>
+                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                        </tr></thead>
+                        <tbody>${provRows}</tbody>
+                    </table>
+                </div>
+
+                <!-- Category & Drive -->
+                <div class="bc-panel">
+                    <div class="bc-section-title"><i class="fas fa-sliders-h"></i> Kategori & Çekiş</div>
+                    <table class="bc-mirror-table">
+                        <thead><tr>
+                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th class="bc-mid-col">Özellik</th>
+                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                        </tr></thead>
+                        <tbody>
+                            <tr>
+                                <td class="bc-bar-cell"><div class="bc-bar" style="width:${cat1TarlaPct}%;background:${brand1.primary_color}">${fmtPct(cat1TarlaPct,0)}</div></td>
+                                <td class="bc-mid-label">Tarla</td>
+                                <td class="bc-bar-cell"><div class="bc-bar" style="width:${cat2TarlaPct}%;background:${brand2.primary_color}">${fmtPct(cat2TarlaPct,0)}</div></td>
+                            </tr>
+                            <tr>
+                                <td class="bc-bar-cell"><div class="bc-bar bc-bar-alt" style="width:${cat1BahcePct}%;background:${brand1.primary_color}88">${fmtPct(cat1BahcePct,0)}</div></td>
+                                <td class="bc-mid-label">Bahçe</td>
+                                <td class="bc-bar-cell"><div class="bc-bar bc-bar-alt" style="width:${cat2BahcePct}%;background:${brand2.primary_color}88">${fmtPct(cat2BahcePct,0)}</div></td>
+                            </tr>
+                            <tr>
+                                <td class="bc-bar-cell"><div class="bc-bar" style="width:${drv1Total > 0 ? drv1_4wd/drv1Total*100 : 0}%;background:#22c55e">${drv1Total > 0 ? fmtPct(drv1_4wd/drv1Total*100,0) : '-'}</div></td>
+                                <td class="bc-mid-label">4WD</td>
+                                <td class="bc-bar-cell"><div class="bc-bar" style="width:${drv2Total > 0 ? drv2_4wd/drv2Total*100 : 0}%;background:#22c55e">${drv2Total > 0 ? fmtPct(drv2_4wd/drv2Total*100,0) : '-'}</div></td>
+                            </tr>
+                            <tr>
+                                <td class="bc-bar-cell"><div class="bc-bar bc-bar-alt" style="width:${drv1Total > 0 ? drv1_2wd/drv1Total*100 : 0}%;background:#f59e0b88">${drv1Total > 0 ? fmtPct(drv1_2wd/drv1Total*100,0) : '-'}</div></td>
+                                <td class="bc-mid-label">2WD</td>
+                                <td class="bc-bar-cell"><div class="bc-bar bc-bar-alt" style="width:${drv2Total > 0 ? drv2_2wd/drv2Total*100 : 0}%;background:#f59e0b88">${drv2Total > 0 ? fmtPct(drv2_2wd/drv2Total*100,0) : '-'}</div></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Price Comparison -->
+            <div class="bc-section">
+                <div class="bc-section-title"><i class="fas fa-tag"></i> Fiyat Karşılaştırması (Liste Fiyatı)</div>
+                <div style="overflow-x:auto">
+                    <table class="bc-price-table">
+                        <thead><tr>
+                            <th style="color:${brand1.primary_color}">Model</th>
+                            <th style="color:${brand1.primary_color}">Fiyat</th>
+                            <th>HP Segment</th>
+                            <th style="color:${brand2.primary_color}">Fiyat</th>
+                            <th style="color:${brand2.primary_color}">Model</th>
+                        </tr></thead>
+                        <tbody>${priceRows || '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+
+        // Monthly chart
+        charts.bcMonthly = new Chart(document.getElementById('bcMonthlyChart'), {
+            type: 'bar',
+            data: {
+                labels: monthLabels,
+                datasets: [
+                    { label: brand1.name, data: monthD1, backgroundColor: brand1.primary_color + 'cc', borderColor: brand1.primary_color, borderWidth: 1, borderRadius: 4 },
+                    { label: brand2.name, data: monthD2, backgroundColor: brand2.primary_color + 'cc', borderColor: brand2.primary_color, borderWidth: 1, borderRadius: 4 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } }, datalabels: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: '#64748b', callback: v => fmtNum(v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+
+        // Share chart
+        charts.bcShare = new Chart(document.getElementById('bcShareChart'), {
+            type: 'line',
+            data: {
+                labels: shareLabels,
+                datasets: [
+                    { label: brand1.name, data: shareD1, borderColor: brand1.primary_color, backgroundColor: brand1.primary_color + '33', fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: brand1.primary_color },
+                    { label: brand2.name, data: shareD2, borderColor: brand2.primary_color, backgroundColor: brand2.primary_color + '33', fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: brand2.primary_color }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } }, datalabels: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: '#64748b', callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// ERROR HANDLER
+// ============================================
 function showError(err) {
     const content = document.getElementById('pageContent');
     content.innerHTML = `

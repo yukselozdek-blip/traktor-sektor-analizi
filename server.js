@@ -1600,6 +1600,405 @@ app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // ============================================
+// DYNAMIC BRAND COMPARISON
+// ============================================
+app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
+    try {
+        const { brand1_id, brand2_id } = req.query;
+        if (!brand1_id || !brand2_id) return res.status(400).json({ error: 'brand1_id ve brand2_id gerekli' });
+
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = [];
+        for (let y = minYear; y <= maxYear; y++) years.push(y);
+
+        // Get brand info
+        const brand1Res = await pool.query('SELECT id, name, primary_color, secondary_color FROM brands WHERE id = $1', [brand1_id]);
+        const brand2Res = await pool.query('SELECT id, name, primary_color, secondary_color FROM brands WHERE id = $1', [brand2_id]);
+        if (!brand1Res.rows[0] || !brand2Res.rows[0]) return res.status(404).json({ error: 'Marka bulunamadı' });
+
+        const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+
+        // Total market by year+month
+        const marketRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_data GROUP BY year, month`);
+        const marketMap = {};
+        marketRows.rows.forEach(r => { marketMap[`${r.year}_${r.month}`] = parseInt(r.total); });
+
+        async function buildBrandData(brandId) {
+            // Yearly+monthly sales
+            const salesRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 GROUP BY year, month ORDER BY year, month`, [brandId]);
+            const salesMap = {};
+            salesRows.rows.forEach(r => { salesMap[`${r.year}_${r.month}`] = parseInt(r.total); });
+
+            const yearly = {};
+            years.forEach(y => {
+                let total = 0;
+                const limit = y === maxYear ? maxMonth : 12;
+                for (let m = 1; m <= limit; m++) total += (salesMap[`${y}_${m}`] || 0);
+                yearly[y] = total;
+            });
+
+            const monthly = {};
+            for (let m = 1; m <= maxMonth; m++) monthly[m] = salesMap[`${maxYear}_${m}`] || 0;
+
+            // Current partial vs prev partial (same month range)
+            let currPartial = 0, prevPartial = 0;
+            for (let m = 1; m <= maxMonth; m++) {
+                currPartial += (salesMap[`${maxYear}_${m}`] || 0);
+                prevPartial += (salesMap[`${prevYear}_${m}`] || 0);
+            }
+            const yoyGrowth = prevPartial > 0 ? ((currPartial - prevPartial) / prevPartial * 100) : 0;
+
+            // Market share by year
+            const marketShare = {};
+            years.forEach(y => {
+                let mktTotal = 0;
+                const limit = y === maxYear ? maxMonth : 12;
+                for (let m = 1; m <= limit; m++) mktTotal += (marketMap[`${y}_${m}`] || 0);
+                marketShare[y] = mktTotal > 0 ? (yearly[y] / mktTotal * 100) : 0;
+            });
+
+            // HP distribution (current year partial)
+            const hpRows = await pool.query(`SELECT hp_range, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY hp_range ORDER BY total DESC`, [brandId, maxYear, maxMonth]);
+            const hpDist = hpRows.rows.map(r => ({ hp: r.hp_range, qty: parseInt(r.total) }));
+            const hpTotal = hpDist.reduce((s, h) => s + h.qty, 0);
+            hpDist.forEach(h => h.pct = hpTotal > 0 ? (h.qty / hpTotal * 100) : 0);
+
+            // Category split
+            const catRows = await pool.query(`SELECT category, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY category`, [brandId, maxYear, maxMonth]);
+            const categories = {};
+            catRows.rows.forEach(r => { categories[r.category] = parseInt(r.total); });
+
+            // Top 5 provinces
+            const provRows = await pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_data s JOIN provinces p ON s.province_id = p.id WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3 GROUP BY p.name ORDER BY total DESC LIMIT 5`, [brandId, maxYear, maxMonth]);
+            const topProvinces = provRows.rows.map(r => ({ name: r.name, qty: parseInt(r.total) }));
+
+            // Drive type split
+            const driveRows = await pool.query(`SELECT drive_type, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY drive_type`, [brandId, maxYear, maxMonth]);
+            const driveTypes = {};
+            driveRows.rows.forEach(r => { driveTypes[r.drive_type] = parseInt(r.total); });
+
+            // Models with prices from tractor_models
+            const modelRows = await pool.query(`SELECT model_name, horsepower, price_list_tl, category, cabin_type, drive_type FROM tractor_models WHERE brand_id = $1 AND is_current_model = true ORDER BY horsepower`, [brandId]);
+            const models = modelRows.rows.map(r => ({
+                name: r.model_name,
+                hp: parseFloat(r.horsepower),
+                price: r.price_list_tl ? parseFloat(r.price_list_tl) : null,
+                category: r.category,
+                cabin: r.cabin_type,
+                drive: r.drive_type
+            }));
+
+            // Avg price
+            const priceModels = models.filter(m => m.price && m.price > 0);
+            const avgPrice = priceModels.length > 0 ? priceModels.reduce((s, m) => s + m.price, 0) / priceModels.length : 0;
+            const minPrice = priceModels.length > 0 ? Math.min(...priceModels.map(m => m.price)) : 0;
+            const maxPrice = priceModels.length > 0 ? Math.max(...priceModels.map(m => m.price)) : 0;
+
+            return {
+                yearly, monthly, currPartial, prevPartial, yoyGrowth,
+                marketShare, hpDist, categories, topProvinces, driveTypes,
+                models, avgPrice, minPrice, maxPrice,
+                totalSales: currPartial
+            };
+        }
+
+        const [data1, data2] = await Promise.all([buildBrandData(brand1_id), buildBrandData(brand2_id)]);
+
+        // Total market summary
+        const totalMarketYearly = {};
+        years.forEach(y => {
+            let total = 0;
+            const limit = y === maxYear ? maxMonth : 12;
+            for (let m = 1; m <= limit; m++) total += (marketMap[`${y}_${m}`] || 0);
+            totalMarketYearly[y] = total;
+        });
+
+        res.json({
+            brand1: { ...brand1Res.rows[0], data: data1 },
+            brand2: { ...brand2Res.rows[0], data: data2 },
+            years, max_year: maxYear, max_month: maxMonth, prev_year: prevYear,
+            total_market: totalMarketYearly
+        });
+    } catch (err) {
+        console.error('Brand compare error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// SEED TRACTOR MODELS (admin)
+// ============================================
+app.post('/api/admin/seed-models', async (req, res) => {
+    try {
+        const modelCount = await pool.query('SELECT COUNT(*) FROM tractor_models');
+        if (parseInt(modelCount.rows[0].count) > 0) {
+            return res.json({ message: `Model verisi zaten mevcut: ${modelCount.rows[0].count} kayıt` });
+        }
+
+        const brandRows = await pool.query('SELECT id, slug FROM brands ORDER BY id');
+        const brandMap = {};
+        brandRows.rows.forEach(b => { brandMap[b.slug] = b.id; });
+
+        const modelDefs = {
+            'new-holland': [
+                { name: 'BOOMER 25', hp: 25, cat: 'bahce', price: 850000 },
+                { name: 'TT35', hp: 35, cat: 'bahce', price: 1050000 },
+                { name: 'TT4.55', hp: 45, cat: 'tarla', price: 1350000 },
+                { name: 'TT4.65', hp: 48, cat: 'tarla', price: 1480000 },
+                { name: 'TD5.65', hp: 52, cat: 'tarla', price: 1650000 },
+                { name: 'TD5.75', hp: 57, cat: 'tarla', price: 1850000 },
+                { name: 'TD5.90', hp: 65, cat: 'tarla', price: 2150000 },
+                { name: 'T4.75', hp: 75, cat: 'tarla', price: 2550000 },
+                { name: 'T5.90', hp: 85, cat: 'tarla', price: 2950000 },
+                { name: 'T5.110', hp: 95, cat: 'tarla', price: 3450000 },
+                { name: 'T6.125', hp: 105, cat: 'tarla', price: 4200000 },
+                { name: 'T6.155', hp: 115, cat: 'tarla', price: 4850000 },
+                { name: 'T7.210', hp: 125, cat: 'tarla', price: 5800000 },
+                { name: 'T7.315', hp: 145, cat: 'tarla', price: 7500000 }
+            ],
+            'case-ih': [
+                { name: 'FARMALL 45A', hp: 45, cat: 'tarla', price: 1300000 },
+                { name: 'FARMALL 55A', hp: 53, cat: 'tarla', price: 1600000 },
+                { name: 'FARMALL 65A', hp: 58, cat: 'tarla', price: 1900000 },
+                { name: 'FARMALL 75C', hp: 68, cat: 'tarla', price: 2200000 },
+                { name: 'FARMALL 90C', hp: 78, cat: 'tarla', price: 2650000 },
+                { name: 'FARMALL 110A', hp: 88, cat: 'tarla', price: 3100000 },
+                { name: 'LUXXUM 100', hp: 95, cat: 'tarla', price: 3600000 },
+                { name: 'LUXXUM 120', hp: 108, cat: 'tarla', price: 4350000 },
+                { name: 'MAXXUM 135', hp: 118, cat: 'tarla', price: 5100000 },
+                { name: 'PUMA 150', hp: 130, cat: 'tarla', price: 6200000 },
+                { name: 'PUMA 185', hp: 150, cat: 'tarla', price: 7800000 }
+            ],
+            'massey-ferguson': [
+                { name: 'MF 2605', hp: 42, cat: 'tarla', price: 1200000 },
+                { name: 'MF 2615', hp: 48, cat: 'tarla', price: 1400000 },
+                { name: 'MF 4707', hp: 52, cat: 'tarla', price: 1700000 },
+                { name: 'MF 4709', hp: 57, cat: 'tarla', price: 1950000 },
+                { name: 'MF 5710', hp: 65, cat: 'tarla', price: 2350000 },
+                { name: 'MF 5712', hp: 75, cat: 'tarla', price: 2750000 },
+                { name: 'MF 6712', hp: 85, cat: 'tarla', price: 3200000 },
+                { name: 'MF 6714', hp: 95, cat: 'tarla', price: 3700000 },
+                { name: 'MF 7715', hp: 105, cat: 'tarla', price: 4500000 },
+                { name: 'MF 7718', hp: 115, cat: 'tarla', price: 5200000 },
+                { name: 'MF 8727', hp: 130, cat: 'tarla', price: 6500000 }
+            ],
+            'john-deere': [
+                { name: '5045D', hp: 45, cat: 'tarla', price: 1450000 },
+                { name: '5055E', hp: 53, cat: 'tarla', price: 1750000 },
+                { name: '5065E', hp: 58, cat: 'tarla', price: 2050000 },
+                { name: '5075E', hp: 68, cat: 'tarla', price: 2450000 },
+                { name: '5085M', hp: 78, cat: 'tarla', price: 2900000 },
+                { name: '5100M', hp: 88, cat: 'tarla', price: 3400000 },
+                { name: '5115M', hp: 95, cat: 'tarla', price: 3900000 },
+                { name: '6105M', hp: 105, cat: 'tarla', price: 4800000 },
+                { name: '6120M', hp: 115, cat: 'tarla', price: 5500000 },
+                { name: '6155M', hp: 135, cat: 'tarla', price: 7200000 }
+            ],
+            'tumosan': [
+                { name: '4250', hp: 42, cat: 'tarla', price: 950000 },
+                { name: '5255', hp: 52, cat: 'tarla', price: 1200000 },
+                { name: '5265', hp: 57, cat: 'tarla', price: 1400000 },
+                { name: '6265', hp: 65, cat: 'tarla', price: 1700000 },
+                { name: '7270', hp: 75, cat: 'tarla', price: 2050000 },
+                { name: '8080', hp: 85, cat: 'tarla', price: 2400000 },
+                { name: '8595', hp: 95, cat: 'tarla', price: 2800000 },
+                { name: '10105', hp: 105, cat: 'tarla', price: 3300000 },
+                { name: '10120', hp: 115, cat: 'tarla', price: 3900000 }
+            ],
+            'hattat': [
+                { name: 'A45', hp: 45, cat: 'tarla', price: 900000 },
+                { name: 'B55', hp: 53, cat: 'tarla', price: 1150000 },
+                { name: 'B65', hp: 58, cat: 'tarla', price: 1350000 },
+                { name: 'C70', hp: 68, cat: 'tarla', price: 1650000 },
+                { name: 'C80', hp: 78, cat: 'tarla', price: 2000000 },
+                { name: 'D90', hp: 88, cat: 'tarla', price: 2350000 },
+                { name: 'T4100', hp: 98, cat: 'tarla', price: 2750000 },
+                { name: 'T4110', hp: 108, cat: 'tarla', price: 3200000 },
+                { name: 'T4120', hp: 118, cat: 'tarla', price: 3700000 }
+            ],
+            'erkunt': [
+                { name: 'KISMET 50', hp: 45, cat: 'tarla', price: 920000 },
+                { name: 'BEREKET 60', hp: 53, cat: 'tarla', price: 1180000 },
+                { name: 'NIMET 65', hp: 58, cat: 'tarla', price: 1380000 },
+                { name: 'NIMET 75', hp: 68, cat: 'tarla', price: 1680000 },
+                { name: 'ALP 80', hp: 78, cat: 'tarla', price: 2020000 },
+                { name: 'ALP 90', hp: 88, cat: 'tarla', price: 2380000 },
+                { name: 'KUDRET 100', hp: 98, cat: 'tarla', price: 2800000 },
+                { name: 'KUDRET 110', hp: 108, cat: 'tarla', price: 3250000 },
+                { name: 'SERVET 120', hp: 118, cat: 'tarla', price: 3750000 }
+            ],
+            'basak': [
+                { name: '2045', hp: 45, cat: 'tarla', price: 880000 },
+                { name: '2060', hp: 53, cat: 'tarla', price: 1100000 },
+                { name: '2070', hp: 58, cat: 'tarla', price: 1300000 },
+                { name: '2080', hp: 68, cat: 'tarla', price: 1600000 },
+                { name: '2085', hp: 78, cat: 'tarla', price: 1950000 },
+                { name: '2095', hp: 88, cat: 'tarla', price: 2300000 },
+                { name: '5095', hp: 98, cat: 'tarla', price: 2700000 },
+                { name: '5110', hp: 108, cat: 'tarla', price: 3150000 }
+            ],
+            'deutz-fahr': [
+                { name: '4050E', hp: 45, cat: 'tarla', price: 1350000 },
+                { name: '5065E', hp: 53, cat: 'tarla', price: 1650000 },
+                { name: '5070G', hp: 58, cat: 'tarla', price: 1950000 },
+                { name: '5080G', hp: 68, cat: 'tarla', price: 2300000 },
+                { name: '5100G', hp: 78, cat: 'tarla', price: 2700000 },
+                { name: '5110G', hp: 88, cat: 'tarla', price: 3150000 },
+                { name: '6120', hp: 98, cat: 'tarla', price: 3650000 },
+                { name: '6140', hp: 108, cat: 'tarla', price: 4200000 },
+                { name: '6160', hp: 118, cat: 'tarla', price: 4900000 },
+                { name: '7230 TTV', hp: 135, cat: 'tarla', price: 7000000 }
+            ],
+            'kubota': [
+                { name: 'B2420', hp: 24, cat: 'bahce', price: 650000 },
+                { name: 'B2650', hp: 26, cat: 'bahce', price: 750000 },
+                { name: 'L4240', hp: 42, cat: 'tarla', price: 1250000 },
+                { name: 'L5240', hp: 52, cat: 'tarla', price: 1600000 },
+                { name: 'M5660', hp: 56, cat: 'tarla', price: 1900000 },
+                { name: 'M6060', hp: 65, cat: 'tarla', price: 2250000 },
+                { name: 'M7060', hp: 75, cat: 'tarla', price: 2650000 },
+                { name: 'M8540', hp: 85, cat: 'tarla', price: 3100000 },
+                { name: 'M9540', hp: 95, cat: 'tarla', price: 3600000 },
+                { name: 'M7-132', hp: 105, cat: 'tarla', price: 4400000 },
+                { name: 'M7-152', hp: 115, cat: 'tarla', price: 5100000 },
+                { name: 'M7-172', hp: 130, cat: 'tarla', price: 6300000 }
+            ],
+            'landini': [
+                { name: '4-060', hp: 53, cat: 'tarla', price: 1550000 },
+                { name: '4-080', hp: 68, cat: 'tarla', price: 2100000 },
+                { name: '5-110', hp: 78, cat: 'tarla', price: 2550000 },
+                { name: '6-130', hp: 88, cat: 'tarla', price: 3050000 },
+                { name: '6-145', hp: 98, cat: 'tarla', price: 3550000 },
+                { name: '7-175', hp: 108, cat: 'tarla', price: 4300000 },
+                { name: '7-210', hp: 118, cat: 'tarla', price: 5000000 }
+            ],
+            'same': [
+                { name: 'EXPLORER 55', hp: 53, cat: 'tarla', price: 1500000 },
+                { name: 'EXPLORER 70', hp: 68, cat: 'tarla', price: 2050000 },
+                { name: 'EXPLORER 80', hp: 78, cat: 'tarla', price: 2500000 },
+                { name: 'VIRTUS 110', hp: 95, cat: 'tarla', price: 3400000 },
+                { name: 'IRON 120', hp: 108, cat: 'tarla', price: 4100000 },
+                { name: 'IRON 150', hp: 130, cat: 'tarla', price: 5800000 }
+            ],
+            'fendt': [
+                { name: '209 VARIO', hp: 75, cat: 'tarla', price: 3200000 },
+                { name: '211 VARIO', hp: 85, cat: 'tarla', price: 3800000 },
+                { name: '311 VARIO', hp: 95, cat: 'tarla', price: 4500000 },
+                { name: '313 VARIO', hp: 105, cat: 'tarla', price: 5300000 },
+                { name: '516 VARIO', hp: 118, cat: 'tarla', price: 6500000 },
+                { name: '720 VARIO', hp: 135, cat: 'tarla', price: 8500000 },
+                { name: '828 VARIO', hp: 160, cat: 'tarla', price: 11000000 }
+            ],
+            'claas': [
+                { name: 'ELIOS 230', hp: 68, cat: 'tarla', price: 2400000 },
+                { name: 'ARION 420', hp: 78, cat: 'tarla', price: 2900000 },
+                { name: 'ARION 440', hp: 88, cat: 'tarla', price: 3400000 },
+                { name: 'ARION 520', hp: 98, cat: 'tarla', price: 4000000 },
+                { name: 'ARION 540', hp: 108, cat: 'tarla', price: 4700000 },
+                { name: 'ARION 620', hp: 118, cat: 'tarla', price: 5600000 },
+                { name: 'AXION 850', hp: 150, cat: 'tarla', price: 9500000 }
+            ],
+            'valtra': [
+                { name: 'A84', hp: 68, cat: 'tarla', price: 2300000 },
+                { name: 'A104', hp: 78, cat: 'tarla', price: 2750000 },
+                { name: 'N114', hp: 88, cat: 'tarla', price: 3300000 },
+                { name: 'N154', hp: 98, cat: 'tarla', price: 3900000 },
+                { name: 'T154', hp: 108, cat: 'tarla', price: 4600000 },
+                { name: 'T194', hp: 118, cat: 'tarla', price: 5400000 },
+                { name: 'T234', hp: 140, cat: 'tarla', price: 7500000 }
+            ],
+            'solis': [
+                { name: 'SOLIS 20 DT', hp: 20, cat: 'bahce', price: 450000 },
+                { name: 'SOLIS 26 DT', hp: 26, cat: 'bahce', price: 550000 },
+                { name: 'SOLIS 50', hp: 45, cat: 'tarla', price: 850000 },
+                { name: 'SOLIS 60', hp: 55, cat: 'tarla', price: 1050000 },
+                { name: 'SOLIS 75', hp: 68, cat: 'tarla', price: 1350000 },
+                { name: 'SOLIS 90', hp: 78, cat: 'tarla', price: 1650000 }
+            ],
+            'antonio-carraro': [
+                { name: 'TIGRE 3200', hp: 25, cat: 'bahce', price: 750000 },
+                { name: 'TIGRE 4000', hp: 32, cat: 'bahce', price: 950000 },
+                { name: 'TIGRE 4400 F', hp: 38, cat: 'bahce', price: 1150000 },
+                { name: 'TGF 7800', hp: 48, cat: 'bahce', price: 1450000 },
+                { name: 'TRX 7800', hp: 55, cat: 'bahce', price: 1750000 },
+                { name: 'MACH 2', hp: 65, cat: 'bahce', price: 2100000 }
+            ],
+            'mccormick': [
+                { name: 'X2.55', hp: 53, cat: 'tarla', price: 1500000 },
+                { name: 'X4.70', hp: 68, cat: 'tarla', price: 2050000 },
+                { name: 'X5.85', hp: 78, cat: 'tarla', price: 2500000 },
+                { name: 'X6.55', hp: 88, cat: 'tarla', price: 3000000 },
+                { name: 'X7.480', hp: 98, cat: 'tarla', price: 3600000 },
+                { name: 'X7.650', hp: 108, cat: 'tarla', price: 4300000 },
+                { name: 'X7.670', hp: 118, cat: 'tarla', price: 5100000 }
+            ],
+            'fiat': [
+                { name: '55-46 DT', hp: 45, cat: 'tarla', price: 950000 },
+                { name: '60-56 DT', hp: 53, cat: 'tarla', price: 1200000 },
+                { name: '65-56 DT', hp: 58, cat: 'tarla', price: 1400000 },
+                { name: '70-66 DT', hp: 68, cat: 'tarla', price: 1700000 },
+                { name: '80-66 DT', hp: 78, cat: 'tarla', price: 2050000 }
+            ],
+            'yanmar': [
+                { name: 'YM2000', hp: 20, cat: 'bahce', price: 500000 },
+                { name: 'YM2210', hp: 28, cat: 'bahce', price: 620000 },
+                { name: 'EF453T', hp: 45, cat: 'tarla', price: 1100000 }
+            ],
+            'ferrari-tractors': [
+                { name: 'TC25F', hp: 25, cat: 'bahce', price: 650000 },
+                { name: 'TC30F', hp: 30, cat: 'bahce', price: 780000 },
+                { name: 'COBRAM 50', hp: 45, cat: 'bahce', price: 1100000 }
+            ],
+            'karatas': [
+                { name: 'KT 4048', hp: 45, cat: 'tarla', price: 800000 },
+                { name: 'KT 5055', hp: 53, cat: 'tarla', price: 1000000 },
+                { name: 'KT 6065', hp: 58, cat: 'tarla', price: 1200000 }
+            ],
+            'kioti': [
+                { name: 'CS2520', hp: 25, cat: 'bahce', price: 600000 },
+                { name: 'CK4510', hp: 45, cat: 'tarla', price: 1200000 },
+                { name: 'DK5510', hp: 53, cat: 'tarla', price: 1500000 },
+                { name: 'RX6620', hp: 58, cat: 'tarla', price: 1800000 },
+                { name: 'PX1053', hp: 68, cat: 'tarla', price: 2200000 }
+            ],
+            'tafe': [
+                { name: '5900 DI', hp: 45, cat: 'tarla', price: 800000 },
+                { name: '8502 DI', hp: 53, cat: 'tarla', price: 1000000 },
+                { name: '9502 DI', hp: 58, cat: 'tarla', price: 1200000 }
+            ]
+        };
+
+        let insertCount = 0;
+        for (const [slug, models] of Object.entries(modelDefs)) {
+            const brandId = brandMap[slug];
+            if (!brandId) continue;
+            for (const m of models) {
+                const hpRange = m.hp < 40 ? '1-39' : m.hp < 50 ? '40-49' : m.hp < 55 ? '50-54' : m.hp < 60 ? '55-59' : m.hp < 70 ? '60-69' : m.hp < 80 ? '70-79' : m.hp < 90 ? '80-89' : m.hp < 100 ? '90-99' : m.hp < 110 ? '100-109' : m.hp < 120 ? '110-119' : '120+';
+                const cabin = m.hp >= 60 ? 'kabinli' : 'rollbar';
+                const drive = m.hp >= 50 ? '4WD' : (Math.random() > 0.5 ? '4WD' : '2WD');
+                const gear = m.hp >= 100 ? '16+16' : m.hp >= 70 ? '12+12' : '8+8';
+                await pool.query(
+                    `INSERT INTO tractor_models (brand_id, model_name, category, cabin_type, drive_type, horsepower, hp_range, price_list_tl, gear_config, is_current_model) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true) ON CONFLICT DO NOTHING`,
+                    [brandId, m.name, m.cat, cabin, drive, m.hp, hpRange, m.price, gear]
+                );
+                insertCount++;
+            }
+        }
+
+        res.json({ message: `${insertCount} model eklendi`, count: insertCount });
+    } catch (err) {
+        console.error('Seed models error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================
 // MANUAL SEED ENDPOINT (admin only)
 // ============================================
 app.post('/api/admin/reseed-sales', async (req, res) => {

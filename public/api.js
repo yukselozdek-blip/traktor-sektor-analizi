@@ -103,5 +103,7 @@ const API = {
     async getObtHp() { return this.get('/api/sales/obt-hp'); },
     async getProvinceTopBrands(year) { return this.get(`/api/sales/province-top-brands?year=${year || ''}`); },
     async getBrandHpDetail(brandId) { return this.get(`/api/sales/brand-hp-detail?brand_id=${brandId || ''}`); },
-    async getHpBrandMatrix() { return this.get('/api/sales/hp-brand-matrix'); }
+    async getHpBrandMatrix() { return this.get('/api/sales/hp-brand-matrix'); },
+    async getBrandCompare(brand1Id, brand2Id) { return this.get(`/api/sales/brand-compare?brand1_id=${brand1Id}&brand2_id=${brand2Id}`); },
+    async seedModels() { return this.post('/api/admin/seed-models'); }
 };

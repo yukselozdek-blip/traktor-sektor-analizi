@@ -1346,3 +1346,98 @@ select {
     margin-right: 4px;
     vertical-align: middle;
 }
+
+/* ============================================
+   BRAND COMPARE PAGE
+   ============================================ */
+.bc-container { max-width: 1400px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+.bc-selectors { display: flex; align-items: center; justify-content: center; gap: 24px; padding: 24px; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border-color); }
+.bc-sel-left, .bc-sel-right { display: flex; align-items: center; gap: 12px; }
+.bc-brand-badge { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 20px; flex-shrink: 0; }
+.bc-select { background: #0f172a; color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 16px; font-size: 15px; font-weight: 600; min-width: 200px; cursor: pointer; }
+.bc-select:focus { outline: none; border-color: var(--brand-primary); }
+.bc-vs { font-size: 22px; font-weight: 800; color: var(--text-muted); background: rgba(255,255,255,0.05); width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; letter-spacing: 2px; }
+
+.bc-section { background: var(--bg-card); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border-color); }
+.bc-section-title { font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.bc-section-title i { color: var(--brand-primary); }
+
+/* KPI Table */
+.bc-kpi-table { width: 100%; border-collapse: collapse; }
+.bc-kpi-table thead th { padding: 10px 16px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; border-bottom: 2px solid var(--border-color); }
+.bc-kpi-table thead th:first-child { text-align: right; }
+.bc-kpi-table thead th:last-child { text-align: left; }
+.bc-kpi-mid { text-align: center !important; color: var(--text-muted) !important; font-weight: 500 !important; }
+.bc-kpi-table tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.bc-kpi-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+.bc-kpi-val { padding: 12px 16px; font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.bc-kpi-val:first-child { text-align: right; }
+.bc-kpi-val:last-child { text-align: left; }
+.bc-kpi-label { text-align: center; padding: 12px 16px; font-size: 12px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.bc-winner { color: #22c55e !important; position: relative; }
+.bc-winner::after { content: '✓'; font-size: 10px; margin-left: 4px; opacity: 0.7; }
+
+/* Charts row */
+.bc-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.bc-chart-card { background: var(--bg-card); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border-color); }
+.bc-chart-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.bc-chart-title i { color: var(--brand-primary); }
+
+/* Year table */
+.bc-year-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bc-year-table th { padding: 8px 12px; text-align: right; color: var(--text-muted); font-weight: 600; border-bottom: 2px solid var(--border-color); }
+.bc-year-table th:first-child { text-align: left; }
+.bc-year-table td { padding: 8px 12px; text-align: right; color: var(--text-primary); }
+.bc-year-table td:first-child { text-align: left; font-weight: 600; }
+.bc-row-market td { color: var(--text-muted) !important; font-size: 11px; }
+
+/* Panels row */
+.bc-panels-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+.bc-panel { background: var(--bg-card); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border-color); }
+
+/* Mirror table (HP, Provinces) */
+.bc-mirror-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bc-mirror-table thead th { padding: 8px 10px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border-color); }
+.bc-mirror-table thead th:first-child { text-align: right; }
+.bc-mirror-table thead th:last-child { text-align: left; }
+.bc-mirror-table tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.bc-mirror-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+.bc-mid-col { text-align: center !important; color: var(--text-muted) !important; width: 80px; }
+
+.bc-hp-val { padding: 8px 10px; font-weight: 600; color: var(--text-primary); }
+.bc-hp-val:first-child { text-align: right; }
+.bc-hp-val:last-child { text-align: left; }
+.bc-hp-label { text-align: center; padding: 8px 10px; color: var(--text-muted); font-weight: 500; }
+.bc-sub { display: block; font-size: 10px; color: var(--text-muted); font-weight: 400; }
+
+.bc-prov-val { padding: 8px 10px; color: var(--text-primary); font-weight: 500; }
+.bc-prov-val:first-child { text-align: right; }
+.bc-prov-val:last-child { text-align: left; }
+.bc-prov-rank { text-align: center; padding: 8px 6px; color: var(--text-muted); font-weight: 700; font-size: 14px; }
+
+.bc-mid-label { text-align: center; padding: 8px 6px; color: var(--text-muted); font-weight: 500; font-size: 11px; }
+.bc-bar-cell { padding: 6px 8px; }
+.bc-bar-cell:first-child { text-align: right; }
+.bc-bar-cell:first-child .bc-bar { margin-left: auto; }
+.bc-bar { height: 24px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #fff; min-width: 28px; transition: width 0.5s ease; }
+
+/* Price table */
+.bc-price-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bc-price-table thead th { padding: 10px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; border-bottom: 2px solid var(--border-color); text-align: center; }
+.bc-price-table tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.bc-price-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+.bc-model-cell { padding: 8px 12px; }
+.bc-model-cell:first-child { text-align: right; }
+.bc-model-cell:last-child { text-align: left; }
+.bc-model-name { font-weight: 600; color: var(--text-primary); }
+.bc-model-hp { display: block; font-size: 10px; color: var(--text-muted); }
+.bc-price-cell { padding: 8px 12px; text-align: center; font-weight: 700; color: var(--text-primary); font-size: 13px; }
+.bc-hp-range-cell { text-align: center; padding: 8px 6px; color: var(--text-muted); font-weight: 600; font-size: 11px; background: rgba(255,255,255,0.02); }
+.bc-cheaper { color: #22c55e !important; }
+.bc-expensive { color: #f59e0b !important; }
+
+@media (max-width: 1024px) {
+    .bc-charts-row { grid-template-columns: 1fr; }
+    .bc-panels-row { grid-template-columns: 1fr; }
+    .bc-selectors { flex-direction: column; gap: 12px; }
+}
