@@ -79,6 +79,7 @@ function navigateTo(page) {
     charts = {};
     if (leafletMap) { leafletMap.remove(); leafletMap = null; geoJsonLayer = null; }
     if (mapFullInstance) { mapFullInstance.remove(); mapFullInstance = null; mapFullGeoJson = null; }
+    if (riMapInstance) { riMapInstance.remove(); riMapInstance = null; }
 
     const titles = {
         dashboard: ['Dashboard', 'Genel Bakış'],
@@ -96,6 +97,8 @@ function navigateTo(page) {
         'hp-brand-matrix': ['HP Marka Matris', 'HP Segment Bazlı Marka Dağılımı'],
         'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
         'brand-compare': ['Marka Karşılaştırma', 'Dinamik Marka Kıyaslama Paneli'],
+        'regional-index': ['Bölgesel Mekanizasyon', 'İl Bazlı Mekanizasyon İndeksi ve Isı Haritası'],
+        'model-region': ['Model-Bölge Analizi', 'Model-Bölge Uyumluluk ve Derinlik Raporu'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
@@ -128,6 +131,8 @@ function navigateTo(page) {
         'hp-brand-matrix': loadHpBrandMatrixPage,
         'prov-top-brand': loadProvTopBrandPage,
         'brand-compare': loadBrandComparePage,
+        'regional-index': loadRegionalIndexPage,
+        'model-region': loadModelRegionPage,
         'map-full': loadMapFullPage,
         map: loadMapPage,
         sales: loadSalesPage,
@@ -3032,6 +3037,321 @@ function chartOptions(yLabel) {
             tooltip: { backgroundColor: '#1e293b', titleColor: '#f1f5f9', bodyColor: '#94a3b8', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, padding: 12, cornerRadius: 8 }
         }
     };
+}
+
+// ============================================
+// REGIONAL MECHANIZATION INDEX PAGE
+// ============================================
+let riMapInstance = null;
+let riGeoJsonLayer = null;
+
+async function loadRegionalIndexPage() {
+    try {
+        const data = await API.getRegionalIndex(selectedYear);
+        if (!data) return;
+        const { year, maxMonth, provinces } = data;
+
+        const metricOpts = [
+            { val: 'total', label: 'Toplam Satış' },
+            { val: 'bahceRatio', label: 'Bahçe Oranı %' },
+            { val: 'tarlaRatio', label: 'Tarla Oranı %' },
+            { val: 'avgHp', label: 'Ortalama HP' },
+            { val: 'ratio4wd', label: '4WD Oranı %' },
+            { val: 'cabinRatio', label: 'Kabinli Oranı %' },
+            { val: 'mechIndex', label: 'Mekanizasyon İndeksi' },
+            { val: 'yoyGrowth', label: 'YoY Büyüme %' }
+        ];
+        const selMetric = window._riMetric || 'total';
+        let metricSelHtml = metricOpts.map(o => `<option value="${o.val}" ${o.val === selMetric ? 'selected' : ''}>${o.label}</option>`).join('');
+
+        // Sort provinces by selected metric
+        const sorted = [...provinces].sort((a, b) => (b[selMetric] || 0) - (a[selMetric] || 0));
+
+        // Top 10 table
+        let top10Rows = '';
+        sorted.slice(0, 15).forEach((p, i) => {
+            const metricVal = p[selMetric] || 0;
+            const maxVal = sorted[0]?.[selMetric] || 1;
+            const barW = Math.max(5, (Math.abs(metricVal) / Math.abs(maxVal)) * 100);
+            const isNeg = metricVal < 0;
+            top10Rows += `<tr>
+                <td class="ri-rank">${i + 1}</td>
+                <td class="ri-prov-name">${p.name}</td>
+                <td class="ri-val">${selMetric === 'total' ? fmtNum(metricVal) : metricVal.toFixed(1) + (selMetric.includes('Ratio') || selMetric.includes('ratio') || selMetric === 'yoyGrowth' || selMetric === 'cabinRatio' ? '%' : '')}</td>
+                <td class="ri-bar-cell"><div class="ri-bar ${isNeg ? 'ri-bar-neg' : ''}" style="width:${barW}%"></div></td>
+                <td class="ri-detail">${fmtNum(p.total)}</td>
+                <td class="ri-detail">${p.bahceRatio.toFixed(0)}%/${p.tarlaRatio.toFixed(0)}%</td>
+                <td class="ri-detail">${p.avgHp} HP</td>
+                <td class="ri-detail">${p.dominantHp}</td>
+                <td class="ri-detail ${p.yoyGrowth >= 0 ? 'ri-up' : 'ri-down'}">${p.yoyGrowth >= 0 ? '+' : ''}${p.yoyGrowth}%</td>
+            </tr>`;
+        });
+
+        // Region summary
+        const regionMap = {};
+        provinces.forEach(p => {
+            if (!regionMap[p.region]) regionMap[p.region] = { total: 0, bahce: 0, tarla: 0, count: 0, hpSum: 0 };
+            regionMap[p.region].total += p.total;
+            regionMap[p.region].bahce += p.bahce;
+            regionMap[p.region].tarla += p.tarla;
+            regionMap[p.region].count++;
+            regionMap[p.region].hpSum += p.avgHp;
+        });
+        let regionRows = '';
+        Object.entries(regionMap).sort((a, b) => b[1].total - a[1].total).forEach(([name, d]) => {
+            const bahcePct = d.total > 0 ? (d.bahce / d.total * 100).toFixed(1) : '0';
+            regionRows += `<tr>
+                <td class="ri-region-name">${name}</td>
+                <td>${fmtNum(d.total)}</td>
+                <td>${bahcePct}%</td>
+                <td>${Math.round(d.hpSum / d.count)} HP</td>
+                <td>${d.count} İl</td>
+            </tr>`;
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+        <div class="ri-container">
+            <div class="ri-top-controls">
+                <div class="ri-metric-sel">
+                    <label>Isı Haritası Metriği:</label>
+                    <select onchange="window._riMetric=this.value;loadRegionalIndexPage()">${metricSelHtml}</select>
+                </div>
+                <div class="ri-stat-cards">
+                    <div class="ri-stat"><span class="ri-stat-val">${fmtNum(provinces.reduce((s,p)=>s+p.total,0))}</span><span class="ri-stat-lbl">${year} Toplam Satış</span></div>
+                    <div class="ri-stat"><span class="ri-stat-val">${provinces.filter(p=>p.total>0).length}</span><span class="ri-stat-lbl">Aktif İl</span></div>
+                    <div class="ri-stat"><span class="ri-stat-val">${Math.round(provinces.reduce((s,p)=>s+p.avgHp,0)/provinces.filter(p=>p.total>0).length)} HP</span><span class="ri-stat-lbl">Ort. HP</span></div>
+                    <div class="ri-stat"><span class="ri-stat-val">${(provinces.reduce((s,p)=>s+p.bahce,0)/(provinces.reduce((s,p)=>s+p.total,0)||1)*100).toFixed(1)}%</span><span class="ri-stat-lbl">Bahçe Oranı</span></div>
+                </div>
+            </div>
+
+            <div class="ri-main-grid">
+                <div class="ri-map-wrap">
+                    <div class="ri-section-title"><i class="fas fa-map"></i> Isı Haritası: ${metricOpts.find(o=>o.val===selMetric)?.label}</div>
+                    <div id="riMapContainer" style="height:500px;border-radius:8px;"></div>
+                    <div class="ri-map-legend" id="riMapLegend"></div>
+                </div>
+                <div class="ri-region-panel">
+                    <div class="ri-section-title"><i class="fas fa-chart-bar"></i> Bölge Özeti</div>
+                    <table class="ri-region-table">
+                        <thead><tr><th>Bölge</th><th>Satış</th><th>Bahçe%</th><th>Ort.HP</th><th>İl</th></tr></thead>
+                        <tbody>${regionRows}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="ri-table-section">
+                <div class="ri-section-title"><i class="fas fa-list-ol"></i> İl Sıralaması (${metricOpts.find(o=>o.val===selMetric)?.label})</div>
+                <div style="overflow-x:auto">
+                    <table class="ri-table">
+                        <thead><tr>
+                            <th>#</th><th>İl</th><th>${metricOpts.find(o=>o.val===selMetric)?.label}</th><th></th>
+                            <th>Satış</th><th>Bahçe/Tarla</th><th>Ort.HP</th><th>Baskın HP</th><th>YoY</th>
+                        </tr></thead>
+                        <tbody>${top10Rows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+
+        // Initialize map
+        setTimeout(() => {
+            if (riMapInstance) { riMapInstance.remove(); riMapInstance = null; }
+            riMapInstance = L.map('riMapContainer', { zoomControl: true, attributionControl: false }).setView([39.0, 35.5], 6);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(riMapInstance);
+
+            // Color scale
+            const vals = provinces.map(p => p[selMetric] || 0).filter(v => v !== 0);
+            const minVal = Math.min(...vals, 0);
+            const maxVal = Math.max(...vals, 1);
+
+            function getColor(val) {
+                if (selMetric === 'yoyGrowth') {
+                    if (val > 30) return '#22c55e';
+                    if (val > 10) return '#86efac';
+                    if (val > 0) return '#bbf7d0';
+                    if (val > -10) return '#fecaca';
+                    if (val > -30) return '#f87171';
+                    return '#dc2626';
+                }
+                const t = maxVal !== minVal ? (val - minVal) / (maxVal - minVal) : 0;
+                const r = Math.round(30 + t * 225);
+                const g = Math.round(120 - t * 70);
+                const b = Math.round(200 - t * 150);
+                return `rgb(${r},${g},${b})`;
+            }
+
+            // Add markers
+            const provByName = {};
+            provinces.forEach(p => { provByName[p.name.toUpperCase()] = p; });
+
+            provinces.forEach(p => {
+                if (!p.lat || !p.lng || p.total === 0) return;
+                const val = p[selMetric] || 0;
+                const radius = Math.max(6, Math.min(25, (p.total / (sorted[0]?.total || 1)) * 25));
+                L.circleMarker([p.lat, p.lng], {
+                    radius, fillColor: getColor(val), color: '#fff', weight: 1, fillOpacity: 0.85
+                }).bindPopup(`
+                    <div style="min-width:200px;font-size:12px;">
+                        <strong style="font-size:14px">${p.name}</strong> <span style="color:#888">(${p.region})</span><hr style="margin:4px 0;border-color:#333">
+                        <b>Satış:</b> ${fmtNum(p.total)} | <b>Bahçe:</b> ${p.bahceRatio.toFixed(0)}% | <b>Tarla:</b> ${p.tarlaRatio.toFixed(0)}%<br>
+                        <b>Ort. HP:</b> ${p.avgHp} | <b>Baskın:</b> ${p.dominantHp}<br>
+                        <b>4WD:</b> ${p.ratio4wd.toFixed(0)}% | <b>Kabinli:</b> ${p.cabinRatio.toFixed(0)}%<br>
+                        <b>Mek. İndeks:</b> ${p.mechIndex} | <b>YoY:</b> ${p.yoyGrowth}%<br>
+                        ${p.soil_type ? `<b>Toprak:</b> ${p.soil_type}<br>` : ''}
+                        ${p.climate_zone ? `<b>İklim:</b> ${p.climate_zone}<br>` : ''}
+                        ${p.primary_crops ? `<b>Ürünler:</b> ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : p.primary_crops}<br>` : ''}
+                        <b>Trend:</b> ${p.trend.map(t => `${t.year}: ${fmtNum(t.sales)}`).join(' → ')}
+                    </div>
+                `).addTo(riMapInstance);
+            });
+
+            // Legend
+            document.getElementById('riMapLegend').innerHTML = `
+                <span style="display:inline-block;width:14px;height:14px;background:${getColor(minVal)};border-radius:3px;vertical-align:middle"></span> Düşük
+                <span style="display:inline-block;width:14px;height:14px;background:${getColor((minVal+maxVal)/2)};border-radius:3px;vertical-align:middle;margin-left:8px"></span> Orta
+                <span style="display:inline-block;width:14px;height:14px;background:${getColor(maxVal)};border-radius:3px;vertical-align:middle;margin-left:8px"></span> Yüksek
+            `;
+        }, 100);
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// MODEL-REGION COMPATIBILITY PAGE
+// ============================================
+async function loadModelRegionPage() {
+    try {
+        const data = await API.getModelRegion();
+        if (!data) return;
+        const { years, max_year, max_month, brands } = data;
+
+        const selBrandId = window._mrBrand || (brands[0]?.id);
+        let brandOpts = brands.map(b => `<option value="${b.id}" ${b.id == selBrandId ? 'selected' : ''}>${b.name}</option>`).join('');
+
+        const brand = brands.find(b => b.id == selBrandId) || brands[0];
+        if (!brand) { document.getElementById('pageContent').innerHTML = '<div class="empty-state"><p>Veri bulunamadı</p></div>'; return; }
+
+        const topProv = brand.topProvinces || [];
+        const totalSales = brand.totalSales || 0;
+        const totalRev = brand.totalRevenue || 0;
+
+        // Summary KPIs
+        const avgGrowth = topProv.length > 0 ? (topProv.reduce((s, p) => s + p.yoyGrowth, 0) / topProv.length) : 0;
+
+        // Province detail cards
+        let provCards = '';
+        topProv.forEach((p, i) => {
+            const pctOfBrand = totalSales > 0 ? (p.total / totalSales * 100).toFixed(1) : '0';
+            const bahcePct = p.total > 0 ? (p.bahce / p.total * 100).toFixed(0) : '0';
+            const tarlaPct = p.total > 0 ? (p.tarla / p.total * 100).toFixed(0) : '0';
+
+            // Trend sparkline (text-based)
+            const trendStr = p.yearlyTrend.map(t => fmtNum(t.sales)).join(' → ');
+            const lastTwo = p.yearlyTrend.slice(-2);
+            const trendDir = lastTwo.length === 2 && lastTwo[1].sales >= lastTwo[0].sales ? 'up' : 'down';
+
+            provCards += `
+            <div class="mr-prov-card">
+                <div class="mr-prov-header">
+                    <span class="mr-prov-rank">${i + 1}</span>
+                    <div class="mr-prov-info">
+                        <span class="mr-prov-name">${p.name}</span>
+                        <span class="mr-prov-region">${p.region} · ${p.plate_code}</span>
+                    </div>
+                    <div class="mr-prov-badge ${trendDir === 'up' ? 'mr-badge-up' : 'mr-badge-down'}">
+                        <i class="fas fa-arrow-${trendDir}"></i> ${p.yoyGrowth >= 0 ? '+' : ''}${p.yoyGrowth}%
+                    </div>
+                </div>
+                <div class="mr-prov-metrics">
+                    <div class="mr-metric">
+                        <span class="mr-metric-val">${fmtNum(p.total)}</span>
+                        <span class="mr-metric-lbl">Toplam Satış</span>
+                    </div>
+                    <div class="mr-metric">
+                        <span class="mr-metric-val">${fmtPrice(p.estimatedRevenue)}</span>
+                        <span class="mr-metric-lbl">Tahmini Ciro</span>
+                    </div>
+                    <div class="mr-metric">
+                        <span class="mr-metric-val">${p.marketShareCurr}%</span>
+                        <span class="mr-metric-lbl">${max_year} Pazar Payı</span>
+                    </div>
+                    <div class="mr-metric">
+                        <span class="mr-metric-val">${pctOfBrand}%</span>
+                        <span class="mr-metric-lbl">Marka İçi Pay</span>
+                    </div>
+                </div>
+                <div class="mr-prov-details">
+                    <div class="mr-detail-row">
+                        <span class="mr-detail-label">Kategori:</span>
+                        <div class="mr-bar-wrap">
+                            <div class="mr-bar mr-bar-tarla" style="width:${tarlaPct}%">${tarlaPct}% Tarla</div>
+                            <div class="mr-bar mr-bar-bahce" style="width:${bahcePct}%">${bahcePct}% Bahçe</div>
+                        </div>
+                    </div>
+                    <div class="mr-detail-row">
+                        <span class="mr-detail-label">Baskın HP:</span>
+                        <span class="mr-detail-val">${p.dominantHp}</span>
+                    </div>
+                    ${p.soil_type ? `<div class="mr-detail-row"><span class="mr-detail-label">Toprak:</span><span class="mr-detail-val">${p.soil_type}</span></div>` : ''}
+                    ${p.climate_zone ? `<div class="mr-detail-row"><span class="mr-detail-label">İklim:</span><span class="mr-detail-val">${p.climate_zone}</span></div>` : ''}
+                    ${p.primary_crops && p.primary_crops.length ? `<div class="mr-detail-row"><span class="mr-detail-label">Ürünler:</span><span class="mr-detail-val">${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : p.primary_crops}</span></div>` : ''}
+                    ${p.rainfall ? `<div class="mr-detail-row"><span class="mr-detail-label">Yağış:</span><span class="mr-detail-val">${p.rainfall} mm</span></div>` : ''}
+                    ${p.elevation ? `<div class="mr-detail-row"><span class="mr-detail-label">Rakım:</span><span class="mr-detail-val">${fmtNum(p.elevation)} m</span></div>` : ''}
+                    <div class="mr-detail-row">
+                        <span class="mr-detail-label">Trend:</span>
+                        <span class="mr-detail-val mr-trend-text">${trendStr}</span>
+                    </div>
+                </div>
+            </div>`;
+        });
+
+        // Model portfolio
+        let modelCards = '';
+        (brand.models || []).forEach(m => {
+            modelCards += `<div class="mr-model-chip">
+                <span class="mr-model-name">${m.name}</span>
+                <span class="mr-model-detail">${m.hp} HP · ${m.category} · ${m.price ? fmtPrice(m.price) : '-'}</span>
+            </div>`;
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+        <div class="mr-container">
+            <div class="mr-top-bar">
+                <div class="mr-brand-sel">
+                    <select class="bc-select" onchange="window._mrBrand=parseInt(this.value);loadModelRegionPage()">${brandOpts}</select>
+                    <div class="mr-brand-badge" style="background:${brand.color}"><i class="fas fa-tractor"></i></div>
+                </div>
+            </div>
+
+            <div class="mr-kpi-row">
+                <div class="mr-kpi"><span class="mr-kpi-val" style="color:${brand.color}">${fmtNum(totalSales)}</span><span class="mr-kpi-lbl">Toplam Satış</span></div>
+                <div class="mr-kpi"><span class="mr-kpi-val">${fmtPrice(totalRev)}</span><span class="mr-kpi-lbl">Tahmini Toplam Ciro</span></div>
+                <div class="mr-kpi"><span class="mr-kpi-val">${brand.provinceCount}</span><span class="mr-kpi-lbl">Satış Yapılan İl</span></div>
+                <div class="mr-kpi"><span class="mr-kpi-val">${brand.models?.length || 0}</span><span class="mr-kpi-lbl">Model Sayısı</span></div>
+                <div class="mr-kpi"><span class="mr-kpi-val ${avgGrowth >= 0 ? 'ri-up' : 'ri-down'}">${avgGrowth >= 0 ? '+' : ''}${avgGrowth.toFixed(1)}%</span><span class="mr-kpi-lbl">Ort. Büyüme</span></div>
+            </div>
+
+            <div class="mr-models-section">
+                <div class="ri-section-title"><i class="fas fa-th-list"></i> Model Portföyü</div>
+                <div class="mr-model-grid">${modelCards || '<span style="color:var(--text-muted)">Model verisi bulunamadı</span>'}</div>
+            </div>
+
+            <div class="mr-ai-note">
+                <i class="fas fa-robot"></i>
+                <div>
+                    <strong>AI Destekli Analiz</strong> — Groq AI API entegrasyonu ile bu sayfada bölge-model uyumluluğu, satış potansiyeli tahmini ve proaktif strateji önerileri sunulacaktır. n8n workflow'ları üzerinden otomatik raporlama aktif edilecektir.
+                </div>
+            </div>
+
+            <div class="ri-section-title" style="margin-top:8px"><i class="fas fa-chart-line"></i> İl Bazlı Derinlik Raporu — Top ${topProv.length} İl</div>
+            <div class="mr-prov-grid">${provCards}</div>
+        </div>`;
+
+    } catch (err) {
+        showError(err);
+    }
 }
 
 // ============================================

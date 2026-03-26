@@ -1600,6 +1600,257 @@ app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // ============================================
+// REGIONAL MECHANIZATION INDEX
+// ============================================
+app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
+    try {
+        const { year, metric } = req.query;
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const targetYear = year ? parseInt(year) : maxYear;
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [targetYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+
+        // Province info
+        const provRes = await pool.query(`SELECT id, name, plate_code, region, latitude, longitude, population, agricultural_area_hectare, primary_crops, soil_type, climate_zone, annual_rainfall_mm, avg_temperature, elevation_m FROM provinces ORDER BY name`);
+
+        // Sales by province with category, hp, drive, cabin breakdown
+        const salesRes = await pool.query(`
+            SELECT s.province_id, s.category, s.hp_range, s.drive_type, s.cabin_type, s.gear_config,
+                   SUM(s.quantity) as total
+            FROM sales_data s
+            WHERE s.year = $1
+            GROUP BY s.province_id, s.category, s.hp_range, s.drive_type, s.cabin_type, s.gear_config
+        `, [targetYear]);
+
+        // Yearly trend by province (last 3 years)
+        const trendYears = [targetYear - 2, targetYear - 1, targetYear];
+        const trendRes = await pool.query(`
+            SELECT province_id, year, SUM(quantity) as total
+            FROM sales_data WHERE year = ANY($1)
+            GROUP BY province_id, year
+        `, [trendYears]);
+        const trendMap = {};
+        trendRes.rows.forEach(r => {
+            if (!trendMap[r.province_id]) trendMap[r.province_id] = {};
+            trendMap[r.province_id][r.year] = parseInt(r.total);
+        });
+
+        // Build province data
+        const provData = {};
+        salesRes.rows.forEach(r => {
+            const pid = r.province_id;
+            if (!provData[pid]) provData[pid] = { total: 0, bahce: 0, tarla: 0, hp: {}, drive: {}, cabin: {}, gear: {} };
+            const qty = parseInt(r.total);
+            provData[pid].total += qty;
+            if (r.category === 'bahce') provData[pid].bahce += qty;
+            if (r.category === 'tarla') provData[pid].tarla += qty;
+            provData[pid].hp[r.hp_range] = (provData[pid].hp[r.hp_range] || 0) + qty;
+            provData[pid].drive[r.drive_type] = (provData[pid].drive[r.drive_type] || 0) + qty;
+            provData[pid].cabin[r.cabin_type] = (provData[pid].cabin[r.cabin_type] || 0) + qty;
+            provData[pid].gear[r.gear_config] = (provData[pid].gear[r.gear_config] || 0) + qty;
+        });
+
+        // Compute avg HP per province
+        const hpMidpoints = {'1-39':25,'40-49':45,'50-54':52,'55-59':57,'60-69':65,'70-79':75,'80-89':85,'90-99':95,'100-109':105,'110-119':115,'120+':130};
+
+        const provinces = provRes.rows.map(p => {
+            const d = provData[p.id] || { total: 0, bahce: 0, tarla: 0, hp: {}, drive: {}, cabin: {}, gear: {} };
+            // Avg HP
+            let hpSum = 0, hpCount = 0;
+            Object.entries(d.hp).forEach(([range, qty]) => { hpSum += (hpMidpoints[range] || 60) * qty; hpCount += qty; });
+            const avgHp = hpCount > 0 ? hpSum / hpCount : 0;
+            // Dominant HP
+            const dominantHp = Object.entries(d.hp).sort((a, b) => b[1] - a[1])[0]?.[0] || '-';
+            // Bahce ratio
+            const bahceRatio = d.total > 0 ? (d.bahce / d.total * 100) : 0;
+            const tarlaRatio = d.total > 0 ? (d.tarla / d.total * 100) : 0;
+            // 4WD ratio
+            const ratio4wd = d.total > 0 ? ((d.drive['4WD'] || 0) / d.total * 100) : 0;
+            // Cabin ratio
+            const cabinRatio = d.total > 0 ? ((d.cabin['kabinli'] || 0) / d.total * 100) : 0;
+            // Mechanization index: tractors per 1000 ha
+            const mechIndex = p.agricultural_area_hectare && p.agricultural_area_hectare > 0
+                ? (d.total / (parseFloat(p.agricultural_area_hectare) / 1000)) : 0;
+            // Growth trend
+            const trend = trendMap[p.id] || {};
+            const prevYearSales = trend[targetYear - 1] || 0;
+            const currYearSales = trend[targetYear] || 0;
+            const yoyGrowth = prevYearSales > 0 ? ((currYearSales - prevYearSales) / prevYearSales * 100) : 0;
+
+            // HP distribution for this province
+            const hpDist = {};
+            Object.entries(d.hp).forEach(([range, qty]) => { hpDist[range] = { qty, pct: d.total > 0 ? qty / d.total * 100 : 0 }; });
+
+            return {
+                id: p.id, name: p.name, plate_code: p.plate_code, region: p.region,
+                lat: parseFloat(p.latitude), lng: parseFloat(p.longitude),
+                population: p.population,
+                agricultural_area: p.agricultural_area_hectare ? parseFloat(p.agricultural_area_hectare) : null,
+                primary_crops: p.primary_crops, soil_type: p.soil_type,
+                climate_zone: p.climate_zone,
+                rainfall: p.annual_rainfall_mm ? parseFloat(p.annual_rainfall_mm) : null,
+                avg_temp: p.avg_temperature ? parseFloat(p.avg_temperature) : null,
+                elevation: p.elevation_m,
+                total: d.total, bahce: d.bahce, tarla: d.tarla,
+                avgHp: Math.round(avgHp), dominantHp, bahceRatio, tarlaRatio,
+                ratio4wd, cabinRatio, mechIndex: Math.round(mechIndex * 10) / 10,
+                yoyGrowth: Math.round(yoyGrowth * 10) / 10,
+                hpDist,
+                trend: trendYears.map(y => ({ year: y, sales: trend[y] || 0 }))
+            };
+        });
+
+        res.json({ year: targetYear, maxMonth, provinces, trendYears });
+    } catch (err) {
+        console.error('Regional index error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// MODEL-REGION COMPATIBILITY
+// ============================================
+app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = [];
+        for (let y = minYear; y <= maxYear; y++) years.push(y);
+
+        // Province info with agriculture
+        const provRes = await pool.query(`SELECT id, name, plate_code, region, latitude, longitude, population, agricultural_area_hectare, primary_crops, soil_type, climate_zone, annual_rainfall_mm, avg_temperature, elevation_m FROM provinces ORDER BY name`);
+        const provMap = {};
+        provRes.rows.forEach(p => { provMap[p.id] = p; });
+
+        // Brands with their HP ranges and categories
+        const brandRes = await pool.query('SELECT id, name, slug, primary_color FROM brands WHERE is_active = true ORDER BY name');
+
+        // Models with prices
+        const modelRes = await pool.query(`SELECT m.id, m.brand_id, m.model_name, m.horsepower, m.hp_range, m.category, m.cabin_type, m.drive_type, m.gear_config, m.price_list_tl, b.name as brand_name, b.primary_color FROM tractor_models m JOIN brands b ON m.brand_id = b.id WHERE m.is_current_model = true ORDER BY b.name, m.horsepower`);
+
+        // Sales by province, brand, year with details
+        const salesRes = await pool.query(`
+            SELECT s.province_id, s.brand_id, s.year, s.category, s.hp_range, s.cabin_type, s.drive_type, s.gear_config,
+                   SUM(s.quantity) as total
+            FROM sales_data s
+            GROUP BY s.province_id, s.brand_id, s.year, s.category, s.hp_range, s.cabin_type, s.drive_type, s.gear_config
+        `);
+
+        // Build brand-province-year matrix
+        const bpMatrix = {}; // brand_id -> province_id -> year -> total
+        const brandProvCat = {}; // brand_id -> province_id -> {bahce, tarla, total, hps, ...}
+        salesRes.rows.forEach(r => {
+            const bid = r.brand_id, pid = r.province_id, yr = r.year;
+            const qty = parseInt(r.total);
+            if (!bpMatrix[bid]) bpMatrix[bid] = {};
+            if (!bpMatrix[bid][pid]) bpMatrix[bid][pid] = {};
+            bpMatrix[bid][pid][yr] = (bpMatrix[bid][pid][yr] || 0) + qty;
+
+            if (!brandProvCat[bid]) brandProvCat[bid] = {};
+            if (!brandProvCat[bid][pid]) brandProvCat[bid][pid] = { total: 0, bahce: 0, tarla: 0, hps: {}, years: {} };
+            const bpc = brandProvCat[bid][pid];
+            bpc.total += qty;
+            if (r.category === 'bahce') bpc.bahce += qty;
+            if (r.category === 'tarla') bpc.tarla += qty;
+            bpc.hps[r.hp_range] = (bpc.hps[r.hp_range] || 0) + qty;
+            bpc.years[yr] = (bpc.years[yr] || 0) + qty;
+        });
+
+        // Total market by province by year
+        const marketByProv = {};
+        salesRes.rows.forEach(r => {
+            const pid = r.province_id, yr = r.year;
+            if (!marketByProv[pid]) marketByProv[pid] = {};
+            marketByProv[pid][yr] = (marketByProv[pid][yr] || 0) + parseInt(r.total);
+        });
+
+        // For each brand, compute top regions and compatibility scores
+        const brands = brandRes.rows.map(b => {
+            const provStats = [];
+            const bData = brandProvCat[b.id] || {};
+
+            Object.entries(bData).forEach(([pid, data]) => {
+                const prov = provMap[pid];
+                if (!prov) return;
+                const mktData = marketByProv[pid] || {};
+
+                // Market share in this province (all years combined)
+                let totalMarket = 0;
+                Object.values(mktData).forEach(v => totalMarket += v);
+                const marketShareAll = totalMarket > 0 ? (data.total / totalMarket * 100) : 0;
+
+                // Current year market share
+                const currBrand = data.years[maxYear] || 0;
+                const currMarket = mktData[maxYear] || 0;
+                const marketShareCurr = currMarket > 0 ? (currBrand / currMarket * 100) : 0;
+
+                // Trend: CAGR-like
+                const firstYear = years.find(y => data.years[y] > 0);
+                const lastYearSales = data.years[maxYear] || 0;
+                const prevYearSales = data.years[maxYear - 1] || 0;
+                const yoyGrowth = prevYearSales > 0 ? ((lastYearSales - prevYearSales) / prevYearSales * 100) : 0;
+
+                // Revenue estimate (using avg model price for this brand)
+                const brandModels = modelRes.rows.filter(m => m.brand_id == b.id && m.price_list_tl);
+                const avgPrice = brandModels.length > 0 ? brandModels.reduce((s, m) => s + parseFloat(m.price_list_tl), 0) / brandModels.length : 0;
+                const estimatedRevenue = data.total * avgPrice;
+                const currRevenue = currBrand * avgPrice;
+
+                provStats.push({
+                    province_id: parseInt(pid),
+                    name: prov.name,
+                    plate_code: prov.plate_code,
+                    region: prov.region,
+                    lat: parseFloat(prov.latitude),
+                    lng: parseFloat(prov.longitude),
+                    soil_type: prov.soil_type,
+                    climate_zone: prov.climate_zone,
+                    primary_crops: prov.primary_crops,
+                    rainfall: prov.annual_rainfall_mm ? parseFloat(prov.annual_rainfall_mm) : null,
+                    elevation: prov.elevation_m,
+                    total: data.total,
+                    bahce: data.bahce,
+                    tarla: data.tarla,
+                    yearlyTrend: years.map(y => ({ year: y, sales: data.years[y] || 0 })),
+                    marketShareAll: Math.round(marketShareAll * 10) / 10,
+                    marketShareCurr: Math.round(marketShareCurr * 10) / 10,
+                    yoyGrowth: Math.round(yoyGrowth * 10) / 10,
+                    estimatedRevenue,
+                    currRevenue,
+                    dominantHp: Object.entries(data.hps).sort((a, b) => b[1] - a[1])[0]?.[0] || '-'
+                });
+            });
+
+            provStats.sort((a, b) => b.total - a.total);
+            const totalBrandSales = provStats.reduce((s, p) => s + p.total, 0);
+            const totalRevenue = provStats.reduce((s, p) => s + p.estimatedRevenue, 0);
+
+            return {
+                id: b.id, name: b.name, slug: b.slug, color: b.primary_color,
+                totalSales: totalBrandSales,
+                totalRevenue,
+                models: modelRes.rows.filter(m => m.brand_id == b.id).map(m => ({
+                    name: m.model_name, hp: parseFloat(m.horsepower), price: m.price_list_tl ? parseFloat(m.price_list_tl) : null,
+                    category: m.category, hp_range: m.hp_range
+                })),
+                topProvinces: provStats.slice(0, 15),
+                provinceCount: provStats.filter(p => p.total > 0).length
+            };
+        });
+
+        res.json({ years, max_year: maxYear, max_month: maxMonth, brands });
+    } catch (err) {
+        console.error('Model-region error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
 // DYNAMIC BRAND COMPARISON
 // ============================================
 app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
