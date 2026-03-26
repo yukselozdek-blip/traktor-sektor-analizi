@@ -1348,6 +1348,34 @@ select {
 }
 
 /* ============================================
+   AI ANALYSIS PANELS
+   ============================================ */
+.ai-action-bar { display: flex; align-items: center; gap: 16px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius); padding: 16px 20px; }
+.ai-btn { background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #3b82f6 100%); color: #fff; border: none; border-radius: 10px; padding: 12px 24px; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(99,102,241,0.3); }
+.ai-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
+.ai-btn:active { transform: translateY(0); }
+.ai-btn i { font-size: 16px; }
+.ai-powered { font-size: 11px; color: var(--text-muted); }
+
+.ai-panel { background: var(--bg-card); border: 1px solid rgba(139,92,246,0.3); border-radius: var(--radius); overflow: hidden; }
+.ai-loading { display: flex; align-items: center; gap: 12px; padding: 24px; color: var(--text-secondary); font-size: 14px; }
+.ai-error { padding: 20px; color: var(--danger); font-size: 13px; }
+.ai-error i { margin-right: 8px; }
+
+.ai-result-header { padding: 16px 20px; background: linear-gradient(135deg, rgba(139,92,246,0.15) 0%, rgba(59,130,246,0.1) 100%); border-bottom: 1px solid rgba(139,92,246,0.2); display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.ai-result-header i { color: #8b5cf6; font-size: 18px; }
+.ai-model { margin-left: auto; font-size: 10px; font-weight: 500; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 3px 8px; border-radius: 4px; }
+
+.ai-result-body { padding: 20px 24px; font-size: 13px; line-height: 1.8; color: var(--text-secondary); }
+.ai-result-body h2, .ai-result-body .ai-h2 { font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 20px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color); }
+.ai-result-body h3, .ai-result-body .ai-h3 { font-size: 14px; font-weight: 700; color: #8b5cf6; margin: 16px 0 6px; }
+.ai-result-body h4, .ai-result-body .ai-h4 { font-size: 13px; font-weight: 600; color: var(--brand-primary); margin: 12px 0 4px; }
+.ai-result-body strong { color: var(--text-primary); }
+.ai-result-body ul { padding-left: 20px; margin: 8px 0; }
+.ai-result-body li { margin-bottom: 4px; }
+.ai-result-body p { margin-bottom: 8px; }
+
+/* ============================================
    REGIONAL MECHANIZATION INDEX
    ============================================ */
 .ri-container { max-width: 1400px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }

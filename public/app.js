@@ -9,6 +9,40 @@ let charts = {};
 let allBrands = [];
 let allProvinces = [];
 
+// Simple markdown to HTML
+function mdToHtml(md) {
+    if (!md) return '';
+    return md
+        .replace(/^### (.+)$/gm, '<h4 class="ai-h4">$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3 class="ai-h3">$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2 class="ai-h2">$1</h2>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        .replace(/^/, '<p>').replace(/$/, '</p>');
+}
+
+async function requestAiAnalysis(type, context, panelId) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    panel.innerHTML = `<div class="ai-loading"><div class="spinner" style="width:24px;height:24px;border-width:3px"></div><span>AI analiz hazırlanıyor...</span></div>`;
+    panel.style.display = 'block';
+    try {
+        const res = await API.getAiAnalysis(type, context);
+        panel.innerHTML = `
+            <div class="ai-result">
+                <div class="ai-result-header"><i class="fas fa-robot"></i> AI Strateji Raporu <span class="ai-model">Llama 3.3 70B · ${res.usage?.total_tokens || 0} token</span></div>
+                <div class="ai-result-body">${mdToHtml(res.analysis)}</div>
+            </div>`;
+    } catch (err) {
+        panel.innerHTML = `<div class="ai-error"><i class="fas fa-exclamation-triangle"></i> AI analiz hatası: ${err.message}</div>`;
+    }
+}
+
 // ============================================
 // INITIALIZATION
 // ============================================
@@ -3151,6 +3185,14 @@ async function loadRegionalIndexPage() {
                     </table>
                 </div>
             </div>
+
+            <div class="ai-action-bar">
+                <button class="ai-btn" onclick="requestAiAnalysis('regional-index', {year:${year}, provinces: ${JSON.stringify(sorted.slice(0,15).map(p=>({name:p.name,region:p.region,total:p.total,bahceRatio:p.bahceRatio,tarlaRatio:p.tarlaRatio,avgHp:p.avgHp,ratio4wd:p.ratio4wd,mechIndex:p.mechIndex,yoyGrowth:p.yoyGrowth,soil_type:p.soil_type,climate_zone:p.climate_zone})))}}, 'riAiPanel')">
+                    <i class="fas fa-robot"></i> AI Bölgesel Strateji Raporu
+                </button>
+                <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
+            </div>
+            <div id="riAiPanel" class="ai-panel" style="display:none"></div>
         </div>`;
 
         // Initialize map
@@ -3338,16 +3380,26 @@ async function loadModelRegionPage() {
                 <div class="mr-model-grid">${modelCards || '<span style="color:var(--text-muted)">Model verisi bulunamadı</span>'}</div>
             </div>
 
-            <div class="mr-ai-note">
-                <i class="fas fa-robot"></i>
-                <div>
-                    <strong>AI Destekli Analiz</strong> — Groq AI API entegrasyonu ile bu sayfada bölge-model uyumluluğu, satış potansiyeli tahmini ve proaktif strateji önerileri sunulacaktır. n8n workflow'ları üzerinden otomatik raporlama aktif edilecektir.
-                </div>
+            <div class="ai-action-bar">
+                <button class="ai-btn" onclick="requestAiAnalysis('brand-region', window._mrAiContext, 'mrAiPanel')">
+                    <i class="fas fa-robot"></i> AI Strateji Raporu Oluştur
+                </button>
+                <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
             </div>
+            <div id="mrAiPanel" class="ai-panel" style="display:none"></div>
 
             <div class="ri-section-title" style="margin-top:8px"><i class="fas fa-chart-line"></i> İl Bazlı Derinlik Raporu — Top ${topProv.length} İl</div>
             <div class="mr-prov-grid">${provCards}</div>
         </div>`;
+
+        // Store AI context for later
+        window._mrAiContext = {
+            brandName: brand.name,
+            provinces: topProv,
+            models: brand.models,
+            totalSales: totalSales,
+            totalRevenue: totalRev
+        };
 
     } catch (err) {
         showError(err);
@@ -3667,6 +3719,14 @@ async function loadBrandComparePage() {
                     </table>
                 </div>
             </div>
+
+            <div class="ai-action-bar">
+                <button class="ai-btn" onclick="requestAiAnalysis('brand-compare', {brand1:'${brand1.name}',brand2:'${brand2.name}',data1:${JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models})},data2:${JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models})},maxYear:${max_year}}, 'bcAiPanel')">
+                    <i class="fas fa-robot"></i> AI Karşılaştırma Raporu
+                </button>
+                <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
+            </div>
+            <div id="bcAiPanel" class="ai-panel" style="display:none"></div>
         </div>`;
 
         // Monthly chart

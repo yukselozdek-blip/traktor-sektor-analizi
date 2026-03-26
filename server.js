@@ -1983,6 +1983,125 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
 });
 
 // ============================================
+// GROQ AI ANALYSIS
+// ============================================
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
+    try {
+        if (!GROQ_API_KEY) return res.status(500).json({ error: 'GROQ_API_KEY tanımlı değil' });
+
+        const { type, context } = req.body;
+        if (!type) return res.status(400).json({ error: 'Analiz tipi gerekli' });
+
+        // Build prompt based on analysis type
+        let systemPrompt = `Sen Türkiye traktör sektörü konusunda uzman bir analistsin. Verilen verileri analiz edip Türkçe olarak profesyonel, derinlikli, stratejik öneriler içeren raporlar hazırlıyorsun. Yanıtlarında markdown formatı kullan. Kısa ve öz ol ama derinlikli analiz yap. Sayısal verilerle destekle.`;
+
+        let userPrompt = '';
+
+        if (type === 'brand-region') {
+            // Brand-specific regional analysis
+            const { brandName, provinces, models, totalSales, totalRevenue } = context;
+            const topProvStr = (provinces || []).slice(0, 10).map((p, i) =>
+                `${i+1}. ${p.name} (${p.region}): ${p.total} adet, Pazar payı: ${p.marketShareCurr}%, YoY: ${p.yoyGrowth}%, Bahçe: ${(p.bahce/(p.total||1)*100).toFixed(0)}%, Toprak: ${p.soil_type || '-'}, İklim: ${p.climate_zone || '-'}, Ürünler: ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : (p.primary_crops || '-')}, Tahmini Ciro: ${Math.round(p.estimatedRevenue/1000000)}M TL`
+            ).join('\n');
+            const modelStr = (models || []).map(m => `${m.name} (${m.hp}HP, ${m.category}, ${m.price ? Math.round(m.price/1000)+'B TL' : '-'})`).join(', ');
+
+            userPrompt = `**${brandName}** markası için bölgesel strateji analizi yap.
+
+TOPLAM VERİ:
+- Toplam satış: ${totalSales} adet
+- Tahmini toplam ciro: ${Math.round(totalRevenue/1000000)}M TL
+- Model portföyü: ${modelStr}
+
+İL BAZLI VERİLER (Top 10):
+${topProvStr}
+
+Şu başlıklarda analiz yap:
+1. **Bölgesel Güç Analizi**: Hangi bölgelerde güçlü, hangilerde zayıf?
+2. **Model-Bölge Uyumu**: Hangi modeller hangi bölgelere daha uygun? Tarımsal desen ve toprak yapısına göre değerlendir.
+3. **Büyüme Fırsatları**: YoY verilere göre hangi illerde potansiyel var?
+4. **Satış Stratejisi Önerileri**: Pazar payını artırmak için 3-5 somut öneri.
+5. **Risk Değerlendirmesi**: Pazar kaybı riski olan bölgeler ve nedenleri.
+6. **Gelecek Beklentileri**: Trendlere göre önümüzdeki dönem öngörüleri.`;
+
+        } else if (type === 'regional-index') {
+            const { year, provinces: provs } = context;
+            const top10 = (provs || []).slice(0, 15).map((p, i) =>
+                `${i+1}. ${p.name} (${p.region}): ${p.total} adet, Bahçe: ${p.bahceRatio?.toFixed(0)}%, Ort.HP: ${p.avgHp}, 4WD: ${p.ratio4wd?.toFixed(0)}%, Mek.İndeks: ${p.mechIndex}, YoY: ${p.yoyGrowth}%, Toprak: ${p.soil_type || '-'}`
+            ).join('\n');
+
+            userPrompt = `${year} yılı Türkiye traktör sektörü bölgesel mekanizasyon analizi yap.
+
+İL BAZLI VERİLER (Top 15):
+${top10}
+
+Şu başlıklarda analiz yap:
+1. **Mekanizasyon Düzeyi**: Hangi iller/bölgeler mekanizasyonda öncü?
+2. **Bahçe vs Tarla Analizi**: Coğrafi dağılım ve nedenleri. Bahçe traktörü yoğun bölgelerdeki tarımsal desen.
+3. **HP Trend Analizi**: Ortalama HP'nin bölgelere göre farklılaşma nedenleri.
+4. **Teknoloji Adaptasyonu**: 4WD ve kabinli traktör oranlarının bölgesel dağılımı ne söylüyor?
+5. **Büyüme Haritası**: En hızlı büyüyen ve gerileyen bölgeler. Nedenler.
+6. **Stratejik Öneriler**: Sektör oyuncuları için bölgesel strateji önerileri.`;
+
+        } else if (type === 'brand-compare') {
+            const { brand1, brand2, data1, data2, maxYear } = context;
+            userPrompt = `**${brand1}** vs **${brand2}** marka karşılaştırma analizi yap.
+
+${brand1}: ${maxYear} satış: ${data1.currPartial} adet, YoY: ${data1.yoyGrowth?.toFixed(1)}%, Pazar payı: ${data1.marketShare?.[maxYear]?.toFixed(1)}%, Ort.Fiyat: ${Math.round(data1.avgPrice/1000)}B TL, Model sayısı: ${data1.models?.length}
+${brand2}: ${maxYear} satış: ${data2.currPartial} adet, YoY: ${data2.yoyGrowth?.toFixed(1)}%, Pazar payı: ${data2.marketShare?.[maxYear]?.toFixed(1)}%, Ort.Fiyat: ${Math.round(data2.avgPrice/1000)}B TL, Model sayısı: ${data2.models?.length}
+
+Şu başlıklarda karşılaştırmalı analiz yap:
+1. **Pazar Konumları**: Her iki markanın güçlü ve zayıf yönleri.
+2. **Fiyat-Performans**: Fiyat stratejileri ve değer önerileri.
+3. **Büyüme Dinamikleri**: YoY trendler neyi işaret ediyor?
+4. **Rekabet Avantajları**: Her markanın temel rekabet üstünlüğü.
+5. **Gelecek Öngörüleri**: Pazar payı değişim beklentileri.`;
+
+        } else {
+            return res.status(400).json({ error: 'Bilinmeyen analiz tipi' });
+        }
+
+        // Call Groq API
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GROQ_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 2048
+            })
+        });
+
+        if (!groqRes.ok) {
+            const errBody = await groqRes.text();
+            console.error('Groq API error:', groqRes.status, errBody);
+            return res.status(500).json({ error: `Groq API hatası: ${groqRes.status}` });
+        }
+
+        const groqData = await groqRes.json();
+        const aiResponse = groqData.choices?.[0]?.message?.content || 'AI yanıtı alınamadı';
+
+        res.json({
+            analysis: aiResponse,
+            model: groqData.model,
+            usage: groqData.usage
+        });
+
+    } catch (err) {
+        console.error('AI analyze error:', err);
+        res.status(500).json({ error: 'AI analiz hatası: ' + err.message });
+    }
+});
+
+// ============================================
 // SEED TRACTOR MODELS (admin)
 // ============================================
 app.post('/api/admin/seed-models', async (req, res) => {
