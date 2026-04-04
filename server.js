@@ -4097,6 +4097,13 @@ app.post('/api/admin/reseed-sales', async (req, res) => {
     }
 });
 
+app.get('/api/admin/check-data', async (req, res) => {
+    try {
+        const counts = await pool.query(`SELECT year, COUNT(*), SUM(quantity) as total FROM sales_data GROUP BY year ORDER BY year DESC`);
+        res.json(counts.rows);
+    } catch(err) { res.status(500).send(err.message); }
+});
+
 app.post('/api/admin/trigger-import', authMiddleware, async (req, res) => {
     // Only allow system admins
     if (req.user.role !== 'system_admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
