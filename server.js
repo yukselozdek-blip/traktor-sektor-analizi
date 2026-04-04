@@ -4106,6 +4106,22 @@ app.post('/api/admin/reseed-sales', async (req, res) => {
     }
 });
 
+app.post('/api/admin/trigger-import', authMiddleware, async (req, res) => {
+    // Only allow system admins
+    if (req.user.role !== 'system_admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
+    
+    // Don't await synchronously for 2 minutes and risk HTTP timeout, run asynchronously
+    const { importExcel } = require('./import-tuik.js');
+    
+    importExcel().then(result => {
+        console.log('Online import finished:', result);
+    }).catch(err => {
+        console.error('Online import failed:', err);
+    });
+    
+    res.json({ message: 'Veri yükleme/aktarma işlemi arka planda başlatıldı. Yaklaşık 2-3 dakika sürebilir.' });
+});
+
 app.post('/api/admin/seed-sales', async (req, res) => {
     try {
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');

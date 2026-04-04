@@ -8,10 +8,10 @@ const pool = new Pool({
 });
 
 async function importExcel() {
-    const filePath = 'C:/Users/yuksel.ozdek/Downloads/TuikRapor.xlsx';
+    const filePath = './data/TuikRapor.xlsx';
     if (!fs.existsSync(filePath)) {
         console.error('HATA: Excel dosyası bulunamadı:', filePath);
-        process.exit(1);
+        return { success: false, message: 'Dosya bulunamadı' };
     }
 
     console.log('📦 Excel dosyası okunuyor...');
@@ -239,15 +239,14 @@ async function importExcel() {
         console.log(`📊 Toplam ${processedSales} satış kaydı Dashboard platformunu beslemek için sales_data tablosuna map edildi.`);
         if (unmappedBrands.size > 0) console.log('⚠️ Yeni Tanimlanan Markalar:', Array.from(unmappedBrands));
         
+        return { success: true, count: processedSales };
     } catch (e) {
         await client.query('ROLLBACK');
         console.error('HATA OLUŞTU:', e);
+        return { success: false, message: e.message };
     } finally {
         client.release();
     }
 }
 
-importExcel().then(() => {
-    pool.end();
-    process.exit(0);
-});
+module.exports = { importExcel };
