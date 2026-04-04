@@ -12,6 +12,15 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'traktor-sektor-super-secret-key-2024';
+const APP_BASE_URL = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+const WHATSAPP_QUERY_API_KEY = process.env.WHATSAPP_QUERY_API_KEY || '';
+const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
+const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+const N8N_WHATSAPP_PROCESSOR_URL = (
+    process.env.N8N_WHATSAPP_PROCESSOR_URL
+    || (process.env.RAILWAY_SERVICE_N8N_URL ? `https://${process.env.RAILWAY_SERVICE_N8N_URL}/webhook/whatsapp-sales-assistant-process-v4` : '')
+).replace(/\/$/, '');
 
 // Database
 const pool = new Pool({
@@ -50,6 +59,1261 @@ function adminOnly(req, res, next) {
 }
 
 // ============================================
+// WHATSAPP / N8N QUERY HELPERS
+// ============================================
+const MONTH_NAMES_TR = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik'];
+const BRAND_ALIAS_MAP = {
+    'tumosan': ['tumosan'],
+    'basak': ['basak'],
+    'new-holland': ['new holland', 'newholland'],
+    'case-ih': ['case ih', 'caseih'],
+    'john-deere': ['john deere', 'johndeere'],
+    'massey-ferguson': ['massey ferguson', 'masseyferguson'],
+    'deutz-fahr': ['deutz fahr', 'deutzfahr'],
+    'antonio-carraro': ['antonio carraro', 'antoniocarraro'],
+    'ferrari-tractors': ['ferrari traktor', 'ferrari tractor']
+};
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeSearchText(value = '') {
+    return value
+        .toString()
+        .toLowerCase()
+        .replace(/[\u0131\u0069\u0307]/g, 'i')
+        .replace(/\u00f6/g, 'o')
+        .replace(/\u00fc/g, 'u')
+        .replace(/\u015f/g, 's')
+        .replace(/\u011f/g, 'g')
+        .replace(/\u00e7/g, 'c')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+}
+
+function formatNumberTR(value) {
+    return new Intl.NumberFormat('tr-TR').format(Number(value || 0));
+}
+
+function formatShare(value) {
+    return Number(value || 0).toFixed(1).replace('.', ',');
+}
+
+function formatPeriodLabel(year, monthCount, latestYear, latestMonth) {
+    if (year === latestYear && latestMonth < 12) {
+        return `${year} (${MONTH_NAMES_TR[0]}-${MONTH_NAMES_TR[latestMonth - 1]} donemi)`;
+    }
+    if (monthCount > 0 && monthCount < 12) {
+        return `${year} (${monthCount} ay kayitli)`;
+    }
+    return `${year}`;
+}
+
+function buildBrandSearchTerms(brand) {
+    const terms = new Set();
+    const normalizedName = normalizeSearchText(brand.name);
+    const normalizedSlug = normalizeSearchText(brand.slug);
+
+    if (normalizedName) {
+        terms.add(normalizedName);
+        terms.add(normalizedName.replace(/\s+/g, ''));
+    }
+    if (normalizedSlug) {
+        terms.add(normalizedSlug);
+        terms.add(normalizedSlug.replace(/\s+/g, ''));
+    }
+
+    (BRAND_ALIAS_MAP[brand.slug] || []).forEach(alias => {
+        const normalizedAlias = normalizeSearchText(alias);
+        if (normalizedAlias) {
+            terms.add(normalizedAlias);
+            terms.add(normalizedAlias.replace(/\s+/g, ''));
+        }
+    });
+
+    return Array.from(terms).filter(Boolean).sort((a, b) => b.length - a.length);
+}
+
+async function getBrandCatalog() {
+    const result = await pool.query('SELECT id, name, slug FROM brands WHERE is_active = true ORDER BY name');
+    return result.rows.map(row => ({
+        ...row,
+        searchTerms: buildBrandSearchTerms(row)
+    }));
+}
+
+function findBrandsInQuestion(question, brands) {
+    const normalizedQuestion = normalizeSearchText(question);
+    const matches = [];
+
+    for (const brand of brands) {
+        let bestMatchIndex = -1;
+        let bestTermLength = -1;
+
+        for (const term of brand.searchTerms) {
+            const regex = new RegExp(`(^|\\s)${escapeRegExp(term)}(?=\\s|$)`);
+            const match = normalizedQuestion.match(regex);
+            if (!match) continue;
+
+            const matchIndex = match.index ?? normalizedQuestion.indexOf(term);
+            if (matchIndex >= 0 && term.length > bestTermLength) {
+                bestMatchIndex = matchIndex;
+                bestTermLength = term.length;
+            }
+        }
+
+        if (bestMatchIndex >= 0) {
+            matches.push({ ...brand, matchIndex: bestMatchIndex, matchLength: bestTermLength });
+        }
+    }
+
+    return matches
+        .sort((a, b) => a.matchIndex - b.matchIndex || b.matchLength - a.matchLength)
+        .filter((brand, index, arr) => arr.findIndex(item => item.id === brand.id) === index);
+}
+
+function extractYears(question) {
+    const matches = question.match(/\b20\d{2}\b/g) || [];
+    return matches
+        .map(year => parseInt(year, 10))
+        .filter((year, index, arr) => Number.isInteger(year) && arr.indexOf(year) === index);
+}
+
+function isComparisonQuestion(question, matchedBrands) {
+    if (matchedBrands.length >= 2) return true;
+    const normalizedQuestion = normalizeSearchText(question);
+    return ['karsilastir', 'karsilastirma', 'kiyasla', 'kiyas', 'versus', 'vs'].some(keyword => normalizedQuestion.includes(keyword));
+}
+
+function buildUsageAnswer() {
+    return 'Soruyu anlayamadim. Ornekler: "2024 yilinda Tumosan kac traktor satti?" veya "2023 yili Tumosan ile Basak karsilastir".';
+}
+
+async function callGroqJson(systemPrompt, userPrompt) {
+    if (!GROQ_API_KEY) return null;
+
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.1,
+            max_tokens: 500,
+            response_format: { type: 'json_object' }
+        })
+    });
+
+    if (!groqRes.ok) {
+        const errBody = await groqRes.text();
+        console.error('Groq JSON API error:', groqRes.status, errBody);
+        return null;
+    }
+
+    const groqData = await groqRes.json();
+    const content = groqData.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    try {
+        return JSON.parse(content);
+    } catch (err) {
+        console.error('Groq JSON parse error:', err.message, content);
+        return null;
+    }
+}
+
+async function inferSalesQueryWithGroq(question, brands, latestPeriod) {
+    if (!GROQ_API_KEY) return null;
+
+    const brandList = brands.map(brand => ({
+        name: brand.name,
+        slug: brand.slug,
+        aliases: brand.searchTerms.slice(0, 6)
+    }));
+
+    const systemPrompt = [
+        'Sen Türkiye traktör sektörü satış sorularını yapılandıran bir yardımcı modelsin.',
+        'Sadece JSON döndür.',
+        'Desteklenen intentler:',
+        '1. brand_year_total',
+        '2. brand_year_compare',
+        '3. market_overview',
+        '4. unsupported',
+        'brand_year_total için tek marka gerekir.',
+        'brand_year_compare için iki marka gerekir.',
+        'market_overview için marka gerekmez ve genel pazar, lider marka, top markalar, pazar özeti gibi soruları kapsar.',
+        'Eğer yıl verilmemişse latest_year kullan.',
+        'Yalnızca verilen marka listesindeki isimleri kullan.',
+        'Belirsizlik varsa unsupported seç.'
+    ].join(' ');
+
+    const userPrompt = JSON.stringify({
+        question,
+        latest_year: latestPeriod?.year,
+        latest_month: latestPeriod?.month,
+        brands: brandList
+    });
+
+    const parsed = await callGroqJson(systemPrompt, userPrompt);
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const normalizedIntent = ['brand_year_total', 'brand_year_compare', 'market_overview', 'unsupported'].includes(parsed.intent)
+        ? parsed.intent
+        : 'unsupported';
+
+    const year = Number.isInteger(parsed.year) ? parsed.year : latestPeriod?.year;
+    const brandNames = Array.isArray(parsed.brand_names)
+        ? parsed.brand_names.map(name => String(name || '').trim()).filter(Boolean)
+        : [];
+
+    const matchedBrands = brandNames
+        .map(name => brands.find(brand => normalizeSearchText(brand.name) === normalizeSearchText(name) || normalizeSearchText(brand.slug) === normalizeSearchText(name)))
+        .filter(Boolean);
+
+    return {
+        intent: normalizedIntent,
+        year,
+        brands: matchedBrands,
+        raw: parsed
+    };
+}
+
+async function getLatestSalesPeriod() {
+    const latestYearRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+    const latestYear = parseInt(latestYearRes.rows[0]?.max_year, 10);
+    if (!latestYear) return null;
+
+    const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [latestYear]);
+    return {
+        year: latestYear,
+        month: parseInt(latestMonthRes.rows[0]?.max_month, 10) || 0
+    };
+}
+
+async function buildBrandYearTotalAnswer(brand, year, latestPeriod) {
+    const [brandSalesRes, totalSalesRes, rankRes] = await Promise.all([
+        pool.query(`
+            SELECT COALESCE(SUM(quantity), 0) as total_sales, COUNT(DISTINCT month) as month_count
+            FROM sales_data
+            WHERE brand_id = $1 AND year = $2
+        `, [brand.id, year]),
+        pool.query(`
+            SELECT COALESCE(SUM(quantity), 0) as total_sales
+            FROM sales_data
+            WHERE year = $1
+        `, [year]),
+        pool.query(`
+            WITH yearly_sales AS (
+                SELECT brand_id, SUM(quantity) as total_sales
+                FROM sales_data
+                WHERE year = $1
+                GROUP BY brand_id
+            )
+            SELECT COALESCE(
+                (SELECT rank FROM (
+                    SELECT brand_id, DENSE_RANK() OVER (ORDER BY total_sales DESC) as rank
+                    FROM yearly_sales
+                ) ranked
+                WHERE brand_id = $2),
+                0
+            ) as brand_rank
+        `, [year, brand.id])
+    ]);
+
+    const brandSales = parseInt(brandSalesRes.rows[0]?.total_sales || 0, 10);
+    const monthCount = parseInt(brandSalesRes.rows[0]?.month_count || 0, 10);
+    const totalMarketSales = parseInt(totalSalesRes.rows[0]?.total_sales || 0, 10);
+    const brandRank = parseInt(rankRes.rows[0]?.brand_rank || 0, 10);
+
+    if (brandSales === 0) {
+        return {
+            ok: false,
+            intent: 'brand_year_total',
+            answer: `${year} icin ${brand.name} markasina ait satis kaydi bulunamadi.`,
+            data: { brand: brand.name, year, total_sales: 0 }
+        };
+    }
+
+    const share = totalMarketSales > 0 ? (brandSales * 100) / totalMarketSales : 0;
+    const periodLabel = formatPeriodLabel(year, monthCount, latestPeriod?.year, latestPeriod?.month);
+    const rankText = brandRank > 0 ? ` Yil siralamasinda ${brandRank}. sirada.` : '';
+
+    return {
+        ok: true,
+        intent: 'brand_year_total',
+        answer: `${periodLabel} icin ${brand.name} toplam ${formatNumberTR(brandSales)} traktor satti. Pazar payi %${formatShare(share)}.${rankText}`,
+        data: {
+            brand: brand.name,
+            year,
+            total_sales: brandSales,
+            month_count: monthCount,
+            total_market_sales: totalMarketSales,
+            market_share_pct: Number(share.toFixed(2)),
+            brand_rank: brandRank
+        }
+    };
+}
+
+async function buildBrandComparisonAnswer(brands, year, latestPeriod) {
+    const brandIds = brands.map(brand => brand.id);
+    const [salesRes, totalSalesRes] = await Promise.all([
+        pool.query(`
+            SELECT b.id, b.name, COALESCE(SUM(s.quantity), 0) as total_sales, COUNT(DISTINCT s.month) as month_count
+            FROM brands b
+            LEFT JOIN sales_data s ON s.brand_id = b.id AND s.year = $1
+            WHERE b.id = ANY($2::int[])
+            GROUP BY b.id, b.name
+        `, [year, brandIds]),
+        pool.query('SELECT COALESCE(SUM(quantity), 0) as total_sales FROM sales_data WHERE year = $1', [year])
+    ]);
+
+    const totalMarketSales = parseInt(totalSalesRes.rows[0]?.total_sales || 0, 10);
+    const salesMap = new Map(
+        salesRes.rows.map(row => [
+            row.id,
+            {
+                id: row.id,
+                name: row.name,
+                total_sales: parseInt(row.total_sales || 0, 10),
+                month_count: parseInt(row.month_count || 0, 10)
+            }
+        ])
+    );
+
+    const orderedResults = brands.map(brand => salesMap.get(brand.id) || {
+        id: brand.id,
+        name: brand.name,
+        total_sales: 0,
+        month_count: 0
+    });
+
+    if (orderedResults.every(result => result.total_sales === 0)) {
+        return {
+            ok: false,
+            intent: 'brand_year_compare',
+            answer: `${year} icin secilen markalara ait satis kaydi bulunamadi.`,
+            data: { year, brands: orderedResults }
+        };
+    }
+
+    const [first, second] = orderedResults;
+    const leader = first.total_sales >= second.total_sales ? first : second;
+    const lagger = leader.id === first.id ? second : first;
+    const difference = Math.abs(first.total_sales - second.total_sales);
+    const leaderShare = totalMarketSales > 0 ? (leader.total_sales * 100) / totalMarketSales : 0;
+    const firstShare = totalMarketSales > 0 ? (first.total_sales * 100) / totalMarketSales : 0;
+    const secondShare = totalMarketSales > 0 ? (second.total_sales * 100) / totalMarketSales : 0;
+    const monthCount = Math.max(first.month_count, second.month_count);
+    const periodLabel = formatPeriodLabel(year, monthCount, latestPeriod?.year, latestPeriod?.month);
+
+    const answer = [
+        `${periodLabel} icin karsilastirma: ${first.name} ${formatNumberTR(first.total_sales)} adet, ${second.name} ${formatNumberTR(second.total_sales)} adet satti.`,
+        `${leader.name}, ${lagger.name}'i ${formatNumberTR(difference)} adet farkla gecti.`,
+        `Pazar paylari: ${first.name} %${formatShare(firstShare)}, ${second.name} %${formatShare(secondShare)}. Lider markanin payi %${formatShare(leaderShare)}.`
+    ].join(' ');
+
+    return {
+        ok: true,
+        intent: 'brand_year_compare',
+        answer,
+        data: {
+            year,
+            total_market_sales: totalMarketSales,
+            leader: leader.name,
+            difference,
+            brands: orderedResults.map(result => ({
+                ...result,
+                market_share_pct: totalMarketSales > 0 ? Number(((result.total_sales * 100) / totalMarketSales).toFixed(2)) : 0
+            }))
+        }
+    };
+}
+
+async function resolveAssistantQuestion(question) {
+    const [brands, latestPeriod] = await Promise.all([
+        getBrandCatalog(),
+        getLatestSalesPeriod()
+    ]);
+
+    if (!latestPeriod) {
+        return {
+            ok: false,
+            answer: 'Henuz satis verisi bulunmuyor. Once veritabanina satis kaydi aktarilmali.',
+            intent: 'no_data'
+        };
+    }
+
+    const years = extractYears(question);
+    const heuristicBrands = findBrandsInQuestion(question, brands);
+    const groqQuery = await inferSalesQueryWithGroq(question, brands, latestPeriod);
+    const targetYear = groqQuery?.year || years[0] || latestPeriod.year;
+    const matchedBrands = groqQuery?.brands?.length ? groqQuery.brands : heuristicBrands;
+    const compareMode = groqQuery?.intent
+        ? groqQuery.intent === 'brand_year_compare'
+        : isComparisonQuestion(question, matchedBrands);
+
+    if (groqQuery?.intent === 'market_overview' || (!matchedBrands.length && /pazar|market|lider mark|genel ozet|özet|ozet|top marka|hp/i.test(question))) {
+        const report = await buildMarketOverviewData(targetYear, latestPeriod);
+        return {
+            ok: true,
+            intent: 'market_overview',
+            answer: buildMarketOverviewMessage(report),
+            parser: groqQuery?.intent ? 'groq' : 'rules',
+            report_url: getPublicUrl(`/public/reports/market?year=${targetYear}`),
+            data: report
+        };
+    }
+
+    if (compareMode) {
+        if (matchedBrands.length < 2) {
+            return {
+                ok: false,
+                answer: 'Karsilastirma icin iki marka belirtin. Ornek: "2023 yili Tumosan ile Basak karsilastir".',
+                intent: 'brand_year_compare',
+                parser: groqQuery?.intent ? 'groq' : 'rules'
+            };
+        }
+
+        const report = await buildBrandCompareExecutiveData(matchedBrands.slice(0, 2), targetYear, latestPeriod);
+        return {
+            ok: true,
+            intent: 'brand_year_compare',
+            answer: buildBrandCompareMessage(report),
+            question,
+            report_url: getPublicUrl(`/public/reports/compare?brand1=${encodeURIComponent(report.first.brand.slug)}&brand2=${encodeURIComponent(report.second.brand.slug)}&year=${targetYear}`),
+            parser: groqQuery?.intent ? 'groq' : 'rules',
+            used_default_year: years.length === 0,
+            available_latest_year: latestPeriod.year,
+            available_latest_month: latestPeriod.month,
+            data: report
+        };
+    }
+
+    if (groqQuery?.intent === 'unsupported') {
+        return {
+            ok: false,
+            answer: 'Bu soruyu anladim ancak su an sadece tek marka yillik satis ve iki marka yillik karsilastirma cevaplayabiliyorum.',
+            intent: 'unsupported',
+            parser: 'groq'
+        };
+    }
+
+    if (matchedBrands.length === 0) {
+        return {
+            ok: false,
+            answer: buildUsageAnswer(),
+            intent: 'unknown'
+        };
+    }
+
+    const report = await buildBrandExecutiveData(matchedBrands[0], targetYear, latestPeriod);
+    return {
+        ok: true,
+        intent: 'brand_year_total',
+        answer: buildBrandExecutiveMessage(report),
+        question,
+        report_url: getPublicUrl(`/public/reports/brand?brand=${encodeURIComponent(report.brand.slug)}&year=${targetYear}`),
+        parser: groqQuery?.intent ? 'groq' : 'rules',
+        used_default_year: years.length === 0,
+        available_latest_year: latestPeriod.year,
+        available_latest_month: latestPeriod.month,
+        data: report
+    };
+}
+
+async function sendWhatsAppTextMessage(to, body) {
+    if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+        throw new Error('WhatsApp credentials tanimli degil');
+    }
+
+    const response = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${WHATSAPP_ACCESS_TOKEN}`
+        },
+        body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to,
+            type: 'text',
+            text: { body }
+        })
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`WhatsApp send failed: ${response.status} ${errorBody}`);
+    }
+
+    return response.json();
+}
+
+async function forwardWhatsAppEventToN8n(payload) {
+    if (!N8N_WHATSAPP_PROCESSOR_URL) {
+        return false;
+    }
+
+    const response = await fetch(N8N_WHATSAPP_PROCESSOR_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...(WHATSAPP_QUERY_API_KEY ? { 'x-query-token': WHATSAPP_QUERY_API_KEY } : {})
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`n8n forward failed (${response.status}): ${errText}`);
+    }
+
+    return true;
+}
+
+function getPublicUrl(path) {
+    if (!APP_BASE_URL) return null;
+    return `${APP_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function formatCurrencyShort(value) {
+    const amount = Number(value || 0);
+    if (!amount) return '-';
+    if (amount >= 1000000) return `${(amount / 1000000).toFixed(1).replace('.', ',')} Mn TL`;
+    if (amount >= 1000) return `${Math.round(amount / 1000)} Bin TL`;
+    return `${formatNumberTR(amount)} TL`;
+}
+
+function formatPctSigned(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+    const num = Number(value);
+    const prefix = num > 0 ? '+' : '';
+    return `${prefix}${num.toFixed(1).replace('.', ',')}%`;
+}
+
+function buildTopList(items, mapper, limit = 3) {
+    return (items || []).slice(0, limit).map(mapper).join(' | ');
+}
+
+function escapeHtml(value = '') {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function buildBarChartSvg(items, options = {}) {
+    const width = options.width || 860;
+    const rowHeight = options.rowHeight || 44;
+    const height = Math.max(120, 40 + items.length * rowHeight);
+    const leftPad = 180;
+    const maxValue = Math.max(...items.map(item => Number(item.value || 0)), 1);
+    const palette = options.color || '#2457C5';
+
+    const rows = items.map((item, index) => {
+        const y = 28 + index * rowHeight;
+        const value = Number(item.value || 0);
+        const barWidth = Math.max(2, Math.round((width - leftPad - 90) * value / maxValue));
+        const label = escapeHtml(item.label);
+        const valueLabel = escapeHtml(item.valueLabel || formatNumberTR(value));
+        return `
+            <text x="0" y="${y}" font-size="14" fill="#20304A">${label}</text>
+            <rect x="${leftPad}" y="${y - 16}" width="${barWidth}" height="18" rx="6" fill="${palette}" opacity="0.88"></rect>
+            <text x="${leftPad + barWidth + 10}" y="${y - 2}" font-size="13" fill="#20304A">${valueLabel}</text>
+        `;
+    }).join('');
+
+    return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <rect width="100%" height="100%" fill="#ffffff"/>
+        ${rows}
+    </svg>`;
+}
+
+function buildMiniColumnSvg(items, options = {}) {
+    const width = options.width || 860;
+    const height = options.height || 240;
+    const maxValue = Math.max(...items.map(item => Number(item.value || 0)), 1);
+    const barGap = 18;
+    const chartHeight = height - 70;
+    const baseY = height - 36;
+    const barWidth = Math.max(18, Math.floor((width - 60 - (items.length - 1) * barGap) / items.length));
+    const color = options.color || '#0F8F6E';
+
+    const bars = items.map((item, index) => {
+        const x = 30 + index * (barWidth + barGap);
+        const barHeight = Math.max(4, Math.round(chartHeight * Number(item.value || 0) / maxValue));
+        const y = baseY - barHeight;
+        return `
+            <rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="8" fill="${color}" opacity="0.88"></rect>
+            <text x="${x + barWidth / 2}" y="${baseY + 18}" text-anchor="middle" font-size="12" fill="#20304A">${escapeHtml(item.label)}</text>
+        `;
+    }).join('');
+
+    return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <rect width="100%" height="100%" fill="#ffffff"/>
+        <line x1="24" y1="${baseY}" x2="${width - 20}" y2="${baseY}" stroke="#D4DBE6" stroke-width="1"/>
+        ${bars}
+    </svg>`;
+}
+
+function buildLineTrendSvg(items, options = {}) {
+    const width = options.width || 860;
+    const height = options.height || 250;
+    const leftPad = 40;
+    const rightPad = 20;
+    const topPad = 22;
+    const bottomPad = 40;
+    const maxValue = Math.max(...items.map(item => Number(item.value || 0)), 1);
+    const chartWidth = width - leftPad - rightPad;
+    const chartHeight = height - topPad - bottomPad;
+    const stepX = items.length > 1 ? chartWidth / (items.length - 1) : chartWidth / 2;
+    const color = options.color || '#2457C5';
+
+    const points = items.map((item, index) => {
+        const x = leftPad + index * stepX;
+        const y = topPad + chartHeight - (chartHeight * Number(item.value || 0) / maxValue);
+        return { x, y, label: item.label, value: Number(item.value || 0) };
+    });
+
+    const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+    const areaPath = `${path} L ${points[points.length - 1]?.x || leftPad} ${topPad + chartHeight} L ${points[0]?.x || leftPad} ${topPad + chartHeight} Z`;
+
+    return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <defs>
+            <linearGradient id="lineFill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="${color}" stop-opacity="0.24"/>
+                <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+            </linearGradient>
+        </defs>
+        <rect width="100%" height="100%" fill="#ffffff"/>
+        <line x1="${leftPad}" y1="${topPad + chartHeight}" x2="${width - rightPad}" y2="${topPad + chartHeight}" stroke="#D4DBE6" stroke-width="1"/>
+        <path d="${areaPath}" fill="url(#lineFill)"></path>
+        <path d="${path}" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+        ${points.map(point => `
+            <circle cx="${point.x}" cy="${point.y}" r="5" fill="${color}"></circle>
+            <text x="${point.x}" y="${topPad + chartHeight + 18}" text-anchor="middle" font-size="12" fill="#20304A">${escapeHtml(point.label)}</text>
+            <text x="${point.x}" y="${point.y - 10}" text-anchor="middle" font-size="12" fill="#20304A">${escapeHtml(formatNumberTR(point.value))}</text>
+        `).join('')}
+    </svg>`;
+}
+
+function buildDonutSvg(items, options = {}) {
+    const size = options.size || 300;
+    const strokeWidth = options.strokeWidth || 38;
+    const radius = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const total = items.reduce((sum, item) => sum + Number(item.value || 0), 0) || 1;
+    const colors = options.colors || ['#2457C5', '#0F8F6E', '#D9722E', '#A72626', '#6B4FD3', '#8A9BB5'];
+    let offset = 0;
+
+    const segments = items.map((item, index) => {
+        const value = Number(item.value || 0);
+        const segmentLength = (value / total) * circumference;
+        const dashArray = `${segmentLength} ${circumference - segmentLength}`;
+        const circle = `
+            <circle
+                cx="${size / 2}"
+                cy="${size / 2}"
+                r="${radius}"
+                fill="none"
+                stroke="${colors[index % colors.length]}"
+                stroke-width="${strokeWidth}"
+                stroke-dasharray="${dashArray}"
+                stroke-dashoffset="${-offset}"
+                transform="rotate(-90 ${size / 2} ${size / 2})"
+                stroke-linecap="butt"></circle>`;
+        offset += segmentLength;
+        return circle;
+    }).join('');
+
+    const legend = items.map((item, index) => `
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0;">
+            <span style="width:12px;height:12px;border-radius:999px;background:${colors[index % colors.length]};display:inline-block;"></span>
+            <span style="font-size:13px;color:#20304A;">${escapeHtml(item.label)}: <strong>${escapeHtml(item.valueLabel || formatNumberTR(item.value))}</strong></span>
+        </div>
+    `).join('');
+
+    return `
+        <div style="display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:20px;align-items:center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <circle cx="${size / 2}" cy="${size / 2}" r="${radius}" fill="none" stroke="#E6EBF2" stroke-width="${strokeWidth}"></circle>
+                ${segments}
+                <text x="${size / 2}" y="${size / 2 - 4}" text-anchor="middle" font-size="34" font-weight="700" fill="#10223D">${escapeHtml(formatNumberTR(total))}</text>
+                <text x="${size / 2}" y="${size / 2 + 24}" text-anchor="middle" font-size="13" fill="#6B7A90">Toplam</text>
+            </svg>
+            <div>${legend}</div>
+        </div>
+    `;
+}
+
+function wrapReportHtml(title, subtitle, sections) {
+    return `<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; background:#F4F7FB; color:#20304A; margin:0; }
+    .page { max-width:1100px; margin:32px auto; padding:0 18px; }
+    .hero { background:linear-gradient(135deg,#0B1F3A,#2457C5); color:#fff; border-radius:24px; padding:28px 30px; box-shadow:0 16px 40px rgba(25,60,120,.22); }
+    .hero h1 { margin:0 0 8px; font-size:34px; }
+    .hero p { margin:0; opacity:.9; font-size:15px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-top:18px; }
+    .kpi { background:#fff; border-radius:18px; padding:18px; box-shadow:0 10px 30px rgba(24,47,89,.08); }
+    .kpi .label { font-size:12px; color:#6B7A90; text-transform:uppercase; letter-spacing:.04em; }
+    .kpi .value { margin-top:8px; font-size:28px; font-weight:700; color:#10223D; }
+    .section { background:#fff; border-radius:20px; padding:22px; margin-top:18px; box-shadow:0 10px 30px rgba(24,47,89,.08); }
+    .section h2 { margin:0 0 14px; font-size:20px; }
+    .section p, .section li { font-size:15px; line-height:1.65; }
+    .section ul { margin:0; padding-left:18px; }
+    .chart { overflow:auto; border:1px solid #E3E8F0; border-radius:16px; padding:12px; background:#FCFDFE; }
+    .split { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px; }
+    .note { background:#F7FAFF; border:1px solid #DCE7F8; border-radius:16px; padding:14px 16px; }
+    .note strong { display:block; margin-bottom:6px; color:#10223D; }
+    .list-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    .pill { background:#F3F6FB; border:1px solid #E2E8F0; border-radius:14px; padding:12px 14px; }
+    .pill .mini { color:#6B7A90; font-size:12px; text-transform:uppercase; letter-spacing:.04em; display:block; margin-bottom:6px; }
+    .footer { color:#6B7A90; font-size:12px; margin:18px 0 30px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(subtitle)}</p>
+    </div>
+    ${sections.join('\n')}
+    <div class="footer">StratejikPlan WhatsApp Sales Assistant | Railway + Groq + PostgreSQL</div>
+  </div>
+</body>
+</html>`;
+}
+
+async function buildBrandExecutiveData(brand, year, latestPeriod) {
+    const limitMonth = year === latestPeriod.year ? latestPeriod.month : 12;
+    const prevYear = year - 1;
+
+    const [salesRes, marketRes, rankRes, monthlyRes, provincesRes, hpRes, categoryRes, driveRes, modelsRes, yearlyTrendRes, provinceCountRes] = await Promise.all([
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3`, [brand.id, year, limitMonth]),
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [year, limitMonth]),
+        pool.query(`
+            WITH yearly_sales AS (
+                SELECT brand_id, SUM(quantity) as total_sales
+                FROM sales_data
+                WHERE year = $1 AND month <= $2
+                GROUP BY brand_id
+            )
+            SELECT rank FROM (
+                SELECT brand_id, DENSE_RANK() OVER (ORDER BY total_sales DESC) as rank
+                FROM yearly_sales
+            ) ranked WHERE brand_id = $3
+        `, [year, limitMonth, brand.id]),
+        pool.query(`
+            SELECT month, SUM(quantity) as total
+            FROM sales_data
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY month ORDER BY month
+        `, [brand.id, year, limitMonth]),
+        pool.query(`
+            SELECT p.name, SUM(s.quantity) as total
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3
+            GROUP BY p.name ORDER BY total DESC LIMIT 5
+        `, [brand.id, year, limitMonth]),
+        pool.query(`
+            SELECT hp_range, SUM(quantity) as total
+            FROM sales_data
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY hp_range ORDER BY total DESC
+        `, [brand.id, year, limitMonth]),
+        pool.query(`
+            SELECT category, SUM(quantity) as total
+            FROM sales_data
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY category ORDER BY total DESC
+        `, [brand.id, year, limitMonth]),
+        pool.query(`
+            SELECT drive_type, SUM(quantity) as total
+            FROM sales_data
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY drive_type ORDER BY total DESC
+        `, [brand.id, year, limitMonth]),
+        pool.query(`
+            SELECT model_name, horsepower, price_list_tl
+            FROM tractor_models
+            WHERE brand_id = $1 AND is_current_model = true
+            ORDER BY horsepower
+        `, [brand.id]),
+        pool.query(`
+            SELECT year, SUM(quantity) as total
+            FROM sales_data
+            WHERE brand_id = $1 AND year IN ($2, $3, $4) AND month <= $5
+            GROUP BY year ORDER BY year
+        `, [brand.id, year - 2, year - 1, year, limitMonth]),
+        pool.query(`
+            SELECT COUNT(DISTINCT province_id) as active_provinces
+            FROM sales_data
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+        `, [brand.id, year, limitMonth])
+    ]);
+
+    const currentSales = parseInt(salesRes.rows[0]?.total_sales || 0, 10);
+    const marketSales = parseInt(marketRes.rows[0]?.total_sales || 0, 10);
+    const marketShare = marketSales > 0 ? currentSales * 100 / marketSales : 0;
+    const rank = parseInt(rankRes.rows[0]?.rank || 0, 10);
+
+    const prevRes = await pool.query(
+        `SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3`,
+        [brand.id, prevYear, limitMonth]
+    );
+    const prevSales = parseInt(prevRes.rows[0]?.total_sales || 0, 10);
+    const yoy = prevSales > 0 ? ((currentSales - prevSales) * 100 / prevSales) : 0;
+
+    const topProvinces = provincesRes.rows.map(row => ({ name: row.name, total: parseInt(row.total, 10) }));
+    const hpSegments = hpRes.rows.map(row => ({ name: row.hp_range, total: parseInt(row.total, 10) }));
+    const categories = Object.fromEntries(categoryRes.rows.map(row => [row.category, parseInt(row.total, 10)]));
+    const drives = Object.fromEntries(driveRes.rows.map(row => [row.drive_type, parseInt(row.total, 10)]));
+    const models = modelsRes.rows.map(row => ({
+        name: row.model_name,
+        hp: row.horsepower ? parseFloat(row.horsepower) : null,
+        price: row.price_list_tl ? parseFloat(row.price_list_tl) : null
+    }));
+    const avgPrice = models.filter(m => m.price).length
+        ? models.filter(m => m.price).reduce((sum, item) => sum + item.price, 0) / models.filter(m => m.price).length
+        : 0;
+    const pricedModels = models.filter(item => item.price);
+    const minPrice = pricedModels.length ? Math.min(...pricedModels.map(item => item.price)) : 0;
+    const maxPrice = pricedModels.length ? Math.max(...pricedModels.map(item => item.price)) : 0;
+    const activeProvinceCount = parseInt(provinceCountRes.rows[0]?.active_provinces || 0, 10);
+
+    const periodLabel = formatPeriodLabel(year, limitMonth, latestPeriod.year, latestPeriod.month);
+    const monthly = Array.from({ length: limitMonth }, (_, index) => {
+        const month = index + 1;
+        const row = monthlyRes.rows.find(item => Number(item.month) === month);
+        return { month, total: parseInt(row?.total || 0, 10), label: MONTH_NAMES_TR[month - 1].slice(0, 3) };
+    });
+    const peakMonth = monthly.reduce((best, item) => item.total > (best?.total || 0) ? item : best, null);
+    const yearlyTrend = [year - 2, year - 1, year].map(y => ({
+        year: y,
+        total: parseInt(yearlyTrendRes.rows.find(row => Number(row.year) === y)?.total || 0, 10)
+    }));
+    const drive4wdRatio = ((drives['4WD'] || 0) * 100) / Math.max(currentSales, 1);
+
+    let commentary = '';
+    const brief = await callGroqJson(
+        'Yalnizca JSON dondur. { "summary": "...", "recommendation": "..." } formatini kullan. Turkce, yonetici dili kullan. Sayisal veriyi yorumla, 2 kisa cumlelik ozet ve 1 kisa aksiyon onerisi ver. Aksiyon onerisi markanin kendi saha, segment, fiyat, il veya portfoy hamlelerine odaklansin; rakiple isbirligi onerme.',
+        JSON.stringify({
+            brand: brand.name,
+            year,
+            periodLabel,
+            currentSales,
+            prevSales,
+            yoy: Number(yoy.toFixed(1)),
+            marketShare: Number(marketShare.toFixed(1)),
+            rank,
+            topProvinces,
+            hpSegments: hpSegments.slice(0, 3),
+            categories,
+            drives,
+            modelCount: models.length,
+            avgPrice
+        })
+    );
+    if (brief?.summary) commentary = `${brief.summary} ${brief.recommendation || ''}`.trim();
+
+    return {
+        brand,
+        year,
+        limitMonth,
+        periodLabel,
+        currentSales,
+        prevSales,
+        yoy,
+        marketSales,
+        marketShare,
+        rank,
+        topProvinces,
+        hpSegments,
+        categories,
+        drives,
+        models,
+        avgPrice,
+        minPrice,
+        maxPrice,
+        activeProvinceCount,
+        peakMonth,
+        drive4wdRatio,
+        monthly,
+        yearlyTrend,
+        commentary
+    };
+}
+
+async function buildMarketOverviewData(year, latestPeriod) {
+    const limitMonth = year === latestPeriod.year ? latestPeriod.month : 12;
+    const prevYear = year - 1;
+
+    const [marketRes, prevMarketRes, brandsRes, provincesRes, hpRes, categoryRes, provinceCountRes] = await Promise.all([
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [year, limitMonth]),
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [prevYear, limitMonth]),
+        pool.query(`
+            SELECT b.name, SUM(s.quantity) as total
+            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1 AND s.month <= $2
+            GROUP BY b.name ORDER BY total DESC LIMIT 8
+        `, [year, limitMonth]),
+        pool.query(`
+            SELECT p.name, SUM(s.quantity) as total
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            WHERE s.year = $1 AND s.month <= $2
+            GROUP BY p.name ORDER BY total DESC LIMIT 8
+        `, [year, limitMonth]),
+        pool.query(`
+            SELECT hp_range, SUM(quantity) as total
+            FROM sales_data
+            WHERE year = $1 AND month <= $2
+            GROUP BY hp_range ORDER BY total DESC LIMIT 6
+        `, [year, limitMonth]),
+        pool.query(`
+            SELECT category, SUM(quantity) as total
+            FROM sales_data
+            WHERE year = $1 AND month <= $2
+            GROUP BY category ORDER BY total DESC
+        `, [year, limitMonth]),
+        pool.query(`
+            SELECT COUNT(DISTINCT province_id) as active_provinces
+            FROM sales_data
+            WHERE year = $1 AND month <= $2
+        `, [year, limitMonth])
+    ]);
+
+    const currentSales = parseInt(marketRes.rows[0]?.total_sales || 0, 10);
+    const prevSales = parseInt(prevMarketRes.rows[0]?.total_sales || 0, 10);
+    const yoy = prevSales > 0 ? ((currentSales - prevSales) * 100 / prevSales) : 0;
+    const topBrands = brandsRes.rows.map(row => ({ name: row.name, total: parseInt(row.total, 10) }));
+    const topProvinces = provincesRes.rows.map(row => ({ name: row.name, total: parseInt(row.total, 10) }));
+    const hpSegments = hpRes.rows.map(row => ({ name: row.hp_range, total: parseInt(row.total, 10) }));
+    const categories = categoryRes.rows.map(row => ({ name: row.category, total: parseInt(row.total, 10) }));
+    const periodLabel = formatPeriodLabel(year, limitMonth, latestPeriod.year, latestPeriod.month);
+    const activeProvinceCount = parseInt(provinceCountRes.rows[0]?.active_provinces || 0, 10);
+    const top3Share = currentSales > 0
+        ? topBrands.slice(0, 3).reduce((sum, item) => sum + item.total, 0) * 100 / currentSales
+        : 0;
+
+    let commentary = '';
+    const brief = await callGroqJson(
+        'Yalnizca JSON dondur. { "summary": "...", "recommendation": "..." } formatini kullan. Turkce, yonetici dili kullan. 2 kisa cumlelik pazar yorumu ve 1 kisa aksiyon onerisi ver. Oneri, pazar konsantrasyonu, bolgesel firsat veya segment kaymasi gibi icgoru odakli olsun; rakiplerle isbirligi onermesin.',
+        JSON.stringify({
+            year,
+            periodLabel,
+            currentSales,
+            prevSales,
+            yoy: Number(yoy.toFixed(1)),
+            activeProvinceCount,
+            top3Share: Number(top3Share.toFixed(1)),
+            topBrands: topBrands.slice(0, 5),
+            topProvinces: topProvinces.slice(0, 5),
+            hpSegments: hpSegments.slice(0, 4),
+            categories: categories.slice(0, 3)
+        })
+    );
+    if (brief?.summary) commentary = `${brief.summary} ${brief.recommendation || ''}`.trim();
+
+    return { year, limitMonth, periodLabel, currentSales, prevSales, yoy, topBrands, topProvinces, hpSegments, categories, activeProvinceCount, top3Share, commentary };
+}
+
+async function buildBrandCompareExecutiveData(brands, year, latestPeriod) {
+    const limitMonth = year === latestPeriod.year ? latestPeriod.month : 12;
+    const [first, second] = brands;
+    const [, benchmarkRes] = await Promise.all([
+        pool.query(`
+            SELECT b.id, b.name, COALESCE(SUM(s.quantity), 0) as total_sales
+            FROM brands b
+            LEFT JOIN sales_data s ON s.brand_id = b.id AND s.year = $1 AND s.month <= $2
+            WHERE b.id = ANY($3::int[])
+            GROUP BY b.id, b.name
+        `, [year, limitMonth, brands.map(item => item.id)]),
+        pool.query(`
+            WITH market AS (
+                SELECT year, SUM(quantity) as total
+                FROM sales_data
+                WHERE year IN ($1, $2) AND month <= $3
+                GROUP BY year
+            ),
+            brand_sales AS (
+                SELECT brand_id, year, SUM(quantity) as total
+                FROM sales_data
+                WHERE brand_id = ANY($4::int[]) AND year IN ($1, $2) AND month <= $3
+                GROUP BY brand_id, year
+            )
+            SELECT * FROM brand_sales
+        `, [year, year - 1, limitMonth, brands.map(item => item.id)])
+    ]);
+
+    const prevRows = benchmarkRes.rows.filter(row => Number(row.year) === year - 1);
+    const currRows = benchmarkRes.rows.filter(row => Number(row.year) === year);
+
+    const marketRes = await pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [year, limitMonth]);
+    const marketSales = parseInt(marketRes.rows[0]?.total_sales || 0, 10);
+
+    const firstData = await buildBrandExecutiveData(first, year, latestPeriod);
+    const secondData = await buildBrandExecutiveData(second, year, latestPeriod);
+    const diff = firstData.currentSales - secondData.currentSales;
+    const leader = diff >= 0 ? firstData : secondData;
+    const lagger = diff >= 0 ? secondData : firstData;
+
+    const provinceLead = await pool.query(`
+        WITH prov AS (
+            SELECT p.name,
+                   SUM(CASE WHEN s.brand_id = $1 THEN s.quantity ELSE 0 END) as b1,
+                   SUM(CASE WHEN s.brand_id = $2 THEN s.quantity ELSE 0 END) as b2
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            WHERE s.brand_id IN ($1, $2) AND s.year = $3 AND s.month <= $4
+            GROUP BY p.name
+        )
+        SELECT name, b1, b2, ABS(b1 - b2) as gap
+        FROM prov
+        WHERE b1 > 0 OR b2 > 0
+        ORDER BY gap DESC
+    `, [first.id, second.id, year, limitMonth]);
+    const provinceLeadRows = provinceLead.rows.map(row => ({
+        name: row.name,
+        b1: parseInt(row.b1, 10),
+        b2: parseInt(row.b2, 10),
+        gap: parseInt(row.gap, 10)
+    }));
+    const provinceWins = {
+        first: provinceLeadRows.filter(item => item.b1 > item.b2).length,
+        second: provinceLeadRows.filter(item => item.b2 > item.b1).length,
+        tie: provinceLeadRows.filter(item => item.b1 === item.b2).length
+    };
+    const shareGap = Math.abs(firstData.marketShare - secondData.marketShare);
+    const yoyGap = Math.abs(firstData.yoy - secondData.yoy);
+    const priceGap = Math.abs(firstData.avgPrice - secondData.avgPrice);
+
+    let commentary = '';
+    const brief = await callGroqJson(
+        'Yalnizca JSON dondur. { "summary": "...", "recommendation": "..." } formatini kullan. Turkce, ust yonetime uygun dil kullan. 2 kisa cumlelik rekabet yorumu ve 1 aksiyon onerisi ver. Oneri, il/segment/fiyat farklari uzerinden somut bir takip veya savunma hamlesi icersin; genel gecis cumlesi veya rakiple isbirligi onermesin.',
+        JSON.stringify({
+            year,
+            limitMonth,
+            marketSales,
+            first: { name: firstData.brand.name, sales: firstData.currentSales, share: Number(firstData.marketShare.toFixed(1)), yoy: Number(firstData.yoy.toFixed(1)), avgPrice: firstData.avgPrice },
+            second: { name: secondData.brand.name, sales: secondData.currentSales, share: Number(secondData.marketShare.toFixed(1)), yoy: Number(secondData.yoy.toFixed(1)), avgPrice: secondData.avgPrice },
+            leadingHpFirst: firstData.hpSegments.slice(0, 2),
+            leadingHpSecond: secondData.hpSegments.slice(0, 2),
+            topProvinceBattles: provinceLead.rows
+        })
+    );
+    if (brief?.summary) commentary = `${brief.summary} ${brief.recommendation || ''}`.trim();
+
+    return {
+        year,
+        limitMonth,
+        periodLabel: formatPeriodLabel(year, limitMonth, latestPeriod.year, latestPeriod.month),
+        first: firstData,
+        second: secondData,
+        marketSales,
+        leader,
+        lagger,
+        difference: Math.abs(diff),
+        shareGap,
+        yoyGap,
+        priceGap,
+        provinceWins,
+        provinceLead: provinceLeadRows.slice(0, 6),
+        commentary
+    };
+}
+
+function buildBrandExecutiveMessage(report) {
+    const dominantHp = report.hpSegments[0];
+    const reportUrl = getPublicUrl(`/public/reports/brand?brand=${encodeURIComponent(report.brand.slug)}&year=${report.year}`);
+    const trendSummary = buildTopList(report.yearlyTrend, item => `${item.year}: ${formatNumberTR(item.total)}`, 3);
+    return [
+        `*Yonetici Brifingi | ${report.brand.name} | ${report.periodLabel}*`,
+        `*Pazar Konumu*`,
+        `- Hacim: ${formatNumberTR(report.currentSales)} adet | Pay: %${formatShare(report.marketShare)} | Sira: ${report.rank || '-'}`,
+        `- Yillik momentum: ${formatPctSigned(report.yoy)} | Aktif il: ${formatNumberTR(report.activeProvinceCount)}`,
+        `*Momentum ve Saha*`,
+        `- 3 yillik iz: ${trendSummary || '-'}`,
+        `- Tepe ay: ${report.peakMonth ? `${MONTH_NAMES_TR[report.peakMonth.month - 1]} (${formatNumberTR(report.peakMonth.total)})` : '-'}`,
+        `- En guclu iller: ${buildTopList(report.topProvinces, item => `${item.name} (${formatNumberTR(item.total)})`) || '-'}`,
+        `*Segment ve Portfoy*`,
+        `- Lider HP bandi: ${dominantHp ? `${dominantHp.name} (${formatNumberTR(dominantHp.total)})` : '-'}`,
+        `- Tarla/Bahce dengesi: ${formatNumberTR(report.categories.tarla || 0)} / ${formatNumberTR(report.categories.bahce || 0)}`,
+        `- 4WD penetrasyonu: %${formatShare(report.drive4wdRatio)}`,
+        `- Portfoy: ${report.models.length} aktif model | Fiyat koridoru: ${formatCurrencyShort(report.minPrice)} - ${formatCurrencyShort(report.maxPrice)}`,
+        `- Ortalama liste fiyatı: ${formatCurrencyShort(report.avgPrice)}`,
+        report.commentary ? `*Yonetici Notu*\n${report.commentary}` : '',
+        reportUrl ? `*Grafikli yonetici paneli:* ${reportUrl}` : ''
+    ].filter(Boolean).join('\n');
+}
+
+function buildBrandCompareMessage(report) {
+    const reportUrl = getPublicUrl(`/public/reports/compare?brand1=${encodeURIComponent(report.first.brand.slug)}&brand2=${encodeURIComponent(report.second.brand.slug)}&year=${report.year}`);
+    return [
+        `*Rekabet Brifingi | ${report.first.brand.name} vs ${report.second.brand.name} | ${report.periodLabel}*`,
+        `*Skor Karti*`,
+        `- ${report.first.brand.name}: ${formatNumberTR(report.first.currentSales)} adet | Pay %${formatShare(report.first.marketShare)} | Degisim ${formatPctSigned(report.first.yoy)}`,
+        `- ${report.second.brand.name}: ${formatNumberTR(report.second.currentSales)} adet | Pay %${formatShare(report.second.marketShare)} | Degisim ${formatPctSigned(report.second.yoy)}`,
+        `- Lider: ${report.leader.brand.name} | Hacim farki: ${formatNumberTR(report.difference)} adet | Pay farki: ${formatShare(report.shareGap)} puan`,
+        `*Saha ve Rekabet*`,
+        `- Il ustunlugu: ${report.first.brand.name} ${report.provinceWins.first} il, ${report.second.brand.name} ${report.provinceWins.second} il`,
+        `- Kritik savas alanlari: ${buildTopList(report.provinceLead, item => `${item.name} (${formatNumberTR(item.gap)})`) || 'Il bazli fark verisi yok'}`,
+        `*Segment ve Fiyatlama*`,
+        `- ${report.first.brand.name} lider HP: ${buildTopList(report.first.hpSegments, item => `${item.name}`, 2) || '-'}`,
+        `- ${report.second.brand.name} lider HP: ${buildTopList(report.second.hpSegments, item => `${item.name}`, 2) || '-'}`,
+        `- Ortalama liste fiyatlari: ${report.first.brand.name} ${formatCurrencyShort(report.first.avgPrice)} | ${report.second.brand.name} ${formatCurrencyShort(report.second.avgPrice)} | Fark ${formatCurrencyShort(report.priceGap)}`,
+        report.commentary ? `*Yonetici Notu*\n${report.commentary}` : '',
+        reportUrl ? `*Grafikli rekabet paneli:* ${reportUrl}` : ''
+    ].filter(Boolean).join('\n');
+}
+
+function buildMarketOverviewMessage(report) {
+    const reportUrl = getPublicUrl(`/public/reports/market?year=${report.year}`);
+    return [
+        `*Pazar Bulteni | ${report.periodLabel}*`,
+        `*Ust Duzey Gosterge Seti*`,
+        `- Toplam pazar: ${formatNumberTR(report.currentSales)} adet | Yillik degisim: ${formatPctSigned(report.yoy)}`,
+        `- Aktif il: ${formatNumberTR(report.activeProvinceCount)} | Top 3 marka konsantrasyonu: %${formatShare(report.top3Share)}`,
+        `*Liderlik Tablosu*`,
+        `- Markalar: ${buildTopList(report.topBrands, item => `${item.name} (${formatNumberTR(item.total)})`, 5) || '-'}`,
+        `- Iller: ${buildTopList(report.topProvinces, item => `${item.name} (${formatNumberTR(item.total)})`, 5) || '-'}`,
+        `*Talep Profili*`,
+        `- HP segmentleri: ${buildTopList(report.hpSegments, item => `${item.name} (${formatNumberTR(item.total)})`, 4) || '-'}`,
+        `- Kategori resmi: ${buildTopList(report.categories, item => `${item.name} (${formatNumberTR(item.total)})`, 3) || '-'}`,
+        report.commentary ? `*Yonetici Notu*\n${report.commentary}` : '',
+        reportUrl ? `*Grafikli pazar paneli:* ${reportUrl}` : ''
+    ].filter(Boolean).join('\n');
+}
+
+function renderBrandExecutiveHtml(report) {
+    const monthlySvg = buildLineTrendSvg(report.monthly.map(item => ({ label: item.label, value: item.total })), { color: '#2457C5' });
+    const yearlySvg = buildMiniColumnSvg(report.yearlyTrend.map(item => ({ label: String(item.year), value: item.total })), { color: '#A72626' });
+    const provinceSvg = buildBarChartSvg(report.topProvinces.map(item => ({ label: item.name, value: item.total })), { color: '#0F8F6E' });
+    const hpDonut = buildDonutSvg(report.hpSegments.slice(0, 5).map(item => ({ label: item.name, value: item.total })), { size: 260 });
+    return wrapReportHtml(
+        `${report.brand.name} Yonetici Raporu`,
+        `${report.periodLabel} | Satis, pazar payi, segment, il dagilimi ve portfoy gorunumu`,
+        [
+            `<div class="grid">
+                <div class="kpi"><div class="label">Satis</div><div class="value">${formatNumberTR(report.currentSales)}</div></div>
+                <div class="kpi"><div class="label">Pazar Payi</div><div class="value">%${formatShare(report.marketShare)}</div></div>
+                <div class="kpi"><div class="label">Siralama</div><div class="value">${report.rank || '-'}</div></div>
+                <div class="kpi"><div class="label">Yillik Degisim</div><div class="value">${formatPctSigned(report.yoy)}</div></div>
+            </div>`,
+            `<section class="section"><h2>Yonetici Ozeti</h2><p>${escapeHtml(report.commentary || `${report.brand.name}, ${report.periodLabel} doneminde ${formatNumberTR(report.currentSales)} adet satis ve %${formatShare(report.marketShare)} pazar payina ulasmistir.`)}</p></section>`,
+            `<section class="section"><h2>Momentum Paneli</h2><div class="split"><div class="chart">${monthlySvg}</div><div class="chart">${yearlySvg}</div></div></section>`,
+            `<section class="section"><h2>Bolgesel Guc</h2><div class="chart">${provinceSvg}</div></section>`,
+            `<section class="section"><h2>Segment ve Portfoy Mimarisi</h2>
+                <div class="split">
+                    <div class="chart">${hpDonut}</div>
+                    <div class="list-grid">
+                        <div class="pill"><span class="mini">Lider HP</span><strong>${escapeHtml(report.hpSegments[0]?.name || '-')}</strong></div>
+                        <div class="pill"><span class="mini">Tarla / Bahce</span><strong>${formatNumberTR(report.categories.tarla || 0)} / ${formatNumberTR(report.categories.bahce || 0)}</strong></div>
+                        <div class="pill"><span class="mini">4WD Penetrasyonu</span><strong>%${formatShare(report.drive4wdRatio)}</strong></div>
+                        <div class="pill"><span class="mini">Aktif Il</span><strong>${formatNumberTR(report.activeProvinceCount)}</strong></div>
+                        <div class="pill"><span class="mini">Aktif Model</span><strong>${report.models.length}</strong></div>
+                        <div class="pill"><span class="mini">Fiyat Koridoru</span><strong>${escapeHtml(formatCurrencyShort(report.minPrice))} - ${escapeHtml(formatCurrencyShort(report.maxPrice))}</strong></div>
+                    </div>
+                </div>
+            </section>`,
+            `<section class="section"><h2>Ticari Notlar</h2>
+                <div class="split">
+                    <div class="note"><strong>Tepe Ay</strong>${report.peakMonth ? `${MONTH_NAMES_TR[report.peakMonth.month - 1]} ayinda ${formatNumberTR(report.peakMonth.total)} adet ile zirve goruldu.` : 'Yeterli aylik veri bulunamadi.'}</div>
+                    <div class="note"><strong>Urun Mimari</strong>${report.models.length ? `${report.models.length} aktif model icinde ortalama liste fiyati ${escapeHtml(formatCurrencyShort(report.avgPrice))} seviyesinde.` : 'Portfoy verisi sinirli.'}</div>
+                </div>
+            </section>`
+        ]
+    );
+}
+
+function renderBrandCompareHtml(report) {
+    const scoreSvg = buildMiniColumnSvg([
+        { label: report.first.brand.name.slice(0, 6), value: report.first.currentSales },
+        { label: report.second.brand.name.slice(0, 6), value: report.second.currentSales }
+    ], { color: '#A72626' });
+    const trendSvg = buildLineTrendSvg([
+        { label: `${report.first.yearlyTrend[0]?.year || report.year - 2}`, value: report.first.yearlyTrend[0]?.total || 0 },
+        { label: `${report.first.yearlyTrend[1]?.year || report.year - 1}`, value: report.first.yearlyTrend[1]?.total || 0 },
+        { label: `${report.first.yearlyTrend[2]?.year || report.year}`, value: report.first.yearlyTrend[2]?.total || 0 }
+    ], { color: '#2457C5' });
+    const provinceSvg = buildBarChartSvg(report.provinceLead.map(item => ({ label: item.name, value: item.gap })), { color: '#2457C5' });
+    const shareDonut = buildDonutSvg([
+        { label: report.first.brand.name, value: report.first.currentSales },
+        { label: report.second.brand.name, value: report.second.currentSales },
+        { label: 'Digerleri', value: Math.max(report.marketSales - report.first.currentSales - report.second.currentSales, 0) }
+    ], { size: 260 });
+    return wrapReportHtml(
+        `${report.first.brand.name} vs ${report.second.brand.name}`,
+        `${report.periodLabel} | Rekabet, il dagilimi, segment ve portfoy karsilastirmasi`,
+        [
+            `<div class="grid">
+                <div class="kpi"><div class="label">${escapeHtml(report.first.brand.name)}</div><div class="value">${formatNumberTR(report.first.currentSales)}</div></div>
+                <div class="kpi"><div class="label">${escapeHtml(report.second.brand.name)}</div><div class="value">${formatNumberTR(report.second.currentSales)}</div></div>
+                <div class="kpi"><div class="label">Lider</div><div class="value">${escapeHtml(report.leader.brand.name)}</div></div>
+                <div class="kpi"><div class="label">Fark</div><div class="value">${formatNumberTR(report.difference)}</div></div>
+            </div>`,
+            `<section class="section"><h2>Yonetici Ozeti</h2><p>${escapeHtml(report.commentary || `${report.leader.brand.name}, ${report.periodLabel} doneminde rakibine gore daha guclu bir performans sergilemistir.`)}</p></section>`,
+            `<section class="section"><h2>Rekabet Skor Karti</h2><div class="split"><div class="chart">${scoreSvg}</div><div class="chart">${shareDonut}</div></div></section>`,
+            `<section class="section"><h2>Il Bazli Rekabet Boslugu</h2><div class="chart">${provinceSvg}</div></section>`,
+            `<section class="section"><h2>Trend ve Portfoy</h2>
+                <div class="split">
+                    <div class="chart">${trendSvg}</div>
+                    <div class="list-grid">
+                        <div class="pill"><span class="mini">Il Ustunlugu</span><strong>${escapeHtml(report.first.brand.name)} ${report.provinceWins.first} | ${escapeHtml(report.second.brand.name)} ${report.provinceWins.second}</strong></div>
+                        <div class="pill"><span class="mini">Pay Farki</span><strong>${formatShare(report.shareGap)} puan</strong></div>
+                        <div class="pill"><span class="mini">Momentum Farki</span><strong>${formatShare(report.yoyGap)} puan</strong></div>
+                        <div class="pill"><span class="mini">Fiyat Farki</span><strong>${escapeHtml(formatCurrencyShort(report.priceGap))}</strong></div>
+                        <div class="pill"><span class="mini">${escapeHtml(report.first.brand.name)} Lider HP</span><strong>${escapeHtml(buildTopList(report.first.hpSegments, item => item.name, 3) || '-')}</strong></div>
+                        <div class="pill"><span class="mini">${escapeHtml(report.second.brand.name)} Lider HP</span><strong>${escapeHtml(buildTopList(report.second.hpSegments, item => item.name, 3) || '-')}</strong></div>
+                    </div>
+                </div>
+            </section>`
+        ]
+    );
+}
+
+function renderMarketOverviewHtml(report) {
+    const brandsSvg = buildBarChartSvg(report.topBrands.map(item => ({ label: item.name, value: item.total })), { color: '#2457C5' });
+    const hpSvg = buildMiniColumnSvg(report.hpSegments.map(item => ({ label: item.name, value: item.total })), { color: '#0F8F6E' });
+    const concentrationDonut = buildDonutSvg([
+        { label: 'Top 3 Marka', value: Math.round(report.currentSales * report.top3Share / 100) },
+        { label: 'Digerleri', value: Math.max(report.currentSales - Math.round(report.currentSales * report.top3Share / 100), 0) }
+    ], { size: 250, colors: ['#2457C5', '#DCE4F2'] });
+    return wrapReportHtml(
+        `Turkiye Traktor Pazari`,
+        `${report.periodLabel} | Lider markalar, il dagilimi ve HP segment resmi`,
+        [
+            `<div class="grid">
+                <div class="kpi"><div class="label">Toplam Pazar</div><div class="value">${formatNumberTR(report.currentSales)}</div></div>
+                <div class="kpi"><div class="label">Yillik Degisim</div><div class="value">${formatPctSigned(report.yoy)}</div></div>
+                <div class="kpi"><div class="label">Lider Marka</div><div class="value">${escapeHtml(report.topBrands[0]?.name || '-')}</div></div>
+                <div class="kpi"><div class="label">Lider Il</div><div class="value">${escapeHtml(report.topProvinces[0]?.name || '-')}</div></div>
+            </div>`,
+            `<section class="section"><h2>Yonetici Ozeti</h2><p>${escapeHtml(report.commentary || `${report.periodLabel} doneminde pazar hacmi ${formatNumberTR(report.currentSales)} adede ulasmistir.`)}</p></section>`,
+            `<section class="section"><h2>Pazar Konsantrasyonu</h2><div class="split"><div class="chart">${brandsSvg}</div><div class="chart">${concentrationDonut}</div></div></section>`,
+            `<section class="section"><h2>Talep Segmentasyonu</h2><div class="split"><div class="chart">${hpSvg}</div><div class="list-grid">${report.categories.map(item => `<div class="pill"><span class="mini">${escapeHtml(item.name)}</span><strong>${formatNumberTR(item.total)} adet</strong></div>`).join('')}</div></div></section>`,
+            `<section class="section"><h2>Lider Iller</h2><ul>${report.topProvinces.map(item => `<li>${escapeHtml(item.name)}: ${formatNumberTR(item.total)} adet</li>`).join('')}</ul><p style="margin-top:14px;">Aktif il sayisi: <strong>${formatNumberTR(report.activeProvinceCount)}</strong></p></section>`
+        ]
+    );
+}
+
+// ============================================
 // HEALTH CHECK
 // ============================================
 app.get('/health', async (req, res) => {
@@ -58,6 +1322,182 @@ app.get('/health', async (req, res) => {
         res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'traktor-sektor-analizi' });
     } catch {
         res.status(503).json({ status: 'error', message: 'Database bağlantı hatası' });
+    }
+});
+
+app.get('/privacy-policy', (req, res) => {
+    res.type('html').send(`<!doctype html>
+<html lang="tr">
+<head><meta charset="utf-8"><title>Privacy Policy</title></head>
+<body style="font-family:Arial,sans-serif;max-width:900px;margin:40px auto;line-height:1.6;padding:0 16px;">
+<h1>Gizlilik Politikasi</h1>
+<p>StratejikPlan WhatsApp destekli traktör sektör analizi hizmeti, kullanicilarin gönderdigi mesajlari yalnizca soru-cevap hizmeti sunmak amaciyla isler.</p>
+<p>Islenen veriler mesaj icerigi, gönderen numara, sorgu ve cevap kayitlari ile sinirlidir. Bu veriler hizmet sunumu, güvenlik ve hata ayiklama amaclariyla kullanilir.</p>
+<p>Veriler yetkisiz kisilerle paylasilmaz; ancak WhatsApp Cloud API ve Groq gibi altyapi saglayicilar teknik isleme sürecinde kullanilabilir.</p>
+<p>Veri silme talepleri icin <a href="/data-deletion">veri silme sayfasi</a> kullanilabilir.</p>
+<p>Iletisim: yukselozdek@gmail.com</p>
+</body></html>`);
+});
+
+app.get('/terms-of-service', (req, res) => {
+    res.type('html').send(`<!doctype html>
+<html lang="tr">
+<head><meta charset="utf-8"><title>Terms of Service</title></head>
+<body style="font-family:Arial,sans-serif;max-width:900px;margin:40px auto;line-height:1.6;padding:0 16px;">
+<h1>Kullanim Kosullari</h1>
+<p>Bu hizmet, traktör sektörü verileri üzerinde soru-cevap ve raporlama amaciyla sunulur.</p>
+<p>Kullanici, hizmeti yasal amaçlarla kullanmayi kabul eder. Hizmet, mevcut veri kaynaklari ve üçüncü taraf servislerin sürekliligine baglidir.</p>
+<p>Hizmet saglayici, veri kaynagi gecikmeleri veya üçüncü taraf servis kesintilerinden dogan dolayli zararlardan sorumlu tutulamaz.</p>
+</body></html>`);
+});
+
+app.get('/data-deletion', (req, res) => {
+    res.type('html').send(`<!doctype html>
+<html lang="tr">
+<head><meta charset="utf-8"><title>Data Deletion</title></head>
+<body style="font-family:Arial,sans-serif;max-width:900px;margin:40px auto;line-height:1.6;padding:0 16px;">
+<h1>Veri Silme Talebi</h1>
+<p>Kullanici verilerinin silinmesini talep etmek icin yukselozdek@gmail.com adresine e-posta gönderebilir veya callback adresini kullanabilirsiniz.</p>
+<p>Callback URL: <a href="/api/public/meta/data-deletion">/api/public/meta/data-deletion</a></p>
+</body></html>`);
+});
+
+app.get('/api/public/meta/data-deletion', (req, res) => {
+    res.json({
+        url: 'https://affectionate-blessing-production-f2fe.up.railway.app/data-deletion',
+        confirmation_code: 'sp-meta-deletion-request'
+    });
+});
+
+app.post('/api/public/meta/data-deletion', (req, res) => {
+    res.json({
+        url: 'https://affectionate-blessing-production-f2fe.up.railway.app/data-deletion',
+        confirmation_code: 'sp-meta-deletion-request'
+    });
+});
+
+app.get('/public/reports/brand', async (req, res) => {
+    try {
+        const year = parseInt(req.query.year, 10);
+        const brandKey = (req.query.brand || '').toString();
+        const latestPeriod = await getLatestSalesPeriod();
+        const brands = await getBrandCatalog();
+        const brand = brands.find(item => item.slug === brandKey || normalizeSearchText(item.name) === normalizeSearchText(brandKey));
+        if (!brand || !latestPeriod || !year) return res.status(404).send('Report not found');
+        const report = await buildBrandExecutiveData(brand, year, latestPeriod);
+        res.type('html').send(renderBrandExecutiveHtml(report));
+    } catch (err) {
+        console.error('Public brand report error:', err);
+        res.status(500).send('Report error');
+    }
+});
+
+app.get('/public/reports/compare', async (req, res) => {
+    try {
+        const year = parseInt(req.query.year, 10);
+        const brand1Key = (req.query.brand1 || '').toString();
+        const brand2Key = (req.query.brand2 || '').toString();
+        const latestPeriod = await getLatestSalesPeriod();
+        const brands = await getBrandCatalog();
+        const brand1 = brands.find(item => item.slug === brand1Key || normalizeSearchText(item.name) === normalizeSearchText(brand1Key));
+        const brand2 = brands.find(item => item.slug === brand2Key || normalizeSearchText(item.name) === normalizeSearchText(brand2Key));
+        if (!brand1 || !brand2 || !latestPeriod || !year) return res.status(404).send('Report not found');
+        const report = await buildBrandCompareExecutiveData([brand1, brand2], year, latestPeriod);
+        res.type('html').send(renderBrandCompareHtml(report));
+    } catch (err) {
+        console.error('Public compare report error:', err);
+        res.status(500).send('Report error');
+    }
+});
+
+app.get('/public/reports/market', async (req, res) => {
+    try {
+        const year = parseInt(req.query.year, 10);
+        const latestPeriod = await getLatestSalesPeriod();
+        if (!latestPeriod || !year) return res.status(404).send('Report not found');
+        const report = await buildMarketOverviewData(year, latestPeriod);
+        res.type('html').send(renderMarketOverviewHtml(report));
+    } catch (err) {
+        console.error('Public market report error:', err);
+        res.status(500).send('Report error');
+    }
+});
+
+// ============================================
+// PUBLIC ASSISTANT ENDPOINTS
+// ============================================
+app.post('/api/public/assistant/sales-query', async (req, res) => {
+    try {
+        if (WHATSAPP_QUERY_API_KEY) {
+            const providedToken = req.headers['x-query-token'];
+            if (providedToken !== WHATSAPP_QUERY_API_KEY) {
+                return res.status(401).json({ error: 'Gecersiz sorgu token' });
+            }
+        }
+
+        const question = (req.body.question || '').toString().trim();
+        if (!question) {
+            return res.status(400).json({ error: 'question alani gerekli' });
+        }
+
+        const result = await resolveAssistantQuestion(question);
+        return res.json(result);
+    } catch (err) {
+        console.error('Public sales query error:', err);
+        res.status(500).json({
+            ok: false,
+            error: 'Sunucu hatasi',
+            answer: 'Sorgu islenirken beklenmeyen bir hata olustu.'
+        });
+    }
+});
+
+app.get('/api/public/whatsapp/webhook', async (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
+        return res.status(200).send(challenge);
+    }
+
+    return res.status(403).send('verify token mismatch');
+});
+
+app.post('/api/public/whatsapp/webhook', async (req, res) => {
+    res.status(200).json({ received: true });
+
+    try {
+        const entry = req.body.entry?.[0];
+        const change = entry?.changes?.[0];
+        const value = change?.value || {};
+        const message = value.messages?.[0];
+
+        if (!message || message.type !== 'text') return;
+
+        const question = message.text?.body?.trim();
+        const from = message.from;
+        const messageId = message.id;
+        const profileName = value.contacts?.[0]?.profile?.name || null;
+        if (!question || !from) return;
+
+        try {
+            if (await forwardWhatsAppEventToN8n({
+                question,
+                from,
+                message_id: messageId,
+                profile_name: profileName
+            })) {
+                return;
+            }
+        } catch (forwardErr) {
+            console.error('WhatsApp webhook n8n forward error, falling back to direct response:', forwardErr.message);
+        }
+
+        const result = await resolveAssistantQuestion(question);
+        await sendWhatsAppTextMessage(from, result.answer || 'Sorunuz islenemedi.');
+    } catch (err) {
+        console.error('WhatsApp webhook error:', err);
     }
 });
 
@@ -1851,6 +3291,222 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
 });
 
 // ============================================
+// TECHNICAL BENCHMARKING & GAP ANALYSIS
+// ============================================
+app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
+    try {
+        const { brand1_id, brand2_id } = req.query;
+        if (!brand1_id || !brand2_id) return res.status(400).json({ error: 'brand1_id ve brand2_id gerekli' });
+
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const mmRes = await pool.query('SELECT MAX(month) as mm FROM sales_data WHERE year=$1', [maxYear]);
+        const maxMonth = parseInt(mmRes.rows[0].mm);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYear = parseInt(minYearRes.rows[0].min_year);
+        const years = [];
+        for (let y = minYear; y <= maxYear; y++) years.push(y);
+
+        const hpMidpoints = {'1-39':25,'40-49':45,'50-54':52,'55-59':57,'60-69':65,'70-79':75,'80-89':85,'90-99':95,'100-109':105,'110-119':115,'120+':130};
+        const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+
+        // Brand info
+        const b1 = (await pool.query('SELECT id,name,primary_color,country_of_origin,parent_company FROM brands WHERE id=$1', [brand1_id])).rows[0];
+        const b2 = (await pool.query('SELECT id,name,primary_color,country_of_origin,parent_company FROM brands WHERE id=$1', [brand2_id])).rows[0];
+        if (!b1 || !b2) return res.status(404).json({ error: 'Marka bulunamadı' });
+
+        // Models with prices
+        const m1 = (await pool.query('SELECT * FROM tractor_models WHERE brand_id=$1 AND is_current_model=true ORDER BY horsepower', [brand1_id])).rows;
+        const m2 = (await pool.query('SELECT * FROM tractor_models WHERE brand_id=$1 AND is_current_model=true ORDER BY horsepower', [brand2_id])).rows;
+
+        async function buildBrandBenchmark(brandId, models) {
+            // Sales by hp_range, category, year, month, province
+            const salesByDetail = await pool.query(`
+                SELECT s.year, s.month, s.hp_range, s.category, s.drive_type, s.cabin_type, s.gear_config,
+                       s.province_id, p.name as province_name, p.region,
+                       SUM(s.quantity) as total
+                FROM sales_data s JOIN provinces p ON s.province_id = p.id
+                WHERE s.brand_id = $1
+                GROUP BY s.year, s.month, s.hp_range, s.category, s.drive_type, s.cabin_type, s.gear_config, s.province_id, p.name, p.region
+            `, [brandId]);
+
+            // Aggregate
+            const yearly = {}, monthly = {};
+            const hpDist = {}, catDist = { bahce: 0, tarla: 0 }, driveDist = { '2WD': 0, '4WD': 0 };
+            const cabinDist = { kabinli: 0, rollbar: 0 }, gearDist = {};
+            const provSales = {}, provYearly = {};
+            let totalQty = 0, hpWeightedSum = 0;
+
+            years.forEach(y => { yearly[y] = 0; });
+            for (let m = 1; m <= 12; m++) monthly[m] = 0;
+
+            salesByDetail.rows.forEach(r => {
+                const qty = parseInt(r.total);
+                yearly[r.year] = (yearly[r.year] || 0) + qty;
+                if (r.year == maxYear) monthly[r.month] = (monthly[r.month] || 0) + qty;
+
+                totalQty += qty;
+                hpWeightedSum += (hpMidpoints[r.hp_range] || 60) * qty;
+                hpDist[r.hp_range] = (hpDist[r.hp_range] || 0) + qty;
+                catDist[r.category] = (catDist[r.category] || 0) + qty;
+                driveDist[r.drive_type] = (driveDist[r.drive_type] || 0) + qty;
+                cabinDist[r.cabin_type] = (cabinDist[r.cabin_type] || 0) + qty;
+                gearDist[r.gear_config] = (gearDist[r.gear_config] || 0) + qty;
+
+                if (!provSales[r.province_id]) provSales[r.province_id] = { name: r.province_name, region: r.region, total: 0 };
+                provSales[r.province_id].total += qty;
+                const pyk = `${r.province_id}_${r.year}`;
+                provYearly[pyk] = (provYearly[pyk] || 0) + qty;
+            });
+
+            const avgHp = totalQty > 0 ? Math.round(hpWeightedSum / totalQty) : 0;
+
+            // Price stats from models
+            const priceModels = models.filter(m => m.price_list_tl > 0);
+            const avgPrice = priceModels.length > 0 ? priceModels.reduce((s, m) => s + parseFloat(m.price_list_tl), 0) / priceModels.length : 0;
+            const avgHpModel = priceModels.length > 0 ? priceModels.reduce((s, m) => s + parseFloat(m.horsepower), 0) / priceModels.length : 0;
+            const costPerHp = avgHpModel > 0 ? avgPrice / avgHpModel : 0;
+
+            // HP segment detail (qty + pct)
+            const hpSegments = hpOrder.map(hp => ({
+                hp, qty: hpDist[hp] || 0, pct: totalQty > 0 ? ((hpDist[hp] || 0) / totalQty * 100) : 0
+            }));
+
+            // Province top with yearly trend
+            const provArr = Object.entries(provSales)
+                .map(([pid, d]) => ({
+                    ...d, id: pid,
+                    yearly: years.reduce((o, y) => { o[y] = provYearly[`${pid}_${y}`] || 0; return o; }, {})
+                }))
+                .sort((a, b) => b.total - a.total);
+
+            // YoY for each year
+            const yoyByYear = {};
+            years.forEach((y, i) => {
+                if (i === 0) { yoyByYear[y] = 0; return; }
+                const prev = yearly[years[i - 1]] || 0;
+                yoyByYear[y] = prev > 0 ? ((yearly[y] - prev) / prev * 100) : 0;
+            });
+
+            // Partial year comparison
+            let currPartial = 0, prevPartial = 0;
+            salesByDetail.rows.forEach(r => {
+                const qty = parseInt(r.total);
+                if (r.year == maxYear && r.month <= maxMonth) currPartial += qty;
+                if (r.year == prevYear && r.month <= maxMonth) prevPartial += qty;
+            });
+            const yoyPartial = prevPartial > 0 ? ((currPartial - prevPartial) / prevPartial * 100) : 0;
+
+            return {
+                totalQty, avgHp, avgPrice, costPerHp,
+                yearly, monthly, yoyByYear, currPartial, prevPartial, yoyPartial,
+                hpSegments, catDist, driveDist, cabinDist, gearDist,
+                provinces: provArr.slice(0, 20),
+                models: models.map(m => ({
+                    name: m.model_name, hp: parseFloat(m.horsepower), price: m.price_list_tl ? parseFloat(m.price_list_tl) : 0,
+                    category: m.category, cabin: m.cabin_type, drive: m.drive_type, gear: m.gear_config, hp_range: m.hp_range
+                }))
+            };
+        }
+
+        // Total market by year and by province
+        const mktYearRes = await pool.query('SELECT year, SUM(quantity) as total FROM sales_data GROUP BY year');
+        const mktYearly = {};
+        mktYearRes.rows.forEach(r => { mktYearly[r.year] = parseInt(r.total); });
+
+        const mktProvRes = await pool.query(`
+            SELECT s.province_id, p.name, SUM(s.quantity) as total
+            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            WHERE s.year = $1
+            GROUP BY s.province_id, p.name ORDER BY total DESC
+        `, [maxYear]);
+
+        // Brand sales by province for dominance map
+        const b1ProvRes = await pool.query('SELECT province_id, SUM(quantity) as total FROM sales_data WHERE brand_id=$1 AND year=$2 GROUP BY province_id', [brand1_id, maxYear]);
+        const b2ProvRes = await pool.query('SELECT province_id, SUM(quantity) as total FROM sales_data WHERE brand_id=$1 AND year=$2 GROUP BY province_id', [brand2_id, maxYear]);
+        const b1ProvMap = {}, b2ProvMap = {};
+        b1ProvRes.rows.forEach(r => { b1ProvMap[r.province_id] = parseInt(r.total); });
+        b2ProvRes.rows.forEach(r => { b2ProvMap[r.province_id] = parseInt(r.total); });
+
+        // Provinces with lat/lng for map
+        const provGeoRes = await pool.query('SELECT id, name, plate_code, latitude, longitude, region FROM provinces');
+        const dominanceMap = provGeoRes.rows.map(p => {
+            const s1 = b1ProvMap[p.id] || 0;
+            const s2 = b2ProvMap[p.id] || 0;
+            const total = s1 + s2;
+            let dominance = 'neutral'; // neutral/brand1/brand2
+            if (total > 0) {
+                const diff = (s1 - s2) / total * 100;
+                if (diff > 20) dominance = 'brand1';
+                else if (diff < -20) dominance = 'brand2';
+            }
+            return { id: p.id, name: p.name, plate_code: p.plate_code, lat: parseFloat(p.latitude), lng: parseFloat(p.longitude), region: p.region, s1, s2, dominance };
+        }).filter(p => (p.s1 + p.s2) > 0);
+
+        // HP segment market totals for segment share comparison
+        const mktHpRes = await pool.query('SELECT hp_range, SUM(quantity) as total FROM sales_data WHERE year=$1 GROUP BY hp_range', [maxYear]);
+        const mktHp = {};
+        mktHpRes.rows.forEach(r => { mktHp[r.hp_range] = parseInt(r.total); });
+
+        const [data1, data2] = await Promise.all([
+            buildBrandBenchmark(brand1_id, m1),
+            buildBrandBenchmark(brand2_id, m2)
+        ]);
+
+        // Market share by year
+        const mktShare1 = {}, mktShare2 = {};
+        years.forEach(y => {
+            mktShare1[y] = mktYearly[y] > 0 ? (data1.yearly[y] / mktYearly[y] * 100) : 0;
+            mktShare2[y] = mktYearly[y] > 0 ? (data2.yearly[y] / mktYearly[y] * 100) : 0;
+        });
+
+        // Segment market share (brand qty in segment / total market qty in segment)
+        const segShare1 = {}, segShare2 = {};
+        hpOrder.forEach(hp => {
+            const mkt = mktHp[hp] || 0;
+            const s1hp = data1.hpSegments.find(s => s.hp === hp)?.qty || 0;
+            const s2hp = data2.hpSegments.find(s => s.hp === hp)?.qty || 0;
+            segShare1[hp] = mkt > 0 ? (s1hp / mkt * 100) : 0;
+            segShare2[hp] = mkt > 0 ? (s2hp / mkt * 100) : 0;
+        });
+
+        // Feature intersection (Venn-like data)
+        async function getFeatureIntersection(brandId) {
+            const r = await pool.query(`
+                SELECT drive_type, cabin_type, category,
+                       SUM(quantity) as total
+                FROM sales_data WHERE brand_id=$1 AND year=$2
+                GROUP BY drive_type, cabin_type, category
+            `, [brandId, maxYear]);
+            const combos = {};
+            let total = 0;
+            r.rows.forEach(row => {
+                const key = `${row.drive_type}_${row.cabin_type}_${row.category}`;
+                combos[key] = parseInt(row.total);
+                total += parseInt(row.total);
+            });
+            return { combos, total };
+        }
+        const [feat1, feat2] = await Promise.all([
+            getFeatureIntersection(brand1_id),
+            getFeatureIntersection(brand2_id)
+        ]);
+
+        res.json({
+            brand1: { ...b1, data: data1, mktShare: mktShare1, segShare: segShare1, features: feat1 },
+            brand2: { ...b2, data: data2, mktShare: mktShare2, segShare: segShare2, features: feat2 },
+            years, max_year: maxYear, max_month: maxMonth, prev_year: prevYear,
+            mktYearly, dominanceMap, mktHp
+        });
+
+    } catch (err) {
+        console.error('Benchmark error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
 // DYNAMIC BRAND COMPARISON
 // ============================================
 app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
@@ -2369,6 +4025,74 @@ app.post('/api/admin/seed-models', async (req, res) => {
 });
 
 // ============================================
+// TARMAKBIR - Model Yılı Bazlı Aylık Satış
+// ============================================
+app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
+    try {
+        // Determine which year the user wants to view
+        const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year);
+        const minYear = parseInt(latestRes.rows[0].min_year);
+        
+        // Selected year (the "data year" the user is viewing)
+        const requestedYear = req.query.year ? parseInt(req.query.year) : maxYear;
+        const selectedYear = Math.min(Math.max(requestedYear, minYear), maxYear);
+        
+        // Model years: selected year and previous year (son 2 yıl)
+        const modelYear1 = selectedYear;     // current/selected
+        const modelYear2 = selectedYear - 1;  // previous
+        const modelYears = [modelYear1, modelYear2];
+        
+        // Get max month for the selected year (to know available data range)
+        const maxMonthRes = await pool.query(
+            'SELECT MAX(month) as max_month FROM sales_data WHERE year = $1',
+            [selectedYear]
+        );
+        const maxMonth = parseInt(maxMonthRes.rows[0]?.max_month || 12);
+        
+        // Get monthly sales for both model years
+        const salesRes = await pool.query(`
+            SELECT year, month, SUM(quantity) as total
+            FROM sales_data
+            WHERE year = ANY($1)
+            GROUP BY year, month
+            ORDER BY year DESC, month
+        `, [modelYears]);
+        
+        // Organize data: { year: { month: total, ... }, ... }
+        const monthsData = {};
+        modelYears.forEach(y => { monthsData[y] = {}; });
+        
+        salesRes.rows.forEach(r => {
+            const y = parseInt(r.year);
+            const m = parseInt(r.month);
+            if (monthsData[y]) {
+                monthsData[y][m] = parseInt(r.total);
+            }
+        });
+        
+        // Available years for the dropdown
+        const yearsRes = await pool.query(
+            'SELECT DISTINCT year FROM sales_data ORDER BY year DESC'
+        );
+        const availableYears = yearsRes.rows.map(r => parseInt(r.year));
+        
+        res.json({
+            selected_year: selectedYear,
+            model_years: modelYears,
+            months_data: monthsData,
+            max_month: maxMonth,
+            min_year: minYear,
+            max_year: maxYear,
+            available_years: availableYears
+        });
+    } catch (err) {
+        console.error('TarmakBir error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
 // MANUAL SEED ENDPOINT (admin only)
 // ============================================
 app.post('/api/admin/reseed-sales', async (req, res) => {
@@ -2519,7 +4243,6 @@ initDB().then(() => {
     app.listen(PORT, () => {
         console.log(`🚜 Traktör Sektör Analizi sunucusu ${PORT} portunda çalışıyor`);
         console.log(`📊 Dashboard: http://localhost:${PORT}`);
-        console.log(`🔗 n8n: http://localhost:5678`);
     });
 });
 

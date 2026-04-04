@@ -107,6 +107,8 @@ const API = {
     async getAiAnalysis(type, context) { return this.post('/api/ai/analyze', { type, context }); },
     async getRegionalIndex(year) { return this.get(`/api/sales/regional-index?year=${year || ''}`); },
     async getModelRegion() { return this.get('/api/sales/model-region'); },
+    async getBenchmark(brand1Id, brand2Id) { return this.get(`/api/sales/benchmark?brand1_id=${brand1Id}&brand2_id=${brand2Id}`); },
     async getBrandCompare(brand1Id, brand2Id) { return this.get(`/api/sales/brand-compare?brand1_id=${brand1Id}&brand2_id=${brand2Id}`); },
+    async getTarmakBir(year) { return this.get(`/api/sales/tarmakbir?year=${year || ''}`); },
     async seedModels() { return this.post('/api/admin/seed-models'); }
 };

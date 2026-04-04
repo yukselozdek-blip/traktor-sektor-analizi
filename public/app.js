@@ -142,6 +142,7 @@ function navigateTo(page) {
         weather: ['Hava & İklim', 'Hava Durumu ve 10 Yıllık İklim Analizi'],
         'ai-insights': ['AI Öngörüler', 'Yapay Zeka Destekli Analizler'],
         subscription: ['Abonelik', 'Plan ve Ödeme Yönetimi'],
+        tarmakbir: ['TarmakBir', 'Model Yılı Bazlı Aylık Satış Analizi'],
         settings: ['Ayarlar', 'Hesap Ayarları']
     };
 
@@ -176,6 +177,7 @@ function navigateTo(page) {
         weather: loadWeatherPage,
         'ai-insights': loadAIInsightsPage,
         subscription: loadSubscriptionPage,
+        tarmakbir: loadTarmakBirPage,
         settings: loadSettingsPage
     };
 
@@ -3772,6 +3774,263 @@ async function loadBrandComparePage() {
     } catch (err) {
         showError(err);
     }
+}
+
+// ============================================
+// TARMAKBIR PAGE - Model Yılı Bazlı Aylık Satış
+// ============================================
+let tarmakbirSelectedYear = null;
+
+async function loadTarmakBirPage() {
+    try {
+        const targetYear = tarmakbirSelectedYear || selectedYear;
+        const data = await API.getTarmakBir(targetYear);
+        if (!data) return;
+
+        const { selected_year, model_years, months_data, max_month } = data;
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+        // Year selector options
+        const availableYears = data.available_years || [];
+        let yearOptions = '';
+        availableYears.forEach(y => {
+            yearOptions += `<option value="${y}" ${y === selected_year ? 'selected' : ''}>${y}</option>`;
+        });
+
+        // --- Build Table ---
+        // Header: ModelYılı | 1 | 2 | ... | 12 | Toplam
+        let headerCells = '<th class="tb-header-label">Model Yılı</th>';
+        for (let m = 1; m <= 12; m++) {
+            headerCells += `<th class="tb-month-header">${m}</th>`;
+        }
+        headerCells += '<th class="tb-total-header">Toplam</th>';
+
+        // Data rows - 2 model years
+        let bodyRows = '';
+        const rowColors = ['#2563eb', '#7c3aed'];
+        model_years.forEach((my, idx) => {
+            const rowData = months_data[my] || {};
+            let rowTotal = 0;
+            let cells = `<td class="tb-year-cell" style="color:${rowColors[idx]}; font-weight:700;">${my}</td>`;
+            
+            for (let m = 1; m <= 12; m++) {
+                const val = rowData[m] || 0;
+                rowTotal += val;
+                const hasData = val > 0;
+                const opacity = hasData ? 1 : 0.3;
+                cells += `<td class="tb-data-cell" style="opacity:${opacity}">${hasData ? val.toLocaleString('tr-TR') : '-'}</td>`;
+            }
+            cells += `<td class="tb-total-cell">${rowTotal > 0 ? rowTotal.toLocaleString('tr-TR') : '-'}</td>`;
+            
+            bodyRows += `<tr class="tb-data-row ${idx === 0 ? 'tb-row-primary' : 'tb-row-secondary'}">${cells}</tr>`;
+        });
+
+        // Delta row (fark)
+        if (model_years.length === 2) {
+            const curr = months_data[model_years[0]] || {};
+            const prev = months_data[model_years[1]] || {};
+            let deltaCells = '<td class="tb-year-cell" style="font-weight:700; color:#f59e0b;">Δ Fark</td>';
+            let totalCurr = 0, totalPrev = 0;
+            
+            for (let m = 1; m <= 12; m++) {
+                const c = curr[m] || 0;
+                const p = prev[m] || 0;
+                totalCurr += c;
+                totalPrev += p;
+                const diff = c - p;
+                if (c === 0 && p === 0) {
+                    deltaCells += '<td class="tb-data-cell" style="opacity:0.3">-</td>';
+                } else {
+                    const cls = diff >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
+                    const arrow = diff >= 0 ? '▲' : '▼';
+                    deltaCells += `<td class="tb-data-cell ${cls}">${arrow} ${Math.abs(diff).toLocaleString('tr-TR')}</td>`;
+                }
+            }
+            const totalDiff = totalCurr - totalPrev;
+            const totalCls = totalDiff >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
+            const totalArrow = totalDiff >= 0 ? '▲' : '▼';
+            deltaCells += `<td class="tb-total-cell ${totalCls}">${totalArrow} ${Math.abs(totalDiff).toLocaleString('tr-TR')}</td>`;
+            bodyRows += `<tr class="tb-delta-row">${deltaCells}</tr>`;
+
+            // % Değişim row
+            let pctCells = '<td class="tb-year-cell" style="font-weight:700; color:#06b6d4;">% Değişim</td>';
+            for (let m = 1; m <= 12; m++) {
+                const c = curr[m] || 0;
+                const p = prev[m] || 0;
+                if (p === 0 && c === 0) {
+                    pctCells += '<td class="tb-data-cell" style="opacity:0.3">-</td>';
+                } else if (p === 0) {
+                    pctCells += '<td class="tb-data-cell tb-delta-pos">YENİ</td>';
+                } else {
+                    const pct = ((c - p) * 100 / p).toFixed(1);
+                    const cls = parseFloat(pct) >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
+                    pctCells += `<td class="tb-data-cell ${cls}">%${pct}</td>`;
+                }
+            }
+            if (totalPrev === 0 && totalCurr > 0) {
+                pctCells += '<td class="tb-total-cell tb-delta-pos">YENİ</td>';
+            } else if (totalPrev > 0) {
+                const totalPct = ((totalCurr - totalPrev) * 100 / totalPrev).toFixed(1);
+                const totalPctCls = parseFloat(totalPct) >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
+                pctCells += `<td class="tb-total-cell ${totalPctCls}">%${totalPct}</td>`;
+            } else {
+                pctCells += '<td class="tb-total-cell" style="opacity:0.3">-</td>';
+            }
+            bodyRows += `<tr class="tb-pct-row">${pctCells}</tr>`;
+        }
+
+        // --- Chart Data ---
+        const chartLabels = [];
+        const chartDataCurr = [];
+        const chartDataPrev = [];
+        for (let m = 1; m <= 12; m++) {
+            chartLabels.push(monthNames[m - 1]);
+            chartDataCurr.push((months_data[model_years[0]] || {})[m] || 0);
+            if (model_years.length > 1) {
+                chartDataPrev.push((months_data[model_years[1]] || {})[m] || 0);
+            }
+        }
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="tb-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - Model Yılı Satış Analizi</h2>
+                        <p>Model Yılı: <strong>${model_years.join(' & ')}</strong> · Aylık Satış Dağılımı</p>
+                    </div>
+                    <div style="display:flex;gap:12px;align-items:center;">
+                        <label style="color:var(--text-muted);font-size:13px;">Veri Yılı:</label>
+                        <select id="tarmakbirYearFilter" class="year-select" onchange="reloadTarmakBir()" style="min-width:120px;">
+                            ${yearOptions}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:24px;">
+                    ${model_years.map((my, idx) => {
+                        const rowData = months_data[my] || {};
+                        let total = 0;
+                        for (let m = 1; m <= 12; m++) total += (rowData[m] || 0);
+                        const iconBg = idx === 0 ? 'rgba(37,99,235,0.15)' : 'rgba(124,58,237,0.15)';
+                        const iconClr = idx === 0 ? '#2563eb' : '#7c3aed';
+                        return `
+                            <div class="stat-card">
+                                <div class="stat-icon" style="background:${iconBg};color:${iconClr}"><i class="fas fa-tractor"></i></div>
+                                <div class="stat-value">${total.toLocaleString('tr-TR')}</div>
+                                <div class="stat-label">Model Yılı ${my}</div>
+                            </div>`;
+                    }).join('')}
+                    ${model_years.length === 2 ? (() => {
+                        let t0 = 0, t1 = 0;
+                        for (let m = 1; m <= 12; m++) {
+                            t0 += (months_data[model_years[0]] || {})[m] || 0;
+                            t1 += (months_data[model_years[1]] || {})[m] || 0;
+                        }
+                        const diff = t0 - t1;
+                        const pct = t1 > 0 ? ((diff) * 100 / t1).toFixed(1) : '-';
+                        const clr = diff >= 0 ? '#22c55e' : '#ef4444';
+                        const arrow = diff >= 0 ? '▲' : '▼';
+                        return `
+                            <div class="stat-card">
+                                <div class="stat-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-exchange-alt"></i></div>
+                                <div class="stat-value" style="color:${clr}">${arrow} ${Math.abs(diff).toLocaleString('tr-TR')}</div>
+                                <div class="stat-label">Fark (Adet)</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon" style="background:rgba(6,182,212,0.15);color:#06b6d4"><i class="fas fa-percentage"></i></div>
+                                <div class="stat-value" style="color:${clr}">${pct !== '-' ? '%' + pct : '-'}</div>
+                                <div class="stat-label">Değişim Oranı</div>
+                            </div>`;
+                    })() : ''}
+                </div>
+
+                <!-- Chart -->
+                <div class="chart-card" style="padding:24px; margin-bottom:24px;">
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-chart-bar" style="margin-right:8px;color:#3b82f6"></i>Aylık Satış Karşılaştırması</h3>
+                    <div style="position:relative;height:350px;"><canvas id="tarmakbirChart"></canvas></div>
+                </div>
+
+                <!-- Data Table -->
+                <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto;">
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-table" style="margin-right:8px;color:#8b5cf6"></i>Model Yılı Aylık Dağılım Tablosu</h3>
+                    <table class="tb-table">
+                        <thead><tr>${headerCells}</tr></thead>
+                        <tbody>${bodyRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        // Render Chart
+        const ctx = document.getElementById('tarmakbirChart').getContext('2d');
+        const datasets = [
+            {
+                label: `Model Yılı ${model_years[0]}`,
+                data: chartDataCurr,
+                backgroundColor: 'rgba(37,99,235,0.8)',
+                borderColor: '#2563eb',
+                borderWidth: 1,
+                borderRadius: 6
+            }
+        ];
+        if (model_years.length > 1) {
+            datasets.push({
+                label: `Model Yılı ${model_years[1]}`,
+                data: chartDataPrev,
+                backgroundColor: 'rgba(124,58,237,0.6)',
+                borderColor: '#7c3aed',
+                borderWidth: 1,
+                borderRadius: 6
+            });
+        }
+
+        charts.tarmakbir = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: chartLabels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#f1f5f9', font: { size: 13, family: 'Inter' }, usePointStyle: true, padding: 20 }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#94a3b8',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('tr-TR')} adet`
+                        }
+                    },
+                    datalabels: { display: false }
+                },
+                scales: {
+                    x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: 'rgba(148,163,184,0.1)' } },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#94a3b8', callback: v => v.toLocaleString('tr-TR') },
+                        grid: { color: 'rgba(148,163,184,0.08)' },
+                        title: { display: true, text: 'Satış Adet', color: '#94a3b8' }
+                    }
+                }
+            }
+        });
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+function reloadTarmakBir() {
+    tarmakbirSelectedYear = parseInt(document.getElementById('tarmakbirYearFilter')?.value) || null;
+    API.clearCache();
+    Object.values(charts).forEach(c => c.destroy?.());
+    charts = {};
+    loadTarmakBirPage();
 }
 
 // ============================================
