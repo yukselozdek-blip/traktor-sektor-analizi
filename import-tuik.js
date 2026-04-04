@@ -88,9 +88,24 @@ async function importExcel() {
         // sales_data tablosuna model_year ve diğer özellikleri taşıyan sütunlar ekleyelim (TarmakBir uyumluluğu)
         await client.query(`ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER;`);
 
-        // Eski rastgele sahte verileri sil
-        console.log('🗑️ Eski sahte sales_data verileri temizleniyor...');
-        await client.query('DELETE FROM sales_data');
+        // UNIQUE kısıtlamalarını temizleyelim (çünkü Excel'de aynı ay/marka için birden fazla satır olabilir)
+        await client.query(`
+            DO $$ 
+            DECLARE 
+                r RECORD;
+            BEGIN
+                FOR r IN (SELECT conname FROM pg_constraint con 
+                          JOIN pg_class rel ON rel.oid = con.conrelid 
+                          WHERE rel.relname = 'sales_data' AND contype = 'u') 
+                LOOP
+                    EXECUTE 'ALTER TABLE sales_data DROP CONSTRAINT ' || quote_ident(r.conname);
+                END LOOP;
+            END $$;
+        `);
+
+        // Tabloyu temizle (TRUNCATE Delete'den çok daha hızlıdır)
+        console.log('🗑️ Eski veriler temizleniyor...');
+        await client.query('TRUNCATE sales_data, tuik_veri, teknik_veri RESTART IDENTITY CASCADE');
 
         // 2. TeknikVeri Excel'den DB'ye aktarımı
         console.log('📥 TeknikVeri Excel verileri SQL e yazılıyor...');
@@ -158,8 +173,9 @@ async function importExcel() {
         let processedSales = 0;
         let unmappedBrands = new Set();
         
-        // UNIQUE yapısını model_year'ı içerecek şekilde geçici olarak drop edip yeniden yapalım (isim PostgreSQL e göredir)
-        await client.query('ALTER TABLE sales_data DROP CONSTRAINT IF EXISTS sales_data_brand_id_province_id_year_month_category_cabin_t_key');
+        // Veritabanına toplu aktarım için hafızada özetleme (aggregation) yapalım
+        // Çünkü aynı grup parametrelerine sahip birden fazla model satırı olabilir
+        const salesBucket = {}; 
 
         for (const row of tuikData) {
             const tescilYil = parseInt(row['TescilYil']);
@@ -203,29 +219,45 @@ async function importExcel() {
 
             const teknik = teknikMap[tuikModelAdi.toUpperCase()];
             let hpRange = null;
-            let cabinType = null;
-            let driveType = null;
-            let gearConfig = null;
-            let category = null;
+            let cabinType = 'rollbar';
+            let driveType = '4WD';
+            let gearConfig = '12+12';
+            let category = 'tarla';
 
             if (teknik) {
                 hpRange = getHpRange(parseFloat(teknik['MotorGucuHP']));
                 cabinType = String(teknik['Koruma'] || '').toLowerCase().includes('kabin') ? 'kabinli' : 'rollbar';
-                driveType = String(teknik['CekisTipi'] || '');
-                gearConfig = String(teknik['VitesSayisi'] || '');
+                driveType = String(teknik['CekisTipi'] || '') || '4WD';
+                gearConfig = String(teknik['VitesSayisi'] || '') || '12+12';
                 category = String(teknik['KullanimAlani'] || '').toLowerCase().includes('bahçe') ? 'bahce' : 'tarla';
             }
 
+            // Bucket key oluştur (Grup parametreleri)
+            const bucketKey = `${brandId}-${provinceId || 0}-${tescilYil}-${tescilAy}-${category}-${cabinType}-${driveType}-${hpRange || 'N/A'}-${gearConfig}-${modelYili || 0}`;
+            
+            if (!salesBucket[bucketKey]) {
+                salesBucket[bucketKey] = {
+                    brandId, provinceId, year: tescilYil, month: tescilAy, 
+                    quantity: 0, category, cabinType, driveType, hpRange, gearConfig, modelYear: modelYili
+                };
+            }
+            salesBucket[bucketKey].quantity += satisAdet;
+        }
+
+        console.log(`📥 Toplam ${Object.keys(salesBucket).length} farklı veri grubu sales_data'ya aktarılıyor...`);
+
+        // 6. Bucket'ları Veritabanına Yükle
+        for (const key in salesBucket) {
+            const s = salesBucket[key];
             try {
-                // Programın TarmakBir ve diğer sekmelerinin gerçek veri göstermesi için
                 await client.query(`
                     INSERT INTO sales_data (
                         brand_id, province_id, year, month, quantity, 
                         category, cabin_type, drive_type, hp_range, gear_config, model_year, data_source
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'TuikRapor_Excel')
                 `, [
-                    brandId, provinceId || null, tescilYil, tescilAy, satisAdet,
-                    category, cabinType, driveType, hpRange, gearConfig, modelYili || null
+                    s.brandId, s.provinceId || null, s.year, s.month, s.quantity,
+                    s.category, s.cabinType, s.driveType, s.hpRange, s.gearConfig, s.modelYear || null
                 ]);
                 processedSales++;
             } catch (err) {
