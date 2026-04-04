@@ -4053,11 +4053,11 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
             ORDER BY year DESC, month
         `, [compareYears]);
         
-        // Get Model Year breakdown for the SELECTED year
+        // Get Model Year breakdown for the SELECTED year (showing only latest 2 model years)
         const modelYearRes = await pool.query(`
             SELECT model_year, month, SUM(quantity) as total
             FROM sales_data
-            WHERE year = $1
+            WHERE year = $1 AND model_year IN ($1, $1 - 1)
             GROUP BY model_year, month
             ORDER BY model_year DESC, month
         `, [selectedYear]);
