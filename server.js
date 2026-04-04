@@ -70,19 +70,19 @@ app.get('/api/auth/reset-admin-password', async (req, res) => {
 
         // Reset Admin
         await pool.query(`
-            INSERT INTO users (email, password, full_name, role, company_name)
+            INSERT INTO users (email, password_hash, full_name, role, company_name)
             VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (email) DO UPDATE SET password = $2, role = $4
+            ON CONFLICT (email) DO UPDATE SET password_hash = $2, role = $4
         `, ['admin@traktorsektoranalizi.com', adminHash, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi']);
 
         // Create Demo Marka
         await pool.query(`
-            INSERT INTO users (email, password, full_name, role, brand_id, company_name)
+            INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name)
             VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (email) DO UPDATE SET password = $2, role = $4, brand_id = $5
+            ON CONFLICT (email) DO UPDATE SET password_hash = $2, role = $4, brand_id = $5
         `, ['demo@john-deere.com', demoHash, 'John Deere Demo', 'brand', jdId, 'John Deere Turkey']);
         
-        res.send('✅ Giriş bilgileri görsele göre güncellendi!<br>Admin: admin2024<br>Marka: demo2024');
+        res.send('✅ Giriş bilgileri BAŞARIYLA güncellendi!<br>Sütun hatası (password -> password_hash) giderildi.<br>Admin: admin2024<br>Marka: demo2024');
     } catch (err) {
         res.status(500).send('Hata: ' + err.message);
     }
