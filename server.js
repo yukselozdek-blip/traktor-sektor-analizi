@@ -4031,12 +4031,14 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
     try {
         // Determine which year the user wants to view
         const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_data');
-        const maxYear = parseInt(latestRes.rows[0].max_year);
-        const minYear = parseInt(latestRes.rows[0].min_year);
+        const maxYear = parseInt(latestRes.rows[0].max_year) || 2025;
+        const minYear = parseInt(latestRes.rows[0].min_year) || 2019;
         
         // Selected year (the "data year" the user is viewing)
         const requestedYear = req.query.year ? parseInt(req.query.year) : maxYear;
-        const selectedYear = Math.min(Math.max(requestedYear, minYear), maxYear);
+        const selectedYear = !isNaN(requestedYear) ? Math.min(Math.max(requestedYear, minYear), maxYear) : maxYear;
+        
+        console.log(`TarmakBir Request: req=${req.query.year}, selected=${selectedYear}, range=${minYear}-${maxYear}`);
         
         // Years to compare: selected year and previous year (Registration Years)
         const compareYears = [selectedYear, selectedYear - 1];
