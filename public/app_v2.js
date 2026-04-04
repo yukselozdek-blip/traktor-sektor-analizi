@@ -3787,7 +3787,7 @@ async function loadTarmakBirPage() {
         const data = await API.getTarmakBir(targetYear);
         if (!data) return;
 
-        const { selected_year, registration_years, months_data, max_month } = data;
+        const { selected_year, registration_years, months_data, model_breakdown, max_month, available_years } = data;
         const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 
         // Year selector options
