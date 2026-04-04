@@ -4040,10 +4040,11 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         
         console.log(`TarmakBir Request: req=${req.query.year}, selected=${selectedYear}, range=${minYear}-${maxYear}`);
         
-        // Years to compare: selected year and previous year (Registration Years)
-        const compareYears = [selectedYear, selectedYear - 1];
+        // Get ALL unique registration years from the database for the rows
+        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_data ORDER BY year DESC');
+        const compareYears = yearsRes.rows.map(r => parseInt(r.year));
         
-        // Get monthly sales for both registration years
+        // Get monthly sales for ALL registration years
         const salesRes = await pool.query(`
             SELECT year, month, SUM(quantity) as total
             FROM sales_data
@@ -4052,32 +4053,39 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
             ORDER BY year DESC, month
         `, [compareYears]);
         
-        // Organize data: { year: { month: total, ... }, ... }
+        // Get Model Year breakdown for the SELECTED year
+        const modelYearRes = await pool.query(`
+            SELECT model_year, month, SUM(quantity) as total
+            FROM sales_data
+            WHERE year = $1
+            GROUP BY model_year, month
+            ORDER BY model_year DESC, month
+        `, [selectedYear]);
+
+        // Organize main data: { year: { month: total, ... }, ... }
         const monthsData = {};
         compareYears.forEach(y => { monthsData[y] = {}; });
-        
         salesRes.rows.forEach(r => {
-            const y = parseInt(r.year);
-            const m = parseInt(r.month);
-            if (monthsData[y]) {
-                monthsData[y][m] = parseInt(r.total);
-            }
+            monthsData[parseInt(r.year)][parseInt(r.month)] = parseInt(r.total);
         });
-        
-        // Available years for the dropdown
-        const yearsRes = await pool.query(
-            'SELECT DISTINCT year FROM sales_data ORDER BY year DESC'
-        );
-        const availableYears = yearsRes.rows.map(r => parseInt(r.year));
-        
+
+        // Organize model year breakdown for selected year
+        const modelBreakdown = {};
+        modelYearRes.rows.forEach(r => {
+            const my = r.model_year || 'Bilinmiyor';
+            if (!modelBreakdown[my]) modelBreakdown[my] = {};
+            modelBreakdown[my][parseInt(r.month)] = parseInt(r.total);
+        });
+
         res.json({
             selected_year: selectedYear,
             registration_years: compareYears,
             months_data: monthsData,
+            model_breakdown: modelBreakdown,
             max_month: 12,
             min_year: minYear,
             max_year: maxYear,
-            available_years: availableYears
+            available_years: compareYears // Use same list for dropdown
         });
     } catch (err) {
         console.error('TarmakBir error:', err);

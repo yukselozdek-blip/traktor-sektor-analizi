@@ -3891,72 +3891,58 @@ async function loadTarmakBirPage() {
             }
         }
 
+        // --- Build Model Breakdown Table ---
+        let modelRows = '';
+        const mRowColors = ['#ec4899', '#f97316', '#22c55e', '#ef4444'];
+        Object.keys(model_breakdown).sort((a,b) => b-a).forEach((my, idx) => {
+            const rowData = model_breakdown[my] || {};
+            let rowTotal = 0;
+            let cells = `<td class="tb-year-cell" style="color:${mRowColors[idx % mRowColors.length]}; font-weight:700;">Model Yılı ${my}</td>`;
+            for (let m = 1; m <= 12; m++) {
+                const val = rowData[m] || 0;
+                rowTotal += val;
+                cells += `<td class="tb-data-cell">${val > 0 ? val.toLocaleString('tr-TR') : '-'}</td>`;
+            }
+            cells += `<td class="tb-total-cell">${rowTotal.toLocaleString('tr-TR')}</td>`;
+            modelRows += `<tr class="tb-item-row">${cells}</tr>`;
+        });
+
         document.getElementById('pageContent').innerHTML = `
             <div class="tb-container">
                 <div class="tm-top-bar">
                     <div>
                         <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - [GÜNCEL] Toplam Market Analizi</h2>
-                        <p>Kıyaslama Yılları: <strong>${registration_years.join(' & ')}</strong> · Aylık Tescil Dağılımı</p>
+                        <p>Dinamik Tarihsel Kıyaslama ve Model Yılı Detayı</p>
                     </div>
                     <div style="display:flex;gap:12px;align-items:center;">
-                        <label style="color:var(--text-muted);font-size:13px;">Veri Yılı:</label>
+                        <label style="color:var(--text-muted);font-size:13px;">Kırılım Yılı:</label>
                         <select id="tarmakbirYearFilter" class="year-select" onchange="reloadTarmakBir()" style="min-width:120px;">
                             ${yearOptions}
                         </select>
                     </div>
                 </div>
 
-                <!-- Summary Cards -->
-                <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:24px;">
-                    ${registration_years.map((ry, idx) => {
-                        const rowData = months_data[ry] || {};
-                        let total = 0;
-                        for (let m = 1; m <= 12; m++) total += (rowData[m] || 0);
-                        const iconBg = idx === 0 ? 'rgba(37,99,235,0.15)' : 'rgba(124,58,237,0.15)';
-                        const iconClr = idx === 0 ? '#2563eb' : '#7c3aed';
-                        return `
-                            <div class="stat-card">
-                                <div class="stat-icon" style="background:${iconBg};color:${iconClr}"><i class="fas fa-tractor"></i></div>
-                                <div class="stat-value">${total.toLocaleString('tr-TR')}</div>
-                                <div class="stat-label">${ry} Yılı Toplam</div>
-                            </div>`;
-                    }).join('')}
-                    ${registration_years.length >= 2 ? (() => {
-                        let t0 = 0, t1 = 0;
-                        for (let m = 1; m <= 12; m++) {
-                            t0 += (months_data[registration_years[0]] || {})[m] || 0;
-                            t1 += (months_data[registration_years[1]] || {})[m] || 0;
-                        }
-                        const diff = t0 - t1;
-                        const pct = t1 > 0 ? ((diff) * 100 / t1).toFixed(1) : '-';
-                        const clr = diff >= 0 ? '#22c55e' : '#ef4444';
-                        const arrow = diff >= 0 ? '▲' : '▼';
-                        return `
-                            <div class="stat-card">
-                                <div class="stat-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-exchange-alt"></i></div>
-                                <div class="stat-value" style="color:${clr}">${arrow} ${Math.abs(diff).toLocaleString('tr-TR')}</div>
-                                <div class="stat-label">Fark (Adet)</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-icon" style="background:rgba(6,182,212,0.15);color:#06b6d4"><i class="fas fa-percentage"></i></div>
-                                <div class="stat-value" style="color:${clr}">${pct !== '-' ? '%' + pct : '-'}</div>
-                                <div class="stat-label">Değişim Oranı</div>
-                            </div>`;
-                    })() : ''}
-                </div>
-
                 <!-- Chart -->
                 <div class="chart-card" style="padding:24px; margin-bottom:24px;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-chart-bar" style="margin-right:8px;color:#3b82f6"></i>Aylık Satış Karşılaştırması</h3>
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-chart-bar" style="margin-right:8px;color:#3b82f6"></i>Tescil Yılı Kıyaslaması (${registration_years.slice(0,2).join(' & ')})</h3>
                     <div style="position:relative;height:350px;"><canvas id="tarmakbirChart"></canvas></div>
                 </div>
 
-                <!-- Data Table -->
-                <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-table" style="margin-right:8px;color:#8b5cf6"></i>TarmakBir Aylık Satış Dağılım Tablosu</h3>
+                <!-- MAIN TABLE: HISTORICAL COMPARISON -->
+                <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-history" style="margin-right:8px;color:#8b5cf6"></i>Tüm Yıllar Tescil Dağılım Tablosu</h3>
                     <table class="tb-table">
                         <thead><tr>${headerCells}</tr></thead>
                         <tbody>${bodyRows}</tbody>
+                    </table>
+                </div>
+
+                <!-- SECONDARY TABLE: MODEL YEAR BREAKDOWN -->
+                <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto;">
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-tags" style="margin-right:8px;color:#ec4899"></i>${selected_year} Yılı Model Yılı Bazlı Detay</h3>
+                    <table class="tb-table">
+                        <thead><tr>${headerCells}</tr></thead>
+                        <tbody>${modelRows}</tbody>
                     </table>
                 </div>
             </div>
