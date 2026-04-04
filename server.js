@@ -60,7 +60,7 @@ function adminOnly(req, res, next) {
 
 app.get('/api/auth/diagnostic', async (req, res) => {
     try {
-        const users = await pool.query('SELECT id, email, role, full_name, (password_hash IS NOT NULL) as has_password FROM users');
+        const users = await pool.query('SELECT id, email, role, full_name, (password_hash IS NOT NULL) as has_password_hash FROM users');
         const schema = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'");
         res.json({
             status: '✅ Sunucu Aktif',
@@ -1521,7 +1521,9 @@ app.post('/api/public/whatsapp/webhook', async (req, res) => {
 // ============================================
 app.post('/api/auth/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const password = req.body.password_hash_hash || req.body.password_hash || req.body.password;
+        const { email } = req.body;
+        
         if (!email || !password) return res.status(400).json({ error: 'Email ve şifre gerekli' });
 
         const result = await pool.query(`
