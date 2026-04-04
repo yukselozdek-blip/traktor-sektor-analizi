@@ -4038,33 +4038,24 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         const requestedYear = req.query.year ? parseInt(req.query.year) : maxYear;
         const selectedYear = Math.min(Math.max(requestedYear, minYear), maxYear);
         
-        // Model years: selected year and previous year (son 2 yıl)
-        const modelYear1 = selectedYear;     // current/selected
-        const modelYear2 = selectedYear - 1;  // previous
-        const modelYears = [modelYear1, modelYear2];
+        // Years to compare: selected year and previous year (Registration Years)
+        const compareYears = [selectedYear, selectedYear - 1];
         
-        // Get max month for the selected year (to know available data range)
-        const maxMonthRes = await pool.query(
-            'SELECT MAX(month) as max_month FROM sales_data WHERE year = $1',
-            [selectedYear]
-        );
-        const maxMonth = parseInt(maxMonthRes.rows[0]?.max_month || 12);
-        
-        // Get monthly sales for both model years within the selected sales year (tescil_yil)
+        // Get monthly sales for both registration years
         const salesRes = await pool.query(`
-            SELECT model_year, month, SUM(quantity) as total
+            SELECT year, month, SUM(quantity) as total
             FROM sales_data
-            WHERE year = $1 AND model_year = ANY($2)
-            GROUP BY model_year, month
-            ORDER BY model_year DESC, month
-        `, [selectedYear, modelYears]);
+            WHERE year = ANY($1)
+            GROUP BY year, month
+            ORDER BY year DESC, month
+        `, [compareYears]);
         
-        // Organize data: { model_year: { month: total, ... }, ... }
+        // Organize data: { year: { month: total, ... }, ... }
         const monthsData = {};
-        modelYears.forEach(y => { monthsData[y] = {}; });
+        compareYears.forEach(y => { monthsData[y] = {}; });
         
         salesRes.rows.forEach(r => {
-            const y = parseInt(r.model_year);
+            const y = parseInt(r.year);
             const m = parseInt(r.month);
             if (monthsData[y]) {
                 monthsData[y][m] = parseInt(r.total);
@@ -4079,7 +4070,7 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         
         res.json({
             selected_year: selectedYear,
-            model_years: modelYears,
+            registration_years: compareYears,
             months_data: monthsData,
             max_month: maxMonth,
             min_year: minYear,

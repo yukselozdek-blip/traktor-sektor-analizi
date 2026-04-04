@@ -3798,20 +3798,20 @@ async function loadTarmakBirPage() {
         });
 
         // --- Build Table ---
-        // Header: ModelYılı | 1 | 2 | ... | 12 | Toplam
-        let headerCells = '<th class="tb-header-label">Model Yılı</th>';
+        // Header: Yıl | 1 | 2 | ... | 12 | Toplam
+        let headerCells = '<th class="tb-header-label">Yıl</th>';
         for (let m = 1; m <= 12; m++) {
             headerCells += `<th class="tb-month-header">${m}</th>`;
         }
         headerCells += '<th class="tb-total-header">Toplam</th>';
 
-        // Data rows - 2 model years
+        // Data rows - 2 registration years
         let bodyRows = '';
-        const rowColors = ['#2563eb', '#7c3aed'];
-        model_years.forEach((my, idx) => {
-            const rowData = months_data[my] || {};
+        const rowColors = ['#2563eb', '#7c3aed', '#f59e0b', '#06b6d4', '#22c55e'];
+        registration_years.forEach((ry, idx) => {
+            const rowData = months_data[ry] || {};
             let rowTotal = 0;
-            let cells = `<td class="tb-year-cell" style="color:${rowColors[idx]}; font-weight:700;">${my}</td>`;
+            let cells = `<td class="tb-year-cell" style="color:${rowColors[idx % rowColors.length]}; font-weight:700;">${ry}</td>`;
             
             for (let m = 1; m <= 12; m++) {
                 const val = rowData[m] || 0;
@@ -3826,9 +3826,9 @@ async function loadTarmakBirPage() {
         });
 
         // Delta row (fark)
-        if (model_years.length === 2) {
-            const curr = months_data[model_years[0]] || {};
-            const prev = months_data[model_years[1]] || {};
+        if (registration_years.length >= 2) {
+            const curr = months_data[registration_years[0]] || {};
+            const prev = months_data[registration_years[1]] || {};
             let deltaCells = '<td class="tb-year-cell" style="font-weight:700; color:#f59e0b;">Δ Fark</td>';
             let totalCurr = 0, totalPrev = 0;
             
@@ -3885,9 +3885,9 @@ async function loadTarmakBirPage() {
         const chartDataPrev = [];
         for (let m = 1; m <= 12; m++) {
             chartLabels.push(monthNames[m - 1]);
-            chartDataCurr.push((months_data[model_years[0]] || {})[m] || 0);
-            if (model_years.length > 1) {
-                chartDataPrev.push((months_data[model_years[1]] || {})[m] || 0);
+            chartDataCurr.push((months_data[registration_years[0]] || {})[m] || 0);
+            if (registration_years.length > 1) {
+                chartDataPrev.push((months_data[registration_years[1]] || {})[m] || 0);
             }
         }
 
@@ -3895,8 +3895,8 @@ async function loadTarmakBirPage() {
             <div class="tb-container">
                 <div class="tm-top-bar">
                     <div>
-                        <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - Model Yılı Satış Analizi</h2>
-                        <p>Model Yılı: <strong>${model_years.join(' & ')}</strong> · Aylık Satış Dağılımı</p>
+                        <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - Sektörel Aylık Satış Analizi</h2>
+                        <p>Kıyaslama Yılları: <strong>${registration_years.join(' & ')}</strong> · Aylık Tescil Dağılımı</p>
                     </div>
                     <div style="display:flex;gap:12px;align-items:center;">
                         <label style="color:var(--text-muted);font-size:13px;">Veri Yılı:</label>
@@ -3908,8 +3908,8 @@ async function loadTarmakBirPage() {
 
                 <!-- Summary Cards -->
                 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:24px;">
-                    ${model_years.map((my, idx) => {
-                        const rowData = months_data[my] || {};
+                    ${registration_years.map((ry, idx) => {
+                        const rowData = months_data[ry] || {};
                         let total = 0;
                         for (let m = 1; m <= 12; m++) total += (rowData[m] || 0);
                         const iconBg = idx === 0 ? 'rgba(37,99,235,0.15)' : 'rgba(124,58,237,0.15)';
@@ -3918,14 +3918,14 @@ async function loadTarmakBirPage() {
                             <div class="stat-card">
                                 <div class="stat-icon" style="background:${iconBg};color:${iconClr}"><i class="fas fa-tractor"></i></div>
                                 <div class="stat-value">${total.toLocaleString('tr-TR')}</div>
-                                <div class="stat-label">Model Yılı ${my}</div>
+                                <div class="stat-label">${ry} Yılı Toplam</div>
                             </div>`;
                     }).join('')}
-                    ${model_years.length === 2 ? (() => {
+                    ${registration_years.length >= 2 ? (() => {
                         let t0 = 0, t1 = 0;
                         for (let m = 1; m <= 12; m++) {
-                            t0 += (months_data[model_years[0]] || {})[m] || 0;
-                            t1 += (months_data[model_years[1]] || {})[m] || 0;
+                            t0 += (months_data[registration_years[0]] || {})[m] || 0;
+                            t1 += (months_data[registration_years[1]] || {})[m] || 0;
                         }
                         const diff = t0 - t1;
                         const pct = t1 > 0 ? ((diff) * 100 / t1).toFixed(1) : '-';
@@ -3953,7 +3953,7 @@ async function loadTarmakBirPage() {
 
                 <!-- Data Table -->
                 <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-table" style="margin-right:8px;color:#8b5cf6"></i>Model Yılı Aylık Dağılım Tablosu</h3>
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-table" style="margin-right:8px;color:#8b5cf6"></i>TarmakBir Aylık Satış Dağılım Tablosu</h3>
                     <table class="tb-table">
                         <thead><tr>${headerCells}</tr></thead>
                         <tbody>${bodyRows}</tbody>
@@ -3966,7 +3966,7 @@ async function loadTarmakBirPage() {
         const ctx = document.getElementById('tarmakbirChart').getContext('2d');
         const datasets = [
             {
-                label: `Model Yılı ${model_years[0]}`,
+                label: `${registration_years[0]} Yılı`,
                 data: chartDataCurr,
                 backgroundColor: 'rgba(37,99,235,0.8)',
                 borderColor: '#2563eb',
@@ -3974,9 +3974,9 @@ async function loadTarmakBirPage() {
                 borderRadius: 6
             }
         ];
-        if (model_years.length > 1) {
+        if (registration_years.length > 1) {
             datasets.push({
-                label: `Model Yılı ${model_years[1]}`,
+                label: `${registration_years[1]} Yılı`,
                 data: chartDataPrev,
                 backgroundColor: 'rgba(124,58,237,0.6)',
                 borderColor: '#7c3aed',
