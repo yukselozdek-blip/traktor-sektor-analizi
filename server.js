@@ -4206,6 +4206,13 @@ async function initDB() {
             const schema = fs.readFileSync(schemaPath, 'utf8');
             await pool.query(schema);
             console.log('✅ Veritabanı şeması yüklendi');
+            
+            try {
+                await pool.query('ALTER TABLE sales_data ADD COLUMN model_year INTEGER');
+                console.log('✅ sales_data tablosuna model_year sütunu eklendi');
+            } catch (e) {
+                // Sütun zaten varsa hata verecek, yoksayıyoruz.
+            }
         }
 
         // Temel verileri seed et (markalar, iller, planlar, admin)
