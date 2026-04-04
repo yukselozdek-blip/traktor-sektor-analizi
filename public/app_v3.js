@@ -131,6 +131,7 @@ function navigateTo(page) {
         'hp-brand-matrix': ['HP Marka Matris', 'HP Segment Bazlı Marka Dağılımı'],
         'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
         'brand-compare': ['Marka Karşılaştırma', 'Dinamik Marka Kıyaslama Paneli'],
+        'benchmark': ['Teknik Kıyaslama', '4 Katmanlı Profesyonel Benchmarking Analizi'],
         'regional-index': ['Bölgesel Mekanizasyon', 'İl Bazlı Mekanizasyon İndeksi ve Isı Haritası'],
         'model-region': ['Model-Bölge Analizi', 'Model-Bölge Uyumluluk ve Derinlik Raporu'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
@@ -143,6 +144,7 @@ function navigateTo(page) {
         'ai-insights': ['AI Öngörüler', 'Yapay Zeka Destekli Analizler'],
         subscription: ['Abonelik', 'Plan ve Ödeme Yönetimi'],
         tarmakbir: ['TarmakBir', 'Model Yılı Bazlı Aylık Satış Analizi'],
+        tarmakbir2: ['Bütün Model Yılları', 'Marka Bazlı Aylık Satış Raporu'],
         settings: ['Ayarlar', 'Hesap Ayarları']
     };
 
@@ -166,6 +168,7 @@ function navigateTo(page) {
         'hp-brand-matrix': loadHpBrandMatrixPage,
         'prov-top-brand': loadProvTopBrandPage,
         'brand-compare': loadBrandComparePage,
+        'benchmark': loadBenchmarkPage,
         'regional-index': loadRegionalIndexPage,
         'model-region': loadModelRegionPage,
         'map-full': loadMapFullPage,
@@ -178,6 +181,7 @@ function navigateTo(page) {
         'ai-insights': loadAIInsightsPage,
         subscription: loadSubscriptionPage,
         tarmakbir: loadTarmakBirPage,
+        tarmakbir2: loadTarmakBir2Page,
         settings: loadSettingsPage
     };
 
@@ -4016,6 +4020,90 @@ function reloadTarmakBir() {
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
     loadTarmakBirPage();
+}
+
+// ============================================
+// TARMAKBIR2 PAGE - Bütün Model Yılları
+// ============================================
+let tarmakbir2SelectedYear = null;
+
+async function loadTarmakBir2Page() {
+    try {
+        const targetYear = tarmakbir2SelectedYear || selectedYear;
+        const data = await API.get(`/api/sales/tarmakbir-total?year=${targetYear}`);
+        if (!data) return;
+
+        const { selected_year, brands_data, months_total, grand_total, available_years } = data;
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+        let yearOptions = '';
+        available_years.forEach(y => {
+            yearOptions += `<option value="${y}" ${y === selected_year ? 'selected' : ''}>${y}</option>`;
+        });
+
+        // --- Build Table ---
+        // Header
+        let headerCells = '<th>Markası</th>';
+        for (let m = 1; m <= 12; m++) headerCells += `<th>${monthNames[m-1]}</th>`;
+        headerCells += '<th>G.Toplam</th>';
+
+        // G.Toplam Row (Top row in screenshot)
+        let totalRow = '<tr class="tb2-total-row"><td>G.Toplam</td>';
+        for (let m = 1; m <= 12; m++) {
+            totalRow += `<td>${months_total[m] > 0 ? months_total[m].toLocaleString('tr-TR') : '-'}</td>`;
+        }
+        totalRow += `<td>${grand_total.toLocaleString('tr-TR')}</td></tr>`;
+
+        // Brand Rows
+        let brandRows = '';
+        Object.keys(brands_data).sort().forEach(b => {
+           const row = brands_data[b];
+           let cells = `<td>${b}</td>`;
+           for(let m=1; m<=12; m++) {
+               cells += `<td>${row[m] > 0 ? row[m].toLocaleString('tr-TR') : ''}</td>`;
+           }
+           cells += `<td class="tb2-brand-total">${row[0].toLocaleString('tr-TR')}</td>`;
+           brandRows += `<tr>${cells}</tr>`;
+        });
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="tb-container">
+                <div class="tm-top-bar">
+                    <div>
+                        <h2>Bütün Model Yılları</h2>
+                        <p>${selected_year} Yılı Marka Bazlı Satış Adetleri (Model Yılı Sınırlaması Olmadan)</p>
+                    </div>
+                    <div style="display:flex;gap:12px;align-items:center;">
+                        <label style="color:var(--text-muted);font-size:13px;">Veri Yılı:</label>
+                        <select id="tarmakbir2YearFilter" class="year-select" onchange="reloadTarmakBir2()">
+                            ${yearOptions}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:16px;">
+                    <div class="card-body" style="overflow-x:auto; padding:0;">
+                        <table class="tb2-table">
+                            <thead><tr>${headerCells}</tr></thead>
+                            <tbody>
+                                ${totalRow}
+                                ${brandRows}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+function reloadTarmakBir2() {
+    tarmakbir2SelectedYear = parseInt(document.getElementById('tarmakbir2YearFilter')?.value) || null;
+    API.clearCache();
+    loadTarmakBir2Page();
 }
 
 // ============================================

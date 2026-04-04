@@ -1670,3 +1670,53 @@ select {
     color: #f87171 !important;
     font-weight: 700;
 }
+/* ============================================
+   TARMAKBIR2 - BÜTÜN MODEL YILLARI
+   ============================================ */
+.tb2-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    color: #f1f5f9;
+}
+.tb2-table thead th {
+    background: #0f172a;
+    color: #f1f5f9;
+    padding: 12px 10px;
+    font-weight: 700;
+    text-align: left;
+    border-bottom: 2px solid #334155;
+    white-space: nowrap;
+}
+.tb2-table thead th:not(:first-child) {
+    text-align: right;
+}
+.tb2-table td {
+    padding: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    text-align: right;
+}
+.tb2-table td:first-child {
+    text-align: left;
+    font-weight: 600;
+    color: #e2e8f0;
+    min-width: 160px;
+}
+.tb2-total-row {
+    background: rgba(239, 68, 68, 0.08) !important;
+}
+.tb2-total-row td {
+    color: #ef4444 !important;
+    font-weight: 800 !important;
+    border-top: 2px solid #ef4444;
+    border-bottom: 2px solid #ef4444;
+}
+.tb2-brand-total {
+    font-weight: 800;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.03);
+}
+.tb2-table tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
+}

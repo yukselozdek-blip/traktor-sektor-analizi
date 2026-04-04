@@ -4094,6 +4094,60 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
     }
 });
 
+app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const maxYear = parseInt(latestRes.rows[0].max_year) || 2025;
+        const selectedYear = req.query.year ? parseInt(req.query.year) : maxYear;
+
+        // Get sales by brand and month (NO model year filter)
+        const salesRes = await pool.query(`
+            SELECT b.name as brand_name, s.month, SUM(s.quantity) as total
+            FROM sales_data s
+            LEFT JOIN brands b ON s.brand_id = b.id
+            WHERE s.year = $1
+            GROUP BY b.name, s.month
+            ORDER BY b.name ASC, s.month ASC
+        `, [selectedYear]);
+
+        // Organize data: { "JOHN DEERE": [total, jan, feb, ...], ... }
+        const brandsData = {};
+        const monthsTotal = Array(13).fill(0); // [0] unused, 1-12
+        let grandTotalAll = 0;
+
+        salesRes.rows.forEach(r => {
+            const bName = r.brand_name || 'DİĞER';
+            const m = parseInt(r.month);
+            const val = parseInt(r.total);
+
+            if (!brandsData[bName]) brandsData[bName] = Array(13).fill(0);
+            brandsData[bName][m] = val;
+            monthsTotal[m] += val;
+            grandTotalAll += val;
+        });
+
+        // Compute row totals for brands
+        Object.keys(brandsData).forEach(b => {
+           let rSum = 0;
+           for(let i=1; i<=12; i++) rSum += brandsData[b][i];
+           brandsData[b][0] = rSum; // Row total stored at index 0
+        });
+
+        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_data ORDER BY year DESC');
+
+        res.json({
+            selected_year: selectedYear,
+            brands_data: brandsData,
+            months_total: monthsTotal,
+            grand_total: grandTotalAll,
+            available_years: yearsRes.rows.map(r => parseInt(r.year))
+        });
+    } catch (err) {
+        console.error('TarmakBirTotal error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 // ============================================
 // MANUAL SEED ENDPOINT (admin only)
 // ============================================
