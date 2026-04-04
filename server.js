@@ -58,6 +58,26 @@ function adminOnly(req, res, next) {
     next();
 }
 
+// GEÇİCİ ADMİN SIFIRLAMA (İŞLEM BİTİNCE SİLİNECEK)
+app.get('/api/auth/reset-admin-password', async (req, res) => {
+    try {
+        const email = 'admin@traktorsektoranalizi.com';
+        const password = 'admin123';
+        const hash = await bcrypt.hash(password, 10);
+        
+        await pool.query(`
+            INSERT INTO users (email, password, full_name, role, company_name)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (email) 
+            DO UPDATE SET password = $2, role = $4
+        `, [email, hash, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi']);
+        
+        res.send('✅ Admin hesabı başarıyla sıfırlandı/oluşturuldu! Kullanıcı: admin@traktorsektoranalizi.com , Şifre: admin123');
+    } catch (err) {
+        res.status(500).send('Hata: ' + err.message);
+    }
+});
+
 // ============================================
 // WHATSAPP / N8N QUERY HELPERS
 // ============================================
