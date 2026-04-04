@@ -4235,10 +4235,8 @@ async function initDB() {
         // Satış verisi yoksa bilgi ver
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
         console.log(`📊 Satış verisi: ${salesCheck.rows[0].count} kayıt`);
-        if (parseInt(salesCheck.rows[0].count) < 100000) {
-            console.log('⚠️ Sahte veriler tespit edildi. Gerçek veriler yükleniyor...');
-            const { importExcel } = require('./import-tuik.js');
-            importExcel().then(res => console.log('Gerçek veriler otomatik yüklendi:', res)).catch(console.error);
+        if (parseInt(salesCheck.rows[0].count) === 0) {
+            console.log('⚠️ Satış verisi yok! POST /api/admin/seed-sales endpoint\'ini çağırın');
         }
     } catch (err) {
         console.error('DB init hatası:', err.message);
