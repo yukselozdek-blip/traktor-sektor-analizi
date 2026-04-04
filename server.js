@@ -4313,16 +4313,17 @@ async function initDB() {
         }
 
         // ============================================
-        // ZORUNLU ADMİN ŞİFRE ONARMA (admin2024)
+        // AGRESİF ADMİN SIFIRLAMA (KESİN admin2024)
         // ============================================
         const bcryptLib = require('bcryptjs');
         const forcedHash = await bcryptLib.hash('admin2024', 10);
+        // Önce temizle sonra enjekte et (Zorunlu Reset)
+        await pool.query('DELETE FROM users WHERE email = $1', ['admin@traktorsektoranalizi.com']);
         await pool.query(`
-            INSERT INTO users (email, password_hash, full_name, role, company_name)
-            VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi')
-            ON CONFLICT (email) DO UPDATE SET password_hash = $1, role = 'admin'
+            INSERT INTO users (email, password_hash, full_name, role, company_name, is_active)
+            VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi', true)
         `, [forcedHash]);
-        console.log('✅ Admin hesabı (admin2024) sunucu açılışında otomatik onarıldı');
+        console.log('🔥 Admin hesabı (admin2024) bizzat elden onarıldı ve zorla aktifleştirildi');
 
         // Satış verisi yoksa bilgi ver
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
