@@ -3895,7 +3895,7 @@ async function loadTarmakBirPage() {
             <div class="tb-container">
                 <div class="tm-top-bar">
                     <div>
-                        <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - Sektörel Aylık Satış Analizi</h2>
+                        <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - [GÜNCEL] Toplam Market Analizi</h2>
                         <p>Kıyaslama Yılları: <strong>${registration_years.join(' & ')}</strong> · Aylık Tescil Dağılımı</p>
                     </div>
                     <div style="display:flex;gap:12px;align-items:center;">
