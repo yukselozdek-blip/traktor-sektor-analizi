@@ -1,0 +1,199 @@
+{
+  "id": "whatsapp-sales-assistant",
+  "name": "WhatsApp Sales Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "multipleMethods": true,
+        "httpMethod": ["GET", "POST"],
+        "path": "whatsapp-sales-assistant",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "c71f89a7-7bd7-44ed-b1ec-366ef17ab5e2",
+      "position": [240, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.query[\"hub.verify_token\"]}}",
+              "rightValue": "={{$env.WHATSAPP_VERIFY_TOKEN}}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Verify Token Match",
+      "type": "n8n-nodes-base.if",
+      "position": [520, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{$json.query[\"hub.challenge\"]}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Return Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [760, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "verify token mismatch",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "name": "Return Verify Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [760, 260]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"received\": true}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Acknowledge Meta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [520, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "const entry = $json.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value = change?.value || {};\nconst message = value.messages?.[0];\nif (!message || message.type !== 'text') {\n  return [];\n}\nconst question = message.text?.body?.trim();\nif (!question) {\n  return [];\n}\nreturn [{\n  json: {\n    question,\n    from: message.from,\n    message_id: message.id,\n    profile_name: value.contacts?.[0]?.profile?.name || null\n  }\n}];"
+      },
+      "name": "Extract Incoming Question",
+      "type": "n8n-nodes-base.code",
+      "position": [520, 620]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.APP_BASE_URL || 'http://app:3000').replace(/\\/$/, '')) + '/api/public/assistant/sales-query' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-query-token",
+              "value": "={{$env.WHATSAPP_QUERY_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ question: $json.question, from: $json.from, message_id: $json.message_id }) }}"
+      },
+      "name": "Resolve Sales Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [800, 620]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{$env.WHATSAPP_PHONE_NUMBER_ID}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.WHATSAPP_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ messaging_product: 'whatsapp', to: $('Extract Incoming Question').item.json.from, type: 'text', text: { body: $json.answer || 'Sorunuz islenemedi.' } }) }}"
+      },
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1080, 620]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Token Match",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Acknowledge Meta",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Incoming Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token Match": {
+      "main": [
+        [
+          {
+            "node": "Return Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Verify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Incoming Question": {
+      "main": [
+        [
+          {
+            "node": "Resolve Sales Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Sales Answer": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

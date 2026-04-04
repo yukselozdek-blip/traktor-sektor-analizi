@@ -1,0 +1,4 @@
+interface:
+  display_name: "StratejikPlan WhatsApp"
+  short_description: "Maintain the live WhatsApp sales assistant"
+  default_prompt: "Use $stratejikplan-whatsapp-sales-assistant to maintain or extend the live StratejikPlan WhatsApp sales assistant on Railway."

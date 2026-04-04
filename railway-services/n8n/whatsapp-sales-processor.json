@@ -1,0 +1,158 @@
+{
+  "id": "whatsapp-sales-processor-v2",
+  "name": "WhatsApp Sales Processor v2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-sales-assistant-process-v2",
+        "options": {}
+      },
+      "name": "WhatsApp Processor Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "08c9ce93-8844-4edc-8e0c-4e5bc8eec3df",
+      "position": [
+        240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.headers[\"x-query-token\"] || \"\"}}",
+              "rightValue": "={{$env.WHATSAPP_QUERY_API_KEY}}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Forward Token Match",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        480,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const entry = $json.body?.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value = change?.value || {};\nconst message = value.messages?.[0];\nif (!message || message.type !== 'text') {\n  return [];\n}\nconst question = message.text?.body?.trim();\nif (!question) {\n  return [];\n}\nreturn [{\n  json: {\n    question,\n    from: message.from,\n    message_id: message.id,\n    profile_name: value.contacts?.[0]?.profile?.name || null\n  }\n}];"
+      },
+      "name": "Extract Incoming Question",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        720,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.APP_BASE_URL || 'http://app:3000').replace(/\\/$/, '')) + '/api/public/assistant/sales-query' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-query-token",
+              "value": "={{$env.WHATSAPP_QUERY_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ question: $json.question, from: $json.from, message_id: $json.message_id }) }}"
+      },
+      "name": "Resolve Sales Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        960,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{$env.WHATSAPP_PHONE_NUMBER_ID}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.WHATSAPP_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ messaging_product: 'whatsapp', to: $('Extract Incoming Question').item.json.from, type: 'text', text: { body: $json.answer || 'Sorunuz islenemedi.' } }) }}"
+      },
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1200,
+        240
+      ]
+    }
+  ],
+  "connections": {
+    "WhatsApp Processor Webhook": {
+      "main": [
+        [
+          {
+            "node": "Forward Token Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Forward Token Match": {
+      "main": [
+        [
+          {
+            "node": "Extract Incoming Question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Extract Incoming Question": {
+      "main": [
+        [
+          {
+            "node": "Resolve Sales Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Sales Answer": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

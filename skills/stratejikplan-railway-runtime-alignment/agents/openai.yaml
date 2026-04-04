@@ -1,0 +1,4 @@
+interface:
+  display_name: "Railway Runtime Alignment"
+  short_description: "Keep Docker, Railway, and n8n deployment truth aligned"
+  default_prompt: "Use $stratejikplan-railway-runtime-alignment to verify whether Docker-defined services such as n8n are truly deployed and live on Railway before making architecture or production claims."

@@ -26,6 +26,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3002}
       DATABASE_URL: postgresql://traktor:traktor2024secure@postgres:5432/traktorsektordb
       JWT_SECRET: ${JWT_SECRET:-traktor-sektor-super-secret-key-2024}
       N8N_HOST: n8n
@@ -33,8 +34,9 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
       OPENWEATHERMAP_API_KEY: ${OPENWEATHERMAP_API_KEY}
+      WHATSAPP_QUERY_API_KEY: ${WHATSAPP_QUERY_API_KEY}
     ports:
-      - "3000:3000"
+      - "3002:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,13 +63,20 @@ services:
       - GENERIC_TIMEZONE=Europe/Istanbul
       - TZ=Europe/Istanbul
       - WEBHOOK_URL=http://n8n:5678/
+      - APP_BASE_URL=${APP_BASE_URL:-http://app:3000}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP_BUSINESS_ACCOUNT_ID=${WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - WHATSAPP_QUERY_API_KEY=${WHATSAPP_QUERY_API_KEY}
     ports:
-      - "5678:5678"
+      - "5680:5678"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - n8n_data:/home/node/.n8n
+      - ./n8n-workflows:/workflows
     restart: unless-stopped
 
   anythingllm:

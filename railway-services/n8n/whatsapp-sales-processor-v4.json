@@ -1,0 +1,98 @@
+{
+  "id": "whatsapp-sales-processor-v4",
+  "name": "WhatsApp Sales Processor v4",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-sales-assistant-process-v4",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "WhatsApp Processor Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "8a5ee0f6-c4fd-4a84-b7b8-c5cece96744b",
+      "position": [
+        240,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.APP_BASE_URL || 'http://app:3000').replace(/\\/$/, '')) + '/api/public/assistant/sales-query' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-query-token",
+              "value": "={{$env.WHATSAPP_QUERY_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ question: $json.body?.question || $json.question, from: $json.body?.from || $json.from, message_id: $json.body?.message_id || $json.message_id }) }}"
+      },
+      "name": "Resolve Sales Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        520,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{$env.WHATSAPP_PHONE_NUMBER_ID}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.WHATSAPP_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ messaging_product: 'whatsapp', to: $('WhatsApp Processor Webhook').item.json.body?.from || $('WhatsApp Processor Webhook').item.json.from, type: 'text', text: { body: $json.answer || 'Sorunuz islenemedi.' } }) }}"
+      },
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        800,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "WhatsApp Processor Webhook": {
+      "main": [
+        [
+          {
+            "node": "Resolve Sales Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Sales Answer": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
