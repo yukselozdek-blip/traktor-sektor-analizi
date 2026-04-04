@@ -1521,7 +1521,7 @@ app.post('/api/public/whatsapp/webhook', async (req, res) => {
 // ============================================
 app.post('/api/auth/login', async (req, res) => {
     try {
-        const password = req.body.password_hash_hash || req.body.password_hash || req.body.password;
+        const password = req.body.password_hash || req.body.password_hash || req.body.password;
         const { email } = req.body;
         
         if (!email || !password) return res.status(400).json({ error: 'Email ve şifre gerekli' });
