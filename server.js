@@ -61,18 +61,28 @@ function adminOnly(req, res, next) {
 // GEÇİCİ ADMİN SIFIRLAMA (İŞLEM BİTİNCE SİLİNECEK)
 app.get('/api/auth/reset-admin-password', async (req, res) => {
     try {
-        const email = 'admin@traktorsektoranalizi.com';
-        const password = 'admin123';
-        const hash = await bcrypt.hash(password, 10);
+        const adminHash = await bcrypt.hash('admin2024', 10);
+        const demoHash = await bcrypt.hash('demo2024', 10);
         
+        // Find John Deere brand id
+        const jdRes = await pool.query("SELECT id FROM brands WHERE name ILIKE '%JOHN DEERE%' LIMIT 1");
+        const jdId = jdRes.rows[0]?.id || 1;
+
+        // Reset Admin
         await pool.query(`
             INSERT INTO users (email, password, full_name, role, company_name)
             VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (email) 
-            DO UPDATE SET password = $2, role = $4
-        `, [email, hash, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi']);
+            ON CONFLICT (email) DO UPDATE SET password = $2, role = $4
+        `, ['admin@traktorsektoranalizi.com', adminHash, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi']);
+
+        // Create Demo Marka
+        await pool.query(`
+            INSERT INTO users (email, password, full_name, role, brand_id, company_name)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (email) DO UPDATE SET password = $2, role = $4, brand_id = $5
+        `, ['demo@john-deere.com', demoHash, 'John Deere Demo', 'brand', jdId, 'John Deere Turkey']);
         
-        res.send('✅ Admin hesabı başarıyla sıfırlandı/oluşturuldu! Kullanıcı: admin@traktorsektoranalizi.com , Şifre: admin123');
+        res.send('✅ Giriş bilgileri görsele göre güncellendi!<br>Admin: admin2024<br>Marka: demo2024');
     } catch (err) {
         res.status(500).send('Hata: ' + err.message);
     }
