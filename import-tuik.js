@@ -158,8 +158,8 @@ async function importExcel() {
         let processedSales = 0;
         let unmappedBrands = new Set();
         
-        // UNIQUE yapısını model_year'ı içerecek şekilde geçici olarak drop edip yeniden yapalım
-        await client.query('ALTER TABLE sales_data DROP CONSTRAINT IF EXISTS sales_data_brand_id_province_id_year_month_category_cabi_key');
+        // UNIQUE yapısını model_year'ı içerecek şekilde geçici olarak drop edip yeniden yapalım (isim PostgreSQL e göredir)
+        await client.query('ALTER TABLE sales_data DROP CONSTRAINT IF EXISTS sales_data_brand_id_province_id_year_month_category_cabin_t_key');
 
         for (const row of tuikData) {
             const tescilYil = parseInt(row['TescilYil']);
