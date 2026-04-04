@@ -4325,6 +4325,18 @@ async function initDB() {
             console.log('✅ Temel veriler seed edildi');
         }
 
+        // ============================================
+        // ZORUNLU ADMİN ŞİFRE ONARMA (admin2024)
+        // ============================================
+        const bcryptLib = require('bcryptjs');
+        const forcedHash = await bcryptLib.hash('admin2024', 10);
+        await pool.query(`
+            INSERT INTO users (email, password_hash, full_name, role, company_name)
+            VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi')
+            ON CONFLICT (email) DO UPDATE SET password_hash = $1, role = 'admin'
+        `, [forcedHash]);
+        console.log('✅ Admin hesabı (admin2024) sunucu açılışında otomatik onarıldı');
+
         // Satış verisi yoksa bilgi ver
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
         console.log(`📊 Satış verisi: ${salesCheck.rows[0].count} kayıt`);
