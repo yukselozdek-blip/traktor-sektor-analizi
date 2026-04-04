@@ -3791,9 +3791,8 @@ async function loadTarmakBirPage() {
         const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 
         // Year selector options
-        const availableYears = data.available_years || [];
         let yearOptions = '';
-        availableYears.forEach(y => {
+        (available_years || []).forEach(y => {
             yearOptions += `<option value="${y}" ${y === selected_year ? 'selected' : ''}>${y}</option>`;
         });
 
