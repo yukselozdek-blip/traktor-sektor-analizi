@@ -4044,11 +4044,12 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_data ORDER BY year DESC');
         const compareYears = yearsRes.rows.map(r => parseInt(r.year));
         
-        // Get monthly sales for ALL registration years
+        // Get monthly sales for ALL registration years (Strictly filtering for only the last 2 model years per registration year)
         const salesRes = await pool.query(`
             SELECT year, month, SUM(quantity) as total
             FROM sales_data
-            WHERE year = ANY($1)
+            WHERE (year = model_year OR year = model_year + 1)
+              AND year = ANY($1)
             GROUP BY year, month
             ORDER BY year DESC, month
         `, [compareYears]);
