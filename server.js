@@ -59,7 +59,7 @@ function adminOnly(req, res, next) {
 }
 
 // GEÇİCİ ADMİN SIFIRLAMA (İŞLEM BİTİNCE SİLİNECEK)
-app.get('/api/auth/reset-admin-password', async (req, res) => {
+app.get('/api/auth/reset-admin-password_hash', async (req, res) => {
     try {
         const adminHash = await bcrypt.hash('admin2024', 10);
         const demoHash = await bcrypt.hash('demo2024', 10);
@@ -82,7 +82,7 @@ app.get('/api/auth/reset-admin-password', async (req, res) => {
             ON CONFLICT (email) DO UPDATE SET password_hash = $2, role = $4, brand_id = $5
         `, ['demo@john-deere.com', demoHash, 'John Deere Demo', 'brand', jdId, 'John Deere Turkey']);
         
-        res.send('✅ Giriş bilgileri BAŞARIYLA güncellendi!<br>Sütun hatası (password -> password_hash) giderildi.<br>Admin: admin2024<br>Marka: demo2024');
+        res.send('✅ Giriş bilgileri BAŞARIYLA güncellendi!<br>Sütun hatası (password_hash -> password_hash) giderildi.<br>Admin: admin2024<br>Marka: demo2024');
     } catch (err) {
         res.status(500).send('Hata: ' + err.message);
     }
@@ -3056,8 +3056,8 @@ app.get('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 
 app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { email, password, full_name, role, brand_id, company_name, city } = req.body;
-        const hash = await bcrypt.hash(password, 10);
+        const { email, password_hash, full_name, role, brand_id, company_name, city } = req.body;
+        const hash = await bcrypt.hash(password_hash, 10);
         const result = await pool.query(`
             INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name, city)
             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, full_name, role, brand_id
