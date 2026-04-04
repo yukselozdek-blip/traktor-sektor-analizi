@@ -4072,7 +4072,7 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
             selected_year: selectedYear,
             registration_years: compareYears,
             months_data: monthsData,
-            max_month: maxMonth,
+            max_month: 12,
             min_year: minYear,
             max_year: maxYear,
             available_years: availableYears
