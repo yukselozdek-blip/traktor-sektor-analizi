@@ -4348,11 +4348,9 @@ app.get('*', (req, res) => {
 // ============================================
 // START SERVER
 // ============================================
-initDB().then(() => {
-    app.listen(PORT, () => {
-        console.log(`🚜 Traktör Sektör Analizi sunucusu ${PORT} portunda çalışıyor`);
-        console.log(`📊 Dashboard: http://localhost:${PORT}`);
-    });
+app.listen(PORT, () => {
+    console.log(`🚜 Traktör Sektör Analizi sunucusu ${PORT} portunda çalışıyor`);
+    console.log(`📊 Dashboard: http://localhost:${PORT}`);
 });
 
 process.on('SIGTERM', async () => {
