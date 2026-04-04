@@ -170,9 +170,15 @@
         </div>
     </div>
 
-    <script src="api_v3.js"></script>
+    <script src="api_v3.js?v=5.0"></script>
     <script>
-        if (API.token) window.location.href = '/';
+        // Eski/bozuk token varsa önce doğrula, geçersizse temizle
+        if (API.token) {
+            API.me().then(user => {
+                if (user) window.location.href = '/';
+                else { localStorage.removeItem('auth_token'); localStorage.removeItem('user_data'); API.token = null; }
+            }).catch(() => { localStorage.removeItem('auth_token'); localStorage.removeItem('user_data'); API.token = null; });
+        }
 
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();

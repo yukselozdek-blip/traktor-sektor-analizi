@@ -52,23 +52,31 @@ async function init() {
 
     try {
         currentUser = await API.me();
-        if (!currentUser) { API.logout(); return; }
+    } catch (err) {
+        console.error('Auth check failed:', err);
+        API.logout();
+        return;
+    }
 
-        localStorage.setItem('user_data', JSON.stringify(currentUser));
-        applyBrandTheme(currentUser.brand);
-        updateUserUI();
+    if (!currentUser) { API.logout(); return; }
 
+    localStorage.setItem('user_data', JSON.stringify(currentUser));
+    applyBrandTheme(currentUser.brand);
+    updateUserUI();
+
+    try {
         // Pre-load common data
         [allBrands, allProvinces] = await Promise.all([
             API.getBrands(),
             API.getProvinces()
         ]);
-
-        navigateTo('dashboard');
     } catch (err) {
-        console.error('Init error:', err);
-        API.logout();
+        console.error('Data pre-load error (non-fatal):', err);
+        allBrands = allBrands || [];
+        allProvinces = allProvinces || [];
     }
+
+    navigateTo('dashboard');
 }
 
 // ============================================
