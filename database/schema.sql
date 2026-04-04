@@ -170,9 +170,56 @@ CREATE TABLE IF NOT EXISTS sales_data (
     drive_type VARCHAR(10), -- '2WD', '4WD'
     hp_range VARCHAR(50),
     gear_config VARCHAR(20),
+    model_year INTEGER,
     data_source VARCHAR(100) DEFAULT 'TurkTractor',
-    created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(brand_id, province_id, year, month, category, cabin_type, drive_type, hp_range, gear_config)
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================
+-- 7b. TUIK VERİLERİ (Raw Data for Satis Adetleri/Tescil Yil)
+-- ============================================
+CREATE TABLE IF NOT EXISTS tuik_veri (
+    id SERIAL PRIMARY KEY,
+    marka VARCHAR(200),
+    tuik_model_adi VARCHAR(200),
+    tescil_yil INTEGER,
+    tescil_ay INTEGER,
+    sehir_kodu INTEGER,
+    sehir_adi VARCHAR(200),
+    model_yili INTEGER,
+    motor_hacmi_cc VARCHAR(50),
+    renk VARCHAR(100),
+    satis_adet INTEGER
+);
+
+-- ============================================
+-- 7c. TEKNİK VERİLER (Raw Technical Specs)
+-- ============================================
+CREATE TABLE IF NOT EXISTS teknik_veri (
+    id SERIAL PRIMARY KEY,
+    marka VARCHAR(200),
+    model VARCHAR(200),
+    tuik_model_adi VARCHAR(200),
+    fiyat_usd DECIMAL(12,2),
+    emisyon_seviyesi VARCHAR(100),
+    cekis_tipi VARCHAR(100),
+    koruma VARCHAR(100),
+    vites_sayisi VARCHAR(100),
+    mensei VARCHAR(100),
+    kullanim_alani VARCHAR(100),
+    motor_marka VARCHAR(100),
+    silindir_sayisi INTEGER,
+    motor_gucu_hp DECIMAL(10,2),
+    motor_devri_rpm INTEGER,
+    maksimum_tork DECIMAL(10,2),
+    depo_hacmi_lt DECIMAL(10,2),
+    hidrolik_kaldirma DECIMAL(10,2),
+    agirlik DECIMAL(10,2),
+    dingil_mesafesi INTEGER,
+    uzunluk INTEGER,
+    yukseklik INTEGER,
+    genislik INTEGER,
+    model_yillari VARCHAR(200)
 );
 
 -- ============================================

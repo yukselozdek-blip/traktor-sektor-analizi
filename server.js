@@ -4050,21 +4050,21 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         );
         const maxMonth = parseInt(maxMonthRes.rows[0]?.max_month || 12);
         
-        // Get monthly sales for both model years
+        // Get monthly sales for both model years within the selected sales year (tescil_yil)
         const salesRes = await pool.query(`
-            SELECT year, month, SUM(quantity) as total
+            SELECT model_year, month, SUM(quantity) as total
             FROM sales_data
-            WHERE year = ANY($1)
-            GROUP BY year, month
-            ORDER BY year DESC, month
-        `, [modelYears]);
+            WHERE year = $1 AND model_year = ANY($2)
+            GROUP BY model_year, month
+            ORDER BY model_year DESC, month
+        `, [selectedYear, modelYears]);
         
-        // Organize data: { year: { month: total, ... }, ... }
+        // Organize data: { model_year: { month: total, ... }, ... }
         const monthsData = {};
         modelYears.forEach(y => { monthsData[y] = {}; });
         
         salesRes.rows.forEach(r => {
-            const y = parseInt(r.year);
+            const y = parseInt(r.model_year);
             const m = parseInt(r.month);
             if (monthsData[y]) {
                 monthsData[y][m] = parseInt(r.total);
