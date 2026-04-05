@@ -4532,18 +4532,7 @@ function reloadTarmakBir2() {
 }
 
 // ============================================
-// BENCHMARK PAGE (Teknik Kıyaslama)
-// ============================================
-async function loadBenchmarkPage() {
-    const content = document.getElementById('pageContent');
-    content.innerHTML = `
-        <div class="empty-state">
-            <i class="fas fa-microscope" style="color:var(--brand-primary);font-size:48px"></i>
-            <h3>Teknik Kıyaslama</h3>
-            <p>Bu özellik yakında aktif olacaktır.</p>
-        </div>
-    `;
-}
+// BENCHMARK PAGE - placeholder removed, real function is above
 
 // ============================================
 // ERROR HANDLER
