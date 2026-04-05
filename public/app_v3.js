@@ -162,7 +162,7 @@ function navigateTo(page) {
     document.getElementById('pageSubtitle').textContent = subtitle;
 
     // Model yılı bilgi notu - analitik sayfalarda göster
-    const noNotePages = ['settings', 'subscription', 'ai-insights', 'weather', 'province', 'models'];
+    const noNotePages = ['settings', 'subscription', 'ai-insights', 'weather', 'models'];
     const noteEl = document.getElementById('modelYearNote');
     if (noteEl) {
         if (noNotePages.includes(page)) {
@@ -170,6 +170,18 @@ function navigateTo(page) {
         } else {
             noteEl.style.display = 'inline';
             noteEl.innerHTML = '<i class="fas fa-info-circle"></i> Veriler model yılı bazında son 2 yılı (N ve N-1) kapsamaktadır';
+        }
+    }
+
+    // Yıl seçici: sadece ilgili sayfalarda göster, diğerlerinde gizle
+    const yearFilterEl = document.getElementById('yearFilter');
+    if (yearFilterEl) {
+        const yearActivePages = ['dashboard', 'prov-top-brand', 'map', 'map-full', 'sales', 'competitors', 'province', 'regional-index', 'tarmakbir', 'tarmakbir2'];
+        if (yearActivePages.includes(page)) {
+            yearFilterEl.style.display = '';
+            yearFilterEl.disabled = false;
+        } else {
+            yearFilterEl.style.display = 'none';
         }
     }
 
