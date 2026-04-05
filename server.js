@@ -311,11 +311,11 @@ async function inferSalesQueryWithGroq(question, brands, latestPeriod) {
 }
 
 async function getLatestSalesPeriod() {
-    const latestYearRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+    const latestYearRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
     const latestYear = parseInt(latestYearRes.rows[0]?.max_year, 10);
     if (!latestYear) return null;
 
-    const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [latestYear]);
+    const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [latestYear]);
     return {
         year: latestYear,
         month: parseInt(latestMonthRes.rows[0]?.max_month, 10) || 0
@@ -326,18 +326,18 @@ async function buildBrandYearTotalAnswer(brand, year, latestPeriod) {
     const [brandSalesRes, totalSalesRes, rankRes] = await Promise.all([
         pool.query(`
             SELECT COALESCE(SUM(quantity), 0) as total_sales, COUNT(DISTINCT month) as month_count
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year = $2
         `, [brand.id, year]),
         pool.query(`
             SELECT COALESCE(SUM(quantity), 0) as total_sales
-            FROM sales_data
+            FROM sales_view
             WHERE year = $1
         `, [year]),
         pool.query(`
             WITH yearly_sales AS (
                 SELECT brand_id, SUM(quantity) as total_sales
-                FROM sales_data
+                FROM sales_view
                 WHERE year = $1
                 GROUP BY brand_id
             )
@@ -396,7 +396,7 @@ async function buildBrandComparisonAnswer(brands, year, latestPeriod) {
             WHERE b.id = ANY($2::int[])
             GROUP BY b.id, b.name
         `, [year, brandIds]),
-        pool.query('SELECT COALESCE(SUM(quantity), 0) as total_sales FROM sales_data WHERE year = $1', [year])
+        pool.query('SELECT COALESCE(SUM(quantity), 0) as total_sales FROM sales_view WHERE year = $1', [year])
     ]);
 
     const totalMarketSales = parseInt(totalSalesRes.rows[0]?.total_sales || 0, 10);
@@ -831,12 +831,12 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
     const prevYear = year - 1;
 
     const [salesRes, marketRes, rankRes, monthlyRes, provincesRes, hpRes, categoryRes, driveRes, modelsRes, yearlyTrendRes, provinceCountRes] = await Promise.all([
-        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3`, [brand.id, year, limitMonth]),
-        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [year, limitMonth]),
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_view WHERE brand_id = $1 AND year = $2 AND month <= $3`, [brand.id, year, limitMonth]),
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_view WHERE year = $1 AND month <= $2`, [year, limitMonth]),
         pool.query(`
             WITH yearly_sales AS (
                 SELECT brand_id, SUM(quantity) as total_sales
-                FROM sales_data
+                FROM sales_view
                 WHERE year = $1 AND month <= $2
                 GROUP BY brand_id
             )
@@ -847,31 +847,31 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
         `, [year, limitMonth, brand.id]),
         pool.query(`
             SELECT month, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year = $2 AND month <= $3
             GROUP BY month ORDER BY month
         `, [brand.id, year, limitMonth]),
         pool.query(`
             SELECT p.name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3
             GROUP BY p.name ORDER BY total DESC LIMIT 5
         `, [brand.id, year, limitMonth]),
         pool.query(`
             SELECT hp_range, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year = $2 AND month <= $3
             GROUP BY hp_range ORDER BY total DESC
         `, [brand.id, year, limitMonth]),
         pool.query(`
             SELECT category, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year = $2 AND month <= $3
             GROUP BY category ORDER BY total DESC
         `, [brand.id, year, limitMonth]),
         pool.query(`
             SELECT drive_type, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year = $2 AND month <= $3
             GROUP BY drive_type ORDER BY total DESC
         `, [brand.id, year, limitMonth]),
@@ -883,13 +883,13 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
         `, [brand.id]),
         pool.query(`
             SELECT year, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year IN ($2, $3, $4) AND month <= $5
             GROUP BY year ORDER BY year
         `, [brand.id, year - 2, year - 1, year, limitMonth]),
         pool.query(`
             SELECT COUNT(DISTINCT province_id) as active_provinces
-            FROM sales_data
+            FROM sales_view
             WHERE brand_id = $1 AND year = $2 AND month <= $3
         `, [brand.id, year, limitMonth])
     ]);
@@ -900,7 +900,7 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
     const rank = parseInt(rankRes.rows[0]?.rank || 0, 10);
 
     const prevRes = await pool.query(
-        `SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3`,
+        `SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_view WHERE brand_id = $1 AND year = $2 AND month <= $3`,
         [brand.id, prevYear, limitMonth]
     );
     const prevSales = parseInt(prevRes.rows[0]?.total_sales || 0, 10);
@@ -991,35 +991,35 @@ async function buildMarketOverviewData(year, latestPeriod) {
     const prevYear = year - 1;
 
     const [marketRes, prevMarketRes, brandsRes, provincesRes, hpRes, categoryRes, provinceCountRes] = await Promise.all([
-        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [year, limitMonth]),
-        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [prevYear, limitMonth]),
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_view WHERE year = $1 AND month <= $2`, [year, limitMonth]),
+        pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_view WHERE year = $1 AND month <= $2`, [prevYear, limitMonth]),
         pool.query(`
             SELECT b.name, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY b.name ORDER BY total DESC LIMIT 8
         `, [year, limitMonth]),
         pool.query(`
             SELECT p.name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY p.name ORDER BY total DESC LIMIT 8
         `, [year, limitMonth]),
         pool.query(`
             SELECT hp_range, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE year = $1 AND month <= $2
             GROUP BY hp_range ORDER BY total DESC LIMIT 6
         `, [year, limitMonth]),
         pool.query(`
             SELECT category, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE year = $1 AND month <= $2
             GROUP BY category ORDER BY total DESC
         `, [year, limitMonth]),
         pool.query(`
             SELECT COUNT(DISTINCT province_id) as active_provinces
-            FROM sales_data
+            FROM sales_view
             WHERE year = $1 AND month <= $2
         `, [year, limitMonth])
     ]);
@@ -1073,13 +1073,13 @@ async function buildBrandCompareExecutiveData(brands, year, latestPeriod) {
         pool.query(`
             WITH market AS (
                 SELECT year, SUM(quantity) as total
-                FROM sales_data
+                FROM sales_view
                 WHERE year IN ($1, $2) AND month <= $3
                 GROUP BY year
             ),
             brand_sales AS (
                 SELECT brand_id, year, SUM(quantity) as total
-                FROM sales_data
+                FROM sales_view
                 WHERE brand_id = ANY($4::int[]) AND year IN ($1, $2) AND month <= $3
                 GROUP BY brand_id, year
             )
@@ -1090,7 +1090,7 @@ async function buildBrandCompareExecutiveData(brands, year, latestPeriod) {
     const prevRows = benchmarkRes.rows.filter(row => Number(row.year) === year - 1);
     const currRows = benchmarkRes.rows.filter(row => Number(row.year) === year);
 
-    const marketRes = await pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_data WHERE year = $1 AND month <= $2`, [year, limitMonth]);
+    const marketRes = await pool.query(`SELECT COALESCE(SUM(quantity),0) as total_sales FROM sales_view WHERE year = $1 AND month <= $2`, [year, limitMonth]);
     const marketSales = parseInt(marketRes.rows[0]?.total_sales || 0, 10);
 
     const firstData = await buildBrandExecutiveData(first, year, latestPeriod);
@@ -1104,7 +1104,7 @@ async function buildBrandCompareExecutiveData(brands, year, latestPeriod) {
             SELECT p.name,
                    SUM(CASE WHEN s.brand_id = $1 THEN s.quantity ELSE 0 END) as b1,
                    SUM(CASE WHEN s.brand_id = $2 THEN s.quantity ELSE 0 END) as b2
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.brand_id IN ($1, $2) AND s.year = $3 AND s.month <= $4
             GROUP BY p.name
         )
@@ -1651,7 +1651,7 @@ app.get('/api/sales/summary', authMiddleware, async (req, res) => {
             SELECT b.name as brand_name, b.slug, b.primary_color,
                    SUM(s.quantity) as total_sales,
                    COUNT(DISTINCT s.province_id) as province_count
-            FROM sales_data s
+            FROM sales_view s
             JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
         `;
@@ -1676,9 +1676,9 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
         const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
 
         // 1. Son veri noktasını bul (en son yıl ve ay)
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
         // 2. Son 12 yılın tam yıllık verileri (son 2 yıl hariç)
@@ -1686,7 +1686,7 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
             SELECT s.year,
                    SUM(s.quantity) as total_market,
                    SUM(CASE WHEN s.brand_id = $1 THEN s.quantity ELSE 0 END) as brand_sales
-            FROM sales_data s
+            FROM sales_view s
             WHERE s.year >= $2 AND s.year <= $3
             GROUP BY s.year ORDER BY s.year
         `, [userBrandId || 0, maxYear - 11, maxYear - 1]);
@@ -1698,7 +1698,7 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
             SELECT s.year,
                    SUM(s.quantity) as total_market,
                    SUM(CASE WHEN s.brand_id = $1 THEN s.quantity ELSE 0 END) as brand_sales
-            FROM sales_data s
+            FROM sales_view s
             WHERE s.year IN ($2, $3) AND s.month <= $4
             GROUP BY s.year ORDER BY s.year
         `, [userBrandId || 0, prevYear, maxYear, maxMonth]);
@@ -1754,12 +1754,12 @@ app.get('/api/sales/historical', authMiddleware, async (req, res) => {
 // Distribütör Özet Tablosu - Marka grupları
 app.get('/api/sales/distributor-summary', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
 
         // Distribütör grup tanımları (slug → grup adı)
@@ -1788,7 +1788,7 @@ app.get('/api/sales/distributor-summary', authMiddleware, async (req, res) => {
         // Tüm satış verisini çek
         const allData = await pool.query(`
             SELECT b.slug, s.year, s.month, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             GROUP BY b.slug, s.year, s.month ORDER BY b.slug, s.year, s.month
         `);
 
@@ -1872,9 +1872,9 @@ app.get('/api/sales/distributor-summary', authMiddleware, async (req, res) => {
 // HP Segment Top 10 Marka
 app.get('/api/sales/hp-top-brands', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
         const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
@@ -1882,7 +1882,7 @@ app.get('/api/sales/hp-top-brands', authMiddleware, async (req, res) => {
         // Son yılın ilk N ayı verisi: hp_range + marka bazlı
         const result = await pool.query(`
             SELECT s.hp_range, b.name as brand_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2 AND s.hp_range IS NOT NULL
             GROUP BY s.hp_range, b.name
             ORDER BY s.hp_range, total DESC
@@ -1917,16 +1917,16 @@ app.get('/api/sales/hp-top-brands', authMiddleware, async (req, res) => {
 // HP Segment Top 10 İl
 app.get('/api/sales/hp-top-provinces', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
         const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
 
         const result = await pool.query(`
             SELECT s.hp_range, p.name as province_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.year = $1 AND s.month <= $2 AND s.hp_range IS NOT NULL
             GROUP BY s.hp_range, p.name
             ORDER BY s.hp_range, total DESC
@@ -1959,9 +1959,9 @@ app.get('/api/sales/hp-top-provinces', authMiddleware, async (req, res) => {
 // HP Segment Top 10 Marka/Model (Bahçe/Tarla ayrımı)
 app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
         const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
@@ -1969,7 +1969,7 @@ app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
 
         const result = await pool.query(`
             SELECT s.hp_range, s.category, b.name as brand_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2 AND s.hp_range IS NOT NULL
             GROUP BY s.hp_range, s.category, b.name
             ORDER BY s.hp_range, s.category, total DESC
@@ -2013,7 +2013,7 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
 
         // Hedef yıl ve ay aralığı
         let targetYear, maxMonth;
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const dbMaxYear = parseInt(latestRes.rows[0].max_year);
 
         if (year && parseInt(year) < dbMaxYear) {
@@ -2023,14 +2023,14 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
         } else {
             // Son yıl veya belirtilmemiş: partial data
             targetYear = year ? parseInt(year) : dbMaxYear;
-            const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [targetYear]);
+            const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [targetYear]);
             maxMonth = parseInt(latestMonthRes.rows[0]?.max_month || 12);
         }
 
         // İl bazlı toplam satış (sıralama için)
         const provTotals = await pool.query(`
             SELECT p.name as province_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY p.name ORDER BY total DESC
         `, [targetYear, maxMonth]);
@@ -2038,7 +2038,7 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
         // İl + marka bazlı detay
         const result = await pool.query(`
             SELECT p.name as province_name, b.name as brand_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY p.name, b.name ORDER BY p.name, total DESC
         `, [targetYear, maxMonth]);
@@ -2070,12 +2070,12 @@ app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
 // HP Brand Matrix - HP segment bazlı tüm markalar (adet + %)
 app.get('/api/sales/hp-brand-matrix', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
 
@@ -2083,14 +2083,14 @@ app.get('/api/sales/hp-brand-matrix', authMiddleware, async (req, res) => {
 
         const allData = await pool.query(`
             SELECT s.hp_range, b.name as brand_name, s.year, s.month, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.hp_range IS NOT NULL
             GROUP BY s.hp_range, b.name, s.year, s.month
         `);
 
         const totalMarketData = await pool.query(`
             SELECT year, month, SUM(quantity) as total
-            FROM sales_data WHERE hp_range IS NOT NULL
+            FROM sales_view WHERE hp_range IS NOT NULL
             GROUP BY year, month
         `);
 
@@ -2149,12 +2149,12 @@ app.get('/api/sales/hp-brand-matrix', authMiddleware, async (req, res) => {
 app.get('/api/sales/brand-hp-detail', authMiddleware, async (req, res) => {
     try {
         const brandId = req.query.brand_id || '';
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
 
@@ -2169,7 +2169,7 @@ app.get('/api/sales/brand-hp-detail', authMiddleware, async (req, res) => {
         // Market data by hp_range
         const marketData = await pool.query(`
             SELECT hp_range, year, month, SUM(quantity) as total
-            FROM sales_data WHERE hp_range IS NOT NULL
+            FROM sales_view WHERE hp_range IS NOT NULL
             GROUP BY hp_range, year, month
         `);
 
@@ -2178,7 +2178,7 @@ app.get('/api/sales/brand-hp-detail', authMiddleware, async (req, res) => {
         if (brandId) {
             brandData = await pool.query(`
                 SELECT hp_range, year, month, SUM(quantity) as total
-                FROM sales_data WHERE hp_range IS NOT NULL AND brand_id = $1
+                FROM sales_view WHERE hp_range IS NOT NULL AND brand_id = $1
                 GROUP BY hp_range, year, month
             `, [brandId]);
         }
@@ -2240,12 +2240,12 @@ app.get('/api/sales/brand-hp-detail', authMiddleware, async (req, res) => {
 // OBT HP - Bahçe/Tarla HP segment yıllık + aylık + karşılaştırma
 app.get('/api/sales/obt-hp', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
 
@@ -2254,7 +2254,7 @@ app.get('/api/sales/obt-hp', authMiddleware, async (req, res) => {
 
         const allData = await pool.query(`
             SELECT category, hp_range, year, month, SUM(quantity) as total
-            FROM sales_data WHERE hp_range IS NOT NULL
+            FROM sales_view WHERE hp_range IS NOT NULL
             GROUP BY category, hp_range, year, month
             ORDER BY category, hp_range, year, month
         `);
@@ -2316,16 +2316,16 @@ app.get('/api/sales/obt-hp', authMiddleware, async (req, res) => {
 // HP Segment Top 10 İl (Bahçe/Tarla ayrımı)
 app.get('/api/sales/hp-top-provinces-cat', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
         const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
 
         const result = await pool.query(`
             SELECT s.hp_range, s.category, p.name as province_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.year = $1 AND s.month <= $2 AND s.hp_range IS NOT NULL
             GROUP BY s.hp_range, s.category, p.name
             ORDER BY s.hp_range, s.category, total DESC
@@ -2364,19 +2364,19 @@ app.get('/api/sales/hp-top-provinces-cat', authMiddleware, async (req, res) => {
 // HP Segment Tablosu - HP aralıklarına göre yıllık + aylık + karşılaştırma
 app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = Array.from({ length: prevYear - minYear + 1 }, (_, i) => minYear + i);
 
         // Tüm veriler hp_range bazlı
         const allData = await pool.query(`
             SELECT hp_range, year, month, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE hp_range IS NOT NULL
             GROUP BY hp_range, year, month ORDER BY hp_range, year, month
         `);
@@ -2427,18 +2427,18 @@ app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
 app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
     try {
         // Son veri noktası
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
 
         // 1. Yıllık toplamlar (tüm yıllar, marka bazlı) - son yıl hariç (partial)
         const yearlyRes = await pool.query(`
             SELECT b.id as brand_id, b.name as brand_name, s.year, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year >= $1 AND s.year <= $2
             GROUP BY b.id, b.name, s.year ORDER BY b.name, s.year
         `, [minYear, prevYear]);
@@ -2446,7 +2446,7 @@ app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
         // 2. Son yılın aylık verileri (marka bazlı)
         const monthlyRes = await pool.query(`
             SELECT b.id as brand_id, b.name as brand_name, s.month, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
             GROUP BY b.id, b.name, s.month ORDER BY b.name, s.month
         `, [maxYear]);
@@ -2454,7 +2454,7 @@ app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
         // 3. Önceki yılın ilk N ayı (marka bazlı)
         const prevPartialRes = await pool.query(`
             SELECT b.id as brand_id, b.name as brand_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY b.id, b.name ORDER BY b.name
         `, [prevYear, maxMonth]);
@@ -2462,32 +2462,32 @@ app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
         // 4. Son yılın ilk N ayı (marka bazlı) = aylık toplamların toplamı
         const currPartialRes = await pool.query(`
             SELECT b.id as brand_id, b.name as brand_name, SUM(s.quantity) as total
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.month <= $2
             GROUP BY b.id, b.name ORDER BY b.name
         `, [maxYear, maxMonth]);
 
         // 5. Yıllık toplam pazar
         const yearlyTotalRes = await pool.query(`
-            SELECT year, SUM(quantity) as total FROM sales_data
+            SELECT year, SUM(quantity) as total FROM sales_view
             WHERE year >= $1 AND year <= $2
             GROUP BY year ORDER BY year
         `, [minYear, prevYear]);
 
         // 6. Son yıl aylık toplam pazar
         const monthlyTotalRes = await pool.query(`
-            SELECT month, SUM(quantity) as total FROM sales_data
+            SELECT month, SUM(quantity) as total FROM sales_view
             WHERE year = $1 GROUP BY month ORDER BY month
         `, [maxYear]);
 
         // 7. Önceki yıl partial toplam
         const prevPartialTotalRes = await pool.query(`
-            SELECT SUM(quantity) as total FROM sales_data WHERE year = $1 AND month <= $2
+            SELECT SUM(quantity) as total FROM sales_view WHERE year = $1 AND month <= $2
         `, [prevYear, maxMonth]);
 
         // 8. Son yıl partial toplam
         const currPartialTotalRes = await pool.query(`
-            SELECT SUM(quantity) as total FROM sales_data WHERE year = $1 AND month <= $2
+            SELECT SUM(quantity) as total FROM sales_view WHERE year = $1 AND month <= $2
         `, [maxYear, maxMonth]);
 
         // Veriyi düzenle
@@ -2536,16 +2536,16 @@ app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
         const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
 
         // Son veri noktasını bul
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
 
         // Toplam pazar (tüm markalar) - aylık
         const totalRes = await pool.query(`
             SELECT year, month, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE year IN ($1, $2)
             GROUP BY year, month ORDER BY year, month
         `, [prevYear, maxYear]);
@@ -2556,7 +2556,7 @@ app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
         if (userBrandId) {
             brandRes = await pool.query(`
                 SELECT year, month, SUM(quantity) as total
-                FROM sales_data
+                FROM sales_view
                 WHERE year IN ($1, $2) AND brand_id = $3
                 GROUP BY year, month ORDER BY year, month
             `, [prevYear, maxYear, userBrandId]);
@@ -2621,7 +2621,7 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
             SELECT p.name as province_name, p.plate_code, p.latitude, p.longitude, p.region,
                    b.name as brand_name, b.slug as brand_slug, b.primary_color,
                    SUM(s.quantity) as total_sales
-            FROM sales_data s
+            FROM sales_view s
             JOIN provinces p ON s.province_id = p.id
             JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
@@ -2650,7 +2650,7 @@ app.get('/api/sales/monthly-trend', authMiddleware, async (req, res) => {
         let query = `
             SELECT s.month, b.name as brand_name, b.primary_color,
                    SUM(s.quantity) as total_sales
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
         `;
         const params = [targetYear];
@@ -2675,8 +2675,8 @@ app.get('/api/sales/market-share', authMiddleware, async (req, res) => {
         let query = `
             SELECT b.name as brand_name, b.slug, b.primary_color,
                    SUM(s.quantity) as brand_sales,
-                   ROUND(SUM(s.quantity) * 100.0 / NULLIF((SELECT SUM(quantity) FROM sales_data WHERE year = $1), 0), 2) as market_share_pct
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+                   ROUND(SUM(s.quantity) * 100.0 / NULLIF((SELECT SUM(quantity) FROM sales_view WHERE year = $1), 0), 2) as market_share_pct
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
         `;
         const params = [targetYear];
@@ -2711,7 +2711,7 @@ app.get('/api/sales/by-category', authMiddleware, async (req, res) => {
         let query = `
             SELECT ${dim} as dimension_value, b.name as brand_name, b.primary_color,
                    SUM(s.quantity) as total_sales
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND ${dim} IS NOT NULL
         `;
         const params = [targetYear];
@@ -2737,7 +2737,7 @@ app.get('/api/sales/hp-comparison', authMiddleware, async (req, res) => {
         let query = `
             SELECT s.hp_range, b.name as brand_name, b.primary_color,
                    SUM(s.quantity) as total_sales
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.hp_range IS NOT NULL
         `;
         const params = [targetYear];
@@ -2769,7 +2769,7 @@ app.get('/api/sales/competitor-compare', authMiddleware, async (req, res) => {
             SELECT b.name as brand_name, b.slug, b.primary_color,
                    s.category, s.cabin_type, s.drive_type, s.hp_range, s.gear_config,
                    SUM(s.quantity) as total_sales
-            FROM sales_data s JOIN brands b ON s.brand_id = b.id
+            FROM sales_view s JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1 AND s.brand_id = ANY($2)
             GROUP BY b.id, b.name, b.slug, b.primary_color, s.category, s.cabin_type, s.drive_type, s.hp_range, s.gear_config
             ORDER BY b.name, total_sales DESC
@@ -2999,22 +2999,22 @@ app.get('/api/dashboard', authMiddleware, async (req, res) => {
         const currentYear = year ? parseInt(year) : new Date().getFullYear();
 
         const [totalSales, brandSales, provinceCount, marketShare, topProvinces, monthlyTrend] = await Promise.all([
-            pool.query('SELECT SUM(quantity) as total FROM sales_data WHERE year = $1', [currentYear]),
+            pool.query('SELECT SUM(quantity) as total FROM sales_view WHERE year = $1', [currentYear]),
             userBrandId
-                ? pool.query('SELECT SUM(quantity) as total FROM sales_data WHERE year = $1 AND brand_id = $2', [currentYear, userBrandId])
-                : pool.query('SELECT SUM(quantity) as total FROM sales_data WHERE year = $1', [currentYear]),
+                ? pool.query('SELECT SUM(quantity) as total FROM sales_view WHERE year = $1 AND brand_id = $2', [currentYear, userBrandId])
+                : pool.query('SELECT SUM(quantity) as total FROM sales_view WHERE year = $1', [currentYear]),
             userBrandId
-                ? pool.query('SELECT COUNT(DISTINCT province_id) as count FROM sales_data WHERE year = $1 AND brand_id = $2', [currentYear, userBrandId])
-                : pool.query('SELECT COUNT(DISTINCT province_id) as count FROM sales_data WHERE year = $1', [currentYear]),
+                ? pool.query('SELECT COUNT(DISTINCT province_id) as count FROM sales_view WHERE year = $1 AND brand_id = $2', [currentYear, userBrandId])
+                : pool.query('SELECT COUNT(DISTINCT province_id) as count FROM sales_view WHERE year = $1', [currentYear]),
             userBrandId
-                ? pool.query(`SELECT ROUND(SUM(CASE WHEN brand_id = $2 THEN quantity ELSE 0 END) * 100.0 / NULLIF(SUM(quantity), 0), 2) as share FROM sales_data WHERE year = $1`, [currentYear, userBrandId])
+                ? pool.query(`SELECT ROUND(SUM(CASE WHEN brand_id = $2 THEN quantity ELSE 0 END) * 100.0 / NULLIF(SUM(quantity), 0), 2) as share FROM sales_view WHERE year = $1`, [currentYear, userBrandId])
                 : null,
             userBrandId
-                ? pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_data s JOIN provinces p ON s.province_id = p.id WHERE s.year = $1 AND s.brand_id = $2 GROUP BY p.name ORDER BY total DESC LIMIT 10`, [currentYear, userBrandId])
-                : pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_data s JOIN provinces p ON s.province_id = p.id WHERE s.year = $1 GROUP BY p.name ORDER BY total DESC LIMIT 10`, [currentYear]),
+                ? pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_view s JOIN provinces p ON s.province_id = p.id WHERE s.year = $1 AND s.brand_id = $2 GROUP BY p.name ORDER BY total DESC LIMIT 10`, [currentYear, userBrandId])
+                : pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_view s JOIN provinces p ON s.province_id = p.id WHERE s.year = $1 GROUP BY p.name ORDER BY total DESC LIMIT 10`, [currentYear]),
             userBrandId
-                ? pool.query(`SELECT month, SUM(quantity) as total FROM sales_data WHERE year = $1 AND brand_id = $2 GROUP BY month ORDER BY month`, [currentYear, userBrandId])
-                : pool.query(`SELECT month, SUM(quantity) as total FROM sales_data WHERE year = $1 GROUP BY month ORDER BY month`, [currentYear])
+                ? pool.query(`SELECT month, SUM(quantity) as total FROM sales_view WHERE year = $1 AND brand_id = $2 GROUP BY month ORDER BY month`, [currentYear, userBrandId])
+                : pool.query(`SELECT month, SUM(quantity) as total FROM sales_view WHERE year = $1 GROUP BY month ORDER BY month`, [currentYear])
         ]);
 
         res.json({
@@ -3070,10 +3070,10 @@ app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
     try {
         const { year, metric } = req.query;
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
         const targetYear = year ? parseInt(year) : maxYear;
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [targetYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [targetYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
         // Province info
@@ -3083,7 +3083,7 @@ app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
         const salesRes = await pool.query(`
             SELECT s.province_id, s.category, s.hp_range, s.drive_type, s.cabin_type, s.gear_config,
                    SUM(s.quantity) as total
-            FROM sales_data s
+            FROM sales_view s
             WHERE s.year = $1
             GROUP BY s.province_id, s.category, s.hp_range, s.drive_type, s.cabin_type, s.gear_config
         `, [targetYear]);
@@ -3092,7 +3092,7 @@ app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
         const trendYears = [targetYear - 2, targetYear - 1, targetYear];
         const trendRes = await pool.query(`
             SELECT province_id, year, SUM(quantity) as total
-            FROM sales_data WHERE year = ANY($1)
+            FROM sales_view WHERE year = ANY($1)
             GROUP BY province_id, year
         `, [trendYears]);
         const trendMap = {};
@@ -3178,11 +3178,11 @@ app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
 // ============================================
 app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = [];
         for (let y = minYear; y <= maxYear; y++) years.push(y);
@@ -3202,7 +3202,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
         const salesRes = await pool.query(`
             SELECT s.province_id, s.brand_id, s.year, s.category, s.hp_range, s.cabin_type, s.drive_type, s.gear_config,
                    SUM(s.quantity) as total
-            FROM sales_data s
+            FROM sales_view s
             GROUP BY s.province_id, s.brand_id, s.year, s.category, s.hp_range, s.cabin_type, s.drive_type, s.gear_config
         `);
 
@@ -3323,12 +3323,12 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
         const { brand1_id, brand2_id } = req.query;
         if (!brand1_id || !brand2_id) return res.status(400).json({ error: 'brand1_id ve brand2_id gerekli' });
 
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const mmRes = await pool.query('SELECT MAX(month) as mm FROM sales_data WHERE year=$1', [maxYear]);
+        const mmRes = await pool.query('SELECT MAX(month) as mm FROM sales_view WHERE year=$1', [maxYear]);
         const maxMonth = parseInt(mmRes.rows[0].mm);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = [];
         for (let y = minYear; y <= maxYear; y++) years.push(y);
@@ -3351,7 +3351,7 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
                 SELECT s.year, s.month, s.hp_range, s.category, s.drive_type, s.cabin_type, s.gear_config,
                        s.province_id, p.name as province_name, p.region,
                        SUM(s.quantity) as total
-                FROM sales_data s JOIN provinces p ON s.province_id = p.id
+                FROM sales_view s JOIN provinces p ON s.province_id = p.id
                 WHERE s.brand_id = $1
                 GROUP BY s.year, s.month, s.hp_range, s.category, s.drive_type, s.cabin_type, s.gear_config, s.province_id, p.name, p.region
             `, [brandId]);
@@ -3436,20 +3436,20 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
         }
 
         // Total market by year and by province
-        const mktYearRes = await pool.query('SELECT year, SUM(quantity) as total FROM sales_data GROUP BY year');
+        const mktYearRes = await pool.query('SELECT year, SUM(quantity) as total FROM sales_view GROUP BY year');
         const mktYearly = {};
         mktYearRes.rows.forEach(r => { mktYearly[r.year] = parseInt(r.total); });
 
         const mktProvRes = await pool.query(`
             SELECT s.province_id, p.name, SUM(s.quantity) as total
-            FROM sales_data s JOIN provinces p ON s.province_id = p.id
+            FROM sales_view s JOIN provinces p ON s.province_id = p.id
             WHERE s.year = $1
             GROUP BY s.province_id, p.name ORDER BY total DESC
         `, [maxYear]);
 
         // Brand sales by province for dominance map
-        const b1ProvRes = await pool.query('SELECT province_id, SUM(quantity) as total FROM sales_data WHERE brand_id=$1 AND year=$2 GROUP BY province_id', [brand1_id, maxYear]);
-        const b2ProvRes = await pool.query('SELECT province_id, SUM(quantity) as total FROM sales_data WHERE brand_id=$1 AND year=$2 GROUP BY province_id', [brand2_id, maxYear]);
+        const b1ProvRes = await pool.query('SELECT province_id, SUM(quantity) as total FROM sales_view WHERE brand_id=$1 AND year=$2 GROUP BY province_id', [brand1_id, maxYear]);
+        const b2ProvRes = await pool.query('SELECT province_id, SUM(quantity) as total FROM sales_view WHERE brand_id=$1 AND year=$2 GROUP BY province_id', [brand2_id, maxYear]);
         const b1ProvMap = {}, b2ProvMap = {};
         b1ProvRes.rows.forEach(r => { b1ProvMap[r.province_id] = parseInt(r.total); });
         b2ProvRes.rows.forEach(r => { b2ProvMap[r.province_id] = parseInt(r.total); });
@@ -3470,7 +3470,7 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
         }).filter(p => (p.s1 + p.s2) > 0);
 
         // HP segment market totals for segment share comparison
-        const mktHpRes = await pool.query('SELECT hp_range, SUM(quantity) as total FROM sales_data WHERE year=$1 GROUP BY hp_range', [maxYear]);
+        const mktHpRes = await pool.query('SELECT hp_range, SUM(quantity) as total FROM sales_view WHERE year=$1 GROUP BY hp_range', [maxYear]);
         const mktHp = {};
         mktHpRes.rows.forEach(r => { mktHp[r.hp_range] = parseInt(r.total); });
 
@@ -3501,7 +3501,7 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
             const r = await pool.query(`
                 SELECT drive_type, cabin_type, category,
                        SUM(quantity) as total
-                FROM sales_data WHERE brand_id=$1 AND year=$2
+                FROM sales_view WHERE brand_id=$1 AND year=$2
                 GROUP BY drive_type, cabin_type, category
             `, [brandId, maxYear]);
             const combos = {};
@@ -3539,12 +3539,12 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
         const { brand1_id, brand2_id } = req.query;
         if (!brand1_id || !brand2_id) return res.status(400).json({ error: 'brand1_id ve brand2_id gerekli' });
 
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_data WHERE year = $1', [maxYear]);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
         const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
         const prevYear = maxYear - 1;
-        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_data');
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
         const minYear = parseInt(minYearRes.rows[0].min_year);
         const years = [];
         for (let y = minYear; y <= maxYear; y++) years.push(y);
@@ -3557,13 +3557,13 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
         const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
 
         // Total market by year+month
-        const marketRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_data GROUP BY year, month`);
+        const marketRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_view GROUP BY year, month`);
         const marketMap = {};
         marketRows.rows.forEach(r => { marketMap[`${r.year}_${r.month}`] = parseInt(r.total); });
 
         async function buildBrandData(brandId) {
             // Yearly+monthly sales
-            const salesRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 GROUP BY year, month ORDER BY year, month`, [brandId]);
+            const salesRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_view WHERE brand_id = $1 GROUP BY year, month ORDER BY year, month`, [brandId]);
             const salesMap = {};
             salesRows.rows.forEach(r => { salesMap[`${r.year}_${r.month}`] = parseInt(r.total); });
 
@@ -3596,22 +3596,22 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
             });
 
             // HP distribution (current year partial)
-            const hpRows = await pool.query(`SELECT hp_range, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY hp_range ORDER BY total DESC`, [brandId, maxYear, maxMonth]);
+            const hpRows = await pool.query(`SELECT hp_range, SUM(quantity) as total FROM sales_view WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY hp_range ORDER BY total DESC`, [brandId, maxYear, maxMonth]);
             const hpDist = hpRows.rows.map(r => ({ hp: r.hp_range, qty: parseInt(r.total) }));
             const hpTotal = hpDist.reduce((s, h) => s + h.qty, 0);
             hpDist.forEach(h => h.pct = hpTotal > 0 ? (h.qty / hpTotal * 100) : 0);
 
             // Category split
-            const catRows = await pool.query(`SELECT category, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY category`, [brandId, maxYear, maxMonth]);
+            const catRows = await pool.query(`SELECT category, SUM(quantity) as total FROM sales_view WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY category`, [brandId, maxYear, maxMonth]);
             const categories = {};
             catRows.rows.forEach(r => { categories[r.category] = parseInt(r.total); });
 
             // Top 5 provinces
-            const provRows = await pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_data s JOIN provinces p ON s.province_id = p.id WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3 GROUP BY p.name ORDER BY total DESC LIMIT 5`, [brandId, maxYear, maxMonth]);
+            const provRows = await pool.query(`SELECT p.name, SUM(s.quantity) as total FROM sales_view s JOIN provinces p ON s.province_id = p.id WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3 GROUP BY p.name ORDER BY total DESC LIMIT 5`, [brandId, maxYear, maxMonth]);
             const topProvinces = provRows.rows.map(r => ({ name: r.name, qty: parseInt(r.total) }));
 
             // Drive type split
-            const driveRows = await pool.query(`SELECT drive_type, SUM(quantity) as total FROM sales_data WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY drive_type`, [brandId, maxYear, maxMonth]);
+            const driveRows = await pool.query(`SELECT drive_type, SUM(quantity) as total FROM sales_view WHERE brand_id = $1 AND year = $2 AND month <= $3 GROUP BY drive_type`, [brandId, maxYear, maxMonth]);
             const driveTypes = {};
             driveRows.rows.forEach(r => { driveTypes[r.drive_type] = parseInt(r.total); });
 
@@ -4055,7 +4055,7 @@ app.post('/api/admin/seed-models', async (req, res) => {
 app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
     try {
         // Determine which year the user wants to view
-        const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year) || 2025;
         const minYear = parseInt(latestRes.rows[0].min_year) || 2019;
         
@@ -4066,13 +4066,13 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         console.log(`TarmakBir Request: req=${req.query.year}, selected=${selectedYear}, range=${minYear}-${maxYear}`);
         
         // Get ALL unique registration years from the database for the rows
-        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_data ORDER BY year DESC');
+        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_view ORDER BY year DESC');
         const compareYears = yearsRes.rows.map(r => parseInt(r.year));
         
         // Get monthly sales for ALL registration years (Strictly filtering for only the last 2 model years per registration year)
         const salesRes = await pool.query(`
             SELECT year, month, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE (year = model_year OR year = model_year + 1)
               AND year = ANY($1)
             GROUP BY year, month
@@ -4082,7 +4082,7 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         // Get Model Year breakdown for the SELECTED year (showing only latest 2 model years)
         const modelYearRes = await pool.query(`
             SELECT model_year, month, SUM(quantity) as total
-            FROM sales_data
+            FROM sales_view
             WHERE year = $1 AND model_year IN ($1, $1 - 1)
             GROUP BY model_year, month
             ORDER BY model_year DESC, month
@@ -4121,14 +4121,14 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
 
 app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_data');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year) || 2025;
         const selectedYear = req.query.year ? parseInt(req.query.year) : maxYear;
 
         // Get sales by brand and month (NO model year filter)
         const salesRes = await pool.query(`
             SELECT b.name as brand_name, s.month, SUM(s.quantity) as total
-            FROM sales_data s
+            FROM sales_view s
             LEFT JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
             GROUP BY b.name, s.month
@@ -4158,7 +4158,7 @@ app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
            brandsData[b][0] = rSum; // Row total stored at index 0
         });
 
-        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_data ORDER BY year DESC');
+        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_view ORDER BY year DESC');
 
         res.json({
             selected_year: selectedYear,
@@ -4245,19 +4245,21 @@ app.post('/api/admin/seed-sales', async (req, res) => {
                         const gear = gearConfigs[Math.floor(Math.random() * gearConfigs.length)];
                         const seasonFactor = [0.6,0.7,1.0,1.2,1.1,0.9,0.8,0.7,0.9,1.0,0.8,0.5][month-1];
                         const qty = Math.max(1, Math.floor((Math.random()*10+2)*weight*seasonFactor));
-                        placeholders.push(`($${paramIdx},$${paramIdx+1},$${paramIdx+2},$${paramIdx+3},$${paramIdx+4},$${paramIdx+5},$${paramIdx+6},$${paramIdx+7},$${paramIdx+8},$${paramIdx+9})`);
-                        values.push(brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear);
-                        paramIdx += 10; salesCount++;
+                        // model_year: ~70% same year, ~30% previous year (realistic distribution)
+                        const modelYear = Math.random() < 0.7 ? year : year - 1;
+                        placeholders.push(`($${paramIdx},$${paramIdx+1},$${paramIdx+2},$${paramIdx+3},$${paramIdx+4},$${paramIdx+5},$${paramIdx+6},$${paramIdx+7},$${paramIdx+8},$${paramIdx+9},$${paramIdx+10})`);
+                        values.push(brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear, modelYear);
+                        paramIdx += 11; salesCount++;
 
                         if (placeholders.length >= 200) {
-                            await pool.query(`INSERT INTO sales_data (brand_id,province_id,year,month,quantity,category,cabin_type,drive_type,hp_range,gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
+                            await pool.query(`INSERT INTO sales_data (brand_id,province_id,year,month,quantity,category,cabin_type,drive_type,hp_range,gear_config,model_year) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
                             placeholders = []; values = []; paramIdx = 1;
                         }
                     }
                 }
             }
             if (placeholders.length > 0) {
-                await pool.query(`INSERT INTO sales_data (brand_id,province_id,year,month,quantity,category,cabin_type,drive_type,hp_range,gear_config) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
+                await pool.query(`INSERT INTO sales_data (brand_id,province_id,year,month,quantity,category,cabin_type,drive_type,hp_range,gear_config,model_year) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`, values);
             }
             console.log(`  ✅ ${brand.slug} seed tamamlandı`);
         }
@@ -4294,6 +4296,15 @@ async function initDB() {
             } catch (e) {
                 // Sütun zaten varsa hata verecek, yoksayıyoruz.
             }
+
+            // Model yılı filtreli view: sadece N ve N-1 model yılı verilerini döndürür
+            // model_year NULL ise (eski veri) kayıt dahil edilir, set ise son 2 model yılı kuralı uygulanır
+            await pool.query(`
+                CREATE OR REPLACE VIEW sales_view AS
+                SELECT * FROM sales_data
+                WHERE model_year IS NULL OR year = model_year OR year = model_year + 1
+            `);
+            console.log('✅ sales_view (model yılı filtreli) oluşturuldu');
         }
 
         // Temel verileri seed et (markalar, iller, planlar, admin)

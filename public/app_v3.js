@@ -161,6 +161,18 @@ function navigateTo(page) {
     document.getElementById('pageTitle').textContent = title;
     document.getElementById('pageSubtitle').textContent = subtitle;
 
+    // Model yılı bilgi notu - analitik sayfalarda göster
+    const noNotePages = ['settings', 'subscription', 'ai-insights', 'weather', 'province', 'models'];
+    const noteEl = document.getElementById('modelYearNote');
+    if (noteEl) {
+        if (noNotePages.includes(page)) {
+            noteEl.style.display = 'none';
+        } else {
+            noteEl.style.display = 'inline';
+            noteEl.innerHTML = '<i class="fas fa-info-circle"></i> Veriler model yılı bazında son 2 yılı (N ve N-1) kapsamaktadır';
+        }
+    }
+
     const loaders = {
         dashboard: loadDashboard,
         historical: loadHistoricalPage,

@@ -1804,4 +1804,20 @@ select {
 .bm-tbl-hp small { color: #64748b; }
 
 /* Tooltip */
+/* Model Year Info Note */
+.model-year-note {
+    display: inline-block;
+    font-size: 10px;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-left: 12px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+    vertical-align: middle;
+}
+.model-year-note i { margin-right: 4px; font-size: 9px; }
+
 .bm-tooltip { background: #1e293b !important; border: 1px solid #334155 !important; color: #e2e8f0 !important; font-size: 12px !important; border-radius: 8px !important; box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important; }
