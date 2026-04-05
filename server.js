@@ -4364,9 +4364,17 @@ app.get('*', (req, res) => {
 // ============================================
 // START SERVER
 // ============================================
-app.listen(PORT, () => {
-    console.log(`🚜 Traktör Sektör Analizi sunucusu ${PORT} portunda çalışıyor`);
-    console.log(`📊 Dashboard: http://localhost:${PORT}`);
+initDB().then(() => {
+    app.listen(PORT, () => {
+        console.log(`🚜 Traktör Sektör Analizi sunucusu ${PORT} portunda çalışıyor`);
+        console.log(`📊 Dashboard: http://localhost:${PORT}`);
+    });
+}).catch(err => {
+    console.error('❌ initDB hatası:', err);
+    // Yine de sunucuyu başlat
+    app.listen(PORT, () => {
+        console.log(`🚜 Sunucu başlatıldı (initDB hatalı) - port ${PORT}`);
+    });
 });
 
 process.on('SIGTERM', async () => {
