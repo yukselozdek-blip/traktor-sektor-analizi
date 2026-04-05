@@ -647,7 +647,7 @@ async function resolveAssistantQuestion(question) {
                 answer: buildMarketOverviewMessage(report),
                 parser: 'built-in', data: report
             };
-        } catch(e) { /* built-in başarısız, text-to-sql denesin */ }
+        } catch (e) { /* built-in başarısız, text-to-sql denesin */ }
     }
 
     // Karşılaştırma
@@ -660,7 +660,7 @@ async function resolveAssistantQuestion(question) {
                 answer: buildBrandCompareMessage(report),
                 parser: 'built-in', data: report
             };
-        } catch(e) { /* fallback */ }
+        } catch (e) { /* fallback */ }
     }
 
     // Tek marka sorgusu
@@ -672,7 +672,7 @@ async function resolveAssistantQuestion(question) {
                 answer: buildBrandExecutiveMessage(report),
                 parser: 'built-in', data: report
             };
-        } catch(e) { /* fallback */ }
+        } catch (e) { /* fallback */ }
     }
 
     // ═══ TEXT-TO-SQL MOTORU (Esnek sorgulama) ═══
@@ -1670,41 +1670,69 @@ app.get('/api/public/whatsapp/webhook', async (req, res) => {
 });
 
 app.post('/api/public/whatsapp/webhook', async (req, res) => {
+    // 1. Meta'ya anında yanıt ver (HTTP 200)
     res.status(200).json({ received: true });
 
     try {
+        // GEÇİCİ LOG: Gelen tüm paketi görelim
+        console.log("📦 Webhook tetiklendi! Gelen Body:", JSON.stringify(req.body, null, 2));
+
         const entry = req.body.entry?.[0];
         const change = entry?.changes?.[0];
         const value = change?.value || {};
         const message = value.messages?.[0];
 
-        if (!message || message.type !== 'text') return;
+        // Eğer mesaj değilse (örn: okundu bilgisi) sessizce çıkma, bize haber ver
+        if (!message) {
+            console.log("⚠️ Bu bir mesaj değil, durum güncellemesi (iletildi/okundu vs).");
+            return;
+        }
+        if (message.type !== 'text') {
+            console.log(`⚠️ Mesaj text formatında değil. Format: ${message.type}`);
+            return;
+        }
 
         const question = message.text?.body?.trim();
         const from = message.from;
         const messageId = message.id;
-        const profileName = value.contacts?.[0]?.profile?.name || null;
+        const profileName = value.contacts?.[0]?.profile?.name || 'Bilinmiyor';
+
         if (!question || !from) return;
 
+        // MESAJI YAKALADIĞIMIZI GÖRELİM
+        console.log(`\n🟢 YENİ MESAJ -> Kimden: ${profileName} (${from}) | Soru: "${question}"\n`);
+
+        // n8n YÖNLENDİRME TESTİ
         try {
-            if (await forwardWhatsAppEventToN8n({
+            console.log("🔄 Soru n8n'e yönlendiriliyor...");
+            const n8nResult = await forwardWhatsAppEventToN8n({
                 question,
                 from,
                 message_id: messageId,
                 profile_name: profileName
-            })) {
+            });
+
+            if (n8nResult) {
+                console.log("✅ Mesaj başarıyla n8n'e iletildi! Süreç n8n üzerinde devam ediyor.");
                 return;
             }
         } catch (forwardErr) {
-            console.error('WhatsApp webhook n8n forward error, falling back to direct response:', forwardErr.message);
+            console.error('❌ n8n Yönlendirme Hatası (Node.js AI fonksiyona düşecek):', forwardErr.message);
         }
 
+        console.log("🤖 n8n kullanılamadı, doğrudan Node.js AI (resolveAssistantQuestion) devreye giriyor...");
         const result = await resolveAssistantQuestion(question);
+
+        console.log("📤 AI Cevabı hazırlandı, WhatsApp'a geri gönderiliyor...");
         await sendWhatsAppTextMessage(from, result.answer || 'Sorunuz islenemedi.');
+        console.log("✅ AI Cevabı gönderildi!");
+
     } catch (err) {
-        console.error('WhatsApp webhook error:', err);
+        console.error('❌ WhatsApp Webhook İç Hatası:', err);
     }
 });
+
+
 
 // ============================================
 // ============================================
@@ -3298,7 +3326,7 @@ app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
         });
 
         // Compute avg HP per province
-        const hpMidpoints = {'1-39':25,'40-49':45,'50-54':52,'55-59':57,'60-69':65,'70-79':75,'80-89':85,'90-99':95,'100-109':105,'110-119':115,'120+':130};
+        const hpMidpoints = { '1-39': 25, '40-49': 45, '50-54': 52, '55-59': 57, '60-69': 65, '70-79': 75, '80-89': 85, '90-99': 95, '100-109': 105, '110-119': 115, '120+': 130 };
 
         const provinces = provRes.rows.map(p => {
             const d = provData[p.id] || { total: 0, bahce: 0, tarla: 0, hp: {}, drive: {}, cabin: {}, gear: {} };
@@ -3514,8 +3542,8 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
         const years = [];
         for (let y = minYear; y <= maxYear; y++) years.push(y);
 
-        const hpMidpoints = {'1-39':25,'40-49':45,'50-54':52,'55-59':57,'60-69':65,'70-79':75,'80-89':85,'90-99':95,'100-109':105,'110-119':115,'120+':130};
-        const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+        const hpMidpoints = { '1-39': 25, '40-49': 45, '50-54': 52, '55-59': 57, '60-69': 65, '70-79': 75, '80-89': 85, '90-99': 95, '100-109': 105, '110-119': 115, '120+': 130 };
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
 
         // Brand info
         const b1 = (await pool.query('SELECT id,name,primary_color,country_of_origin,parent_company FROM brands WHERE id=$1', [brand1_id])).rows[0];
@@ -3735,7 +3763,7 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
         const brand2Res = await pool.query('SELECT id, name, primary_color, secondary_color FROM brands WHERE id = $1', [brand2_id]);
         if (!brand1Res.rows[0] || !brand2Res.rows[0]) return res.status(404).json({ error: 'Marka bulunamadı' });
 
-        const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
 
         // Total market by year+month
         const marketRows = await pool.query(`SELECT year, month, SUM(quantity) as total FROM sales_view GROUP BY year, month`);
@@ -3865,15 +3893,15 @@ app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
             // Brand-specific regional analysis
             const { brandName, provinces, models, totalSales, totalRevenue } = context;
             const topProvStr = (provinces || []).slice(0, 10).map((p, i) =>
-                `${i+1}. ${p.name} (${p.region}): ${p.total} adet, Pazar payı: ${p.marketShareCurr}%, YoY: ${p.yoyGrowth}%, Bahçe: ${(p.bahce/(p.total||1)*100).toFixed(0)}%, Toprak: ${p.soil_type || '-'}, İklim: ${p.climate_zone || '-'}, Ürünler: ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : (p.primary_crops || '-')}, Tahmini Ciro: ${Math.round(p.estimatedRevenue/1000000)}M TL`
+                `${i + 1}. ${p.name} (${p.region}): ${p.total} adet, Pazar payı: ${p.marketShareCurr}%, YoY: ${p.yoyGrowth}%, Bahçe: ${(p.bahce / (p.total || 1) * 100).toFixed(0)}%, Toprak: ${p.soil_type || '-'}, İklim: ${p.climate_zone || '-'}, Ürünler: ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : (p.primary_crops || '-')}, Tahmini Ciro: ${Math.round(p.estimatedRevenue / 1000000)}M TL`
             ).join('\n');
-            const modelStr = (models || []).map(m => `${m.name} (${m.hp}HP, ${m.category}, ${m.price ? Math.round(m.price/1000)+'B TL' : '-'})`).join(', ');
+            const modelStr = (models || []).map(m => `${m.name} (${m.hp}HP, ${m.category}, ${m.price ? Math.round(m.price / 1000) + 'B TL' : '-'})`).join(', ');
 
             userPrompt = `**${brandName}** markası için bölgesel strateji analizi yap.
 
 TOPLAM VERİ:
 - Toplam satış: ${totalSales} adet
-- Tahmini toplam ciro: ${Math.round(totalRevenue/1000000)}M TL
+- Tahmini toplam ciro: ${Math.round(totalRevenue / 1000000)}M TL
 - Model portföyü: ${modelStr}
 
 İL BAZLI VERİLER (Top 10):
@@ -3890,7 +3918,7 @@ ${topProvStr}
         } else if (type === 'regional-index') {
             const { year, provinces: provs } = context;
             const top10 = (provs || []).slice(0, 15).map((p, i) =>
-                `${i+1}. ${p.name} (${p.region}): ${p.total} adet, Bahçe: ${p.bahceRatio?.toFixed(0)}%, Ort.HP: ${p.avgHp}, 4WD: ${p.ratio4wd?.toFixed(0)}%, Mek.İndeks: ${p.mechIndex}, YoY: ${p.yoyGrowth}%, Toprak: ${p.soil_type || '-'}`
+                `${i + 1}. ${p.name} (${p.region}): ${p.total} adet, Bahçe: ${p.bahceRatio?.toFixed(0)}%, Ort.HP: ${p.avgHp}, 4WD: ${p.ratio4wd?.toFixed(0)}%, Mek.İndeks: ${p.mechIndex}, YoY: ${p.yoyGrowth}%, Toprak: ${p.soil_type || '-'}`
             ).join('\n');
 
             userPrompt = `${year} yılı Türkiye traktör sektörü bölgesel mekanizasyon analizi yap.
@@ -3910,8 +3938,8 @@ ${top10}
             const { brand1, brand2, data1, data2, maxYear } = context;
             userPrompt = `**${brand1}** vs **${brand2}** marka karşılaştırma analizi yap.
 
-${brand1}: ${maxYear} satış: ${data1.currPartial} adet, YoY: ${data1.yoyGrowth?.toFixed(1)}%, Pazar payı: ${data1.marketShare?.[maxYear]?.toFixed(1)}%, Ort.Fiyat: ${Math.round(data1.avgPrice/1000)}B TL, Model sayısı: ${data1.models?.length}
-${brand2}: ${maxYear} satış: ${data2.currPartial} adet, YoY: ${data2.yoyGrowth?.toFixed(1)}%, Pazar payı: ${data2.marketShare?.[maxYear]?.toFixed(1)}%, Ort.Fiyat: ${Math.round(data2.avgPrice/1000)}B TL, Model sayısı: ${data2.models?.length}
+${brand1}: ${maxYear} satış: ${data1.currPartial} adet, YoY: ${data1.yoyGrowth?.toFixed(1)}%, Pazar payı: ${data1.marketShare?.[maxYear]?.toFixed(1)}%, Ort.Fiyat: ${Math.round(data1.avgPrice / 1000)}B TL, Model sayısı: ${data1.models?.length}
+${brand2}: ${maxYear} satış: ${data2.currPartial} adet, YoY: ${data2.yoyGrowth?.toFixed(1)}%, Pazar payı: ${data2.marketShare?.[maxYear]?.toFixed(1)}%, Ort.Fiyat: ${Math.round(data2.avgPrice / 1000)}B TL, Model sayısı: ${data2.models?.length}
 
 Şu başlıklarda karşılaştırmalı analiz yap:
 1. **Pazar Konumları**: Her iki markanın güçlü ve zayıf yönleri.
@@ -4239,17 +4267,17 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
         const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year) || 2025;
         const minYear = parseInt(latestRes.rows[0].min_year) || 2019;
-        
+
         // Selected year (the "data year" the user is viewing)
         const requestedYear = req.query.year ? parseInt(req.query.year) : maxYear;
         const selectedYear = !isNaN(requestedYear) ? Math.min(Math.max(requestedYear, minYear), maxYear) : maxYear;
-        
+
         console.log(`TarmakBir Request: req=${req.query.year}, selected=${selectedYear}, range=${minYear}-${maxYear}`);
-        
+
         // Get ALL unique registration years from the database for the rows
         const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_view ORDER BY year DESC');
         const compareYears = yearsRes.rows.map(r => parseInt(r.year));
-        
+
         // Get monthly sales for ALL registration years (Strictly filtering for only the last 2 model years per registration year)
         const salesRes = await pool.query(`
             SELECT year, month, SUM(quantity) as total
@@ -4259,7 +4287,7 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
             GROUP BY year, month
             ORDER BY year DESC, month
         `, [compareYears]);
-        
+
         // Get Model Year breakdown for the SELECTED year (showing only latest 2 model years)
         const modelYearRes = await pool.query(`
             SELECT model_year, month, SUM(quantity) as total
@@ -4334,9 +4362,9 @@ app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
 
         // Compute row totals for brands
         Object.keys(brandsData).forEach(b => {
-           let rSum = 0;
-           for(let i=1; i<=12; i++) rSum += brandsData[b][i];
-           brandsData[b][0] = rSum; // Row total stored at index 0
+            let rSum = 0;
+            for (let i = 1; i <= 12; i++) rSum += brandsData[b][i];
+            brandsData[b][0] = rSum; // Row total stored at index 0
         });
 
         const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_view ORDER BY year DESC');
@@ -4371,16 +4399,16 @@ app.post('/api/admin/reseed-sales', async (req, res) => {
 app.post('/api/admin/trigger-import', authMiddleware, async (req, res) => {
     // Only allow system admins
     if (req.user.role !== 'system_admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
-    
+
     // Don't await synchronously for 2 minutes and risk HTTP timeout, run asynchronously
     const { importExcel } = require('./import-tuik.js');
-    
+
     importExcel().then(result => {
         console.log('Online import finished:', result);
     }).catch(err => {
         console.error('Online import failed:', err);
     });
-    
+
     res.json({ message: 'Veri yükleme/aktarma işlemi arka planda başlatıldı. Yaklaşık 2-3 dakika sürebilir.' });
 });
 
@@ -4424,11 +4452,11 @@ app.post('/api/admin/seed-sales', async (req, res) => {
                         const drive = driveTypes[Math.floor(Math.random() * driveTypes.length)];
                         const hp = hpRanges[Math.floor(Math.random() * hpRanges.length)];
                         const gear = gearConfigs[Math.floor(Math.random() * gearConfigs.length)];
-                        const seasonFactor = [0.6,0.7,1.0,1.2,1.1,0.9,0.8,0.7,0.9,1.0,0.8,0.5][month-1];
-                        const qty = Math.max(1, Math.floor((Math.random()*10+2)*weight*seasonFactor));
+                        const seasonFactor = [0.6, 0.7, 1.0, 1.2, 1.1, 0.9, 0.8, 0.7, 0.9, 1.0, 0.8, 0.5][month - 1];
+                        const qty = Math.max(1, Math.floor((Math.random() * 10 + 2) * weight * seasonFactor));
                         // model_year: ~70% same year, ~30% previous year (realistic distribution)
                         const modelYear = Math.random() < 0.7 ? year : year - 1;
-                        placeholders.push(`($${paramIdx},$${paramIdx+1},$${paramIdx+2},$${paramIdx+3},$${paramIdx+4},$${paramIdx+5},$${paramIdx+6},$${paramIdx+7},$${paramIdx+8},$${paramIdx+9},$${paramIdx+10})`);
+                        placeholders.push(`($${paramIdx},$${paramIdx + 1},$${paramIdx + 2},$${paramIdx + 3},$${paramIdx + 4},$${paramIdx + 5},$${paramIdx + 6},$${paramIdx + 7},$${paramIdx + 8},$${paramIdx + 9},$${paramIdx + 10})`);
                         values.push(brand.id, prov.id, year, month, qty, cat, cabin, drive, hp, gear, modelYear);
                         paramIdx += 11; salesCount++;
 
@@ -4476,7 +4504,7 @@ async function initDB() {
         // model_year NULL ise (eski veri) kayıt dahil edilir, set ise son 2 model yılı kuralı uygulanır
         try {
             await pool.query('ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER');
-        } catch(e) { /* zaten var */ }
+        } catch (e) { /* zaten var */ }
         await pool.query(`
             CREATE OR REPLACE VIEW sales_view AS
             SELECT * FROM sales_data
