@@ -461,6 +461,157 @@ async function buildBrandComparisonAnswer(brands, year, latestPeriod) {
     };
 }
 
+// ============================================
+// TEXT-TO-SQL AI ENGINE (Esnek Sorgulama)
+// ============================================
+const DB_SCHEMA_PROMPT = `
+Sen Türkiye traktör sektörü veritabanı uzmanısın. PostgreSQL sorguları yazarsın.
+SADECE SELECT sorguları yaz. INSERT/UPDATE/DELETE/DROP/ALTER YASAK.
+
+VERİTABANI ŞEMASI:
+-- sales_view: Ana satış verisi (model yılı N ve N-1 filtreli)
+-- Sütunlar: brand_id INT, province_id INT, year INT, month INT (1-12), quantity INT,
+--   category VARCHAR (tarla/bahce), cabin_type VARCHAR (kabinli/rollbar),
+--   drive_type VARCHAR (2WD/4WD), hp_range VARCHAR, gear_config VARCHAR,
+--   model_year INT
+
+-- brands: id SERIAL, name VARCHAR, slug VARCHAR, primary_color VARCHAR, country_of_origin VARCHAR, parent_company VARCHAR
+-- provinces: id SERIAL, name VARCHAR, plate_code VARCHAR, region VARCHAR, latitude DECIMAL, longitude DECIMAL,
+--   population INT, agricultural_area_hectare DECIMAL, primary_crops TEXT[], soil_type VARCHAR,
+--   climate_zone VARCHAR, annual_rainfall_mm DECIMAL, avg_temperature DECIMAL
+-- tractor_models: id SERIAL, brand_id INT (FK brands), model_name VARCHAR, horsepower DECIMAL,
+--   price_list_tl DECIMAL, category VARCHAR, cabin_type VARCHAR, drive_type VARCHAR, gear_config VARCHAR
+
+HP SEGMENTLERI: '1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'
+KATEGORİLER: 'tarla','bahce'
+ÇEKIS: '2WD','4WD'
+KABİN: 'kabinli','rollbar'
+VİTES: '8+2','8+8','12+12','16+16','32+32','CVT'
+
+KURALLAR:
+1. Satış sorguları için DAİMA "FROM sales_view" kullan (sales_data değil!)
+2. Marka ismi gerekiyorsa brands tablosu ile JOIN yap
+3. İl ismi gerekiyorsa provinces tablosu ile JOIN yap
+4. Sonuçları LIMIT 20 ile sınırla (çok büyük sonuç seti önle)
+5. Türkçe karakter uyumu: Marka isimleri İngilizce (NEW HOLLAND, JOHN DEERE vb.)
+6. İl isimleri Türkçe büyük harf (İSTANBUL, ANKARA vb.) - ILIKE kullan
+7. SUM(quantity) ile satış toplamı al
+8. Yıl belirtilmemişse en son veri yılını kullan
+9. SADECE geçerli SQL döndür, açıklama ekleme
+`;
+
+async function textToSql(question) {
+    if (!GROQ_API_KEY) return null;
+
+    const latestPeriod = await getLatestSalesPeriod();
+    const systemPrompt = DB_SCHEMA_PROMPT + `\nGüncel en son yıl: ${latestPeriod?.year || 2025}, en son ay: ${latestPeriod?.month || 5}`;
+
+    const userPrompt = `Kullanıcı sorusu: "${question}"
+
+Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
+Sadece SQL kodu döndür, başka bir şey yazma. Açıklama ekleme.
+Eğer soru veritabanıyla ilgili değilse veya SQL yazılamıyorsa sadece "UNSUPPORTED" yaz.`;
+
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+        body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.05,
+            max_tokens: 800
+        })
+    });
+
+    if (!groqRes.ok) {
+        console.error('Text-to-SQL Groq error:', groqRes.status);
+        return null;
+    }
+
+    const data = await groqRes.json();
+    let sql = data.choices?.[0]?.message?.content?.trim();
+    if (!sql || sql === 'UNSUPPORTED') return null;
+
+    // SQL temizleme - markdown code block varsa çıkar
+    sql = sql.replace(/^```sql\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    // Sadece ilk sorguyu al (birden fazla varsa)
+    sql = sql.split(';')[0].trim();
+
+    return sql;
+}
+
+function isSafeSql(sql) {
+    const upper = sql.toUpperCase();
+    const dangerous = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'COPY'];
+    for (const keyword of dangerous) {
+        // Check it's a standalone keyword, not part of a column name
+        const regex = new RegExp(`(^|\\s|;)${keyword}(\\s|$|;)`, 'i');
+        if (regex.test(upper)) return false;
+    }
+    if (!upper.trimStart().startsWith('SELECT')) return false;
+    return true;
+}
+
+async function executeSafeSql(sql) {
+    if (!isSafeSql(sql)) {
+        return { error: 'Güvenlik: Sadece SELECT sorguları çalıştırılabilir.' };
+    }
+
+    // Timeout ile çalıştır (5 saniye)
+    try {
+        const result = await Promise.race([
+            pool.query(sql),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Sorgu zaman asimi (5s)')), 5000))
+        ]);
+        return { rows: result.rows, rowCount: result.rowCount, fields: result.fields?.map(f => f.name) };
+    } catch (err) {
+        return { error: `SQL hatası: ${err.message}` };
+    }
+}
+
+async function interpretResults(question, sql, result) {
+    if (!GROQ_API_KEY) return null;
+
+    const dataPreview = JSON.stringify(result.rows.slice(0, 15), null, 0);
+    const systemPrompt = `Sen kıdemli bir traktör sektörü veri analistisin. 20+ yıl deneyimin var.
+Kullanıcının WhatsApp üzerinden sorduğu soruyu, veritabanından dönen sonuçlarla birlikte cevapla.
+
+KURALLAR:
+1. Kısa, öz ve profesyonel cevap ver (WhatsApp mesajı, max 500 karakter)
+2. Sayıları Türkçe formatta yaz (nokta ile binlik ayracı: 1.234)
+3. Yüzdeleri virgüllü yaz (%12,5)
+4. Sektörel yorum ekle (kısa, 1-2 cümle)
+5. Emoji kullanabilirsin (📊 🏆 📈 📉 🚜)
+6. Eğer veri yoksa bunu belirt
+7. Karşılaştırma varsa farkı ve trendi vurgula`;
+
+    const userPrompt = `Soru: "${question}"
+SQL: ${sql}
+Toplam satır: ${result.rowCount}
+Sonuç (ilk 15): ${dataPreview}`;
+
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+        body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.3,
+            max_tokens: 600
+        })
+    });
+
+    if (!groqRes.ok) return null;
+    const data = await groqRes.json();
+    return data.choices?.[0]?.message?.content?.trim() || null;
+}
+
 async function resolveAssistantQuestion(question) {
     const [brands, latestPeriod] = await Promise.all([
         getBrandCatalog(),
@@ -468,88 +619,118 @@ async function resolveAssistantQuestion(question) {
     ]);
 
     if (!latestPeriod) {
+        return { ok: false, answer: 'Henuz satis verisi bulunmuyor.', intent: 'no_data' };
+    }
+
+    // Yardım komutu
+    const normalizedQ = normalizeSearchText(question);
+    if (['yardim', 'help', 'komutlar', 'neler sorabilirm', 'merhaba', 'selam'].some(k => normalizedQ.includes(k))) {
         return {
-            ok: false,
-            answer: 'Henuz satis verisi bulunmuyor. Once veritabanina satis kaydi aktarilmali.',
-            intent: 'no_data'
+            ok: true, intent: 'help',
+            answer: `🚜 *Traktör Sektör AI Asistan*\n\nBana her türlü soru sorabilirsiniz:\n\n📊 "2024 yılında en çok satan 5 marka"\n🏆 "New Holland ile John Deere karşılaştır"\n📈 "Konya'da hangi HP segmenti çok satıyor?"\n🗺️ "Ege bölgesinde 4WD oranı nedir?"\n💰 "En pahalı 10 traktör modeli"\n🌾 "Bahçe traktörlerinde lider marka"\n📉 "2023-2024 pazar büyüme oranı"\n\nDoğal dilde soru sorun, ben veritabanından analiz yapayım!`
         };
     }
 
+    // İlk deneme: Mevcut built-in intent'ler (hızlı, özel formatlanmış)
     const years = extractYears(question);
     const heuristicBrands = findBrandsInQuestion(question, brands);
     const groqQuery = await inferSalesQueryWithGroq(question, brands, latestPeriod);
     const targetYear = groqQuery?.year || years[0] || latestPeriod.year;
     const matchedBrands = groqQuery?.brands?.length ? groqQuery.brands : heuristicBrands;
-    const compareMode = groqQuery?.intent
-        ? groqQuery.intent === 'brand_year_compare'
-        : isComparisonQuestion(question, matchedBrands);
 
-    if (groqQuery?.intent === 'market_overview' || (!matchedBrands.length && /pazar|market|lider mark|genel ozet|özet|ozet|top marka|hp/i.test(question))) {
-        const report = await buildMarketOverviewData(targetYear, latestPeriod);
-        return {
-            ok: true,
-            intent: 'market_overview',
-            answer: buildMarketOverviewMessage(report),
-            parser: groqQuery?.intent ? 'groq' : 'rules',
-            report_url: getPublicUrl(`/public/reports/market?year=${targetYear}`),
-            data: report
-        };
-    }
-
-    if (compareMode) {
-        if (matchedBrands.length < 2) {
+    // Market overview
+    if (groqQuery?.intent === 'market_overview' || (!matchedBrands.length && /pazar|market|lider mark|genel ozet|özet|ozet|top marka/i.test(question))) {
+        try {
+            const report = await buildMarketOverviewData(targetYear, latestPeriod);
             return {
-                ok: false,
-                answer: 'Karsilastirma icin iki marka belirtin. Ornek: "2023 yili Tumosan ile Basak karsilastir".',
-                intent: 'brand_year_compare',
-                parser: groqQuery?.intent ? 'groq' : 'rules'
+                ok: true, intent: 'market_overview',
+                answer: buildMarketOverviewMessage(report),
+                parser: 'built-in', data: report
             };
-        }
+        } catch(e) { /* built-in başarısız, text-to-sql denesin */ }
+    }
 
-        const report = await buildBrandCompareExecutiveData(matchedBrands.slice(0, 2), targetYear, latestPeriod);
+    // Karşılaştırma
+    const compareMode = groqQuery?.intent === 'brand_year_compare' || isComparisonQuestion(question, matchedBrands);
+    if (compareMode && matchedBrands.length >= 2) {
+        try {
+            const report = await buildBrandCompareExecutiveData(matchedBrands.slice(0, 2), targetYear, latestPeriod);
+            return {
+                ok: true, intent: 'brand_year_compare',
+                answer: buildBrandCompareMessage(report),
+                parser: 'built-in', data: report
+            };
+        } catch(e) { /* fallback */ }
+    }
+
+    // Tek marka sorgusu
+    if (groqQuery?.intent === 'brand_year_total' && matchedBrands.length === 1) {
+        try {
+            const report = await buildBrandExecutiveData(matchedBrands[0], targetYear, latestPeriod);
+            return {
+                ok: true, intent: 'brand_year_total',
+                answer: buildBrandExecutiveMessage(report),
+                parser: 'built-in', data: report
+            };
+        } catch(e) { /* fallback */ }
+    }
+
+    // ═══ TEXT-TO-SQL MOTORU (Esnek sorgulama) ═══
+    console.log(`🤖 Text-to-SQL aktif: "${question}"`);
+    const sql = await textToSql(question);
+    if (!sql) {
         return {
-            ok: true,
-            intent: 'brand_year_compare',
-            answer: buildBrandCompareMessage(report),
-            question,
-            report_url: getPublicUrl(`/public/reports/compare?brand1=${encodeURIComponent(report.first.brand.slug)}&brand2=${encodeURIComponent(report.second.brand.slug)}&year=${targetYear}`),
-            parser: groqQuery?.intent ? 'groq' : 'rules',
-            used_default_year: years.length === 0,
-            available_latest_year: latestPeriod.year,
-            available_latest_month: latestPeriod.month,
-            data: report
+            ok: false, intent: 'unsupported',
+            answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak örnek sorular görebilirsiniz.'
         };
     }
 
-    if (groqQuery?.intent === 'unsupported') {
+    console.log(`📝 Üretilen SQL: ${sql}`);
+    const result = await executeSafeSql(sql);
+    if (result.error) {
+        console.error(`❌ SQL hata: ${result.error}`);
+        // Hata durumunda kullanıcıya teknik detay gösterme
         return {
-            ok: false,
-            answer: 'Bu soruyu anladim ancak su an sadece tek marka yillik satis ve iki marka yillik karsilastirma cevaplayabiliyorum.',
-            intent: 'unsupported',
-            parser: 'groq'
+            ok: false, intent: 'sql_error',
+            answer: 'Sorgunuz işlenirken bir hata oluştu. Lütfen sorunuzu farklı şekilde ifade edin.'
         };
     }
 
-    if (matchedBrands.length === 0) {
+    if (!result.rows || result.rows.length === 0) {
         return {
-            ok: false,
-            answer: buildUsageAnswer(),
-            intent: 'unknown'
+            ok: true, intent: 'text_to_sql',
+            answer: '📊 Sorgunuz için veri bulunamadı. Farklı bir yıl, marka veya kriter deneyebilirsiniz.',
+            sql
         };
     }
 
-    const report = await buildBrandExecutiveData(matchedBrands[0], targetYear, latestPeriod);
+    // AI ile sonuçları yorumla
+    const interpretation = await interpretResults(question, sql, result);
+    if (interpretation) {
+        return {
+            ok: true, intent: 'text_to_sql',
+            answer: interpretation,
+            parser: 'text-to-sql',
+            sql,
+            rowCount: result.rowCount
+        };
+    }
+
+    // AI yorumlama başarısız olursa ham veriyi formatla
+    const fields = result.fields || Object.keys(result.rows[0] || {});
+    let plainAnswer = `📊 Sorgu sonucu (${result.rowCount} satır):\n\n`;
+    result.rows.slice(0, 10).forEach((row, i) => {
+        const vals = fields.map(f => `${f}: ${row[f] != null ? row[f] : '-'}`).join(' | ');
+        plainAnswer += `${i + 1}. ${vals}\n`;
+    });
+    if (result.rowCount > 10) plainAnswer += `\n... ve ${result.rowCount - 10} satır daha`;
+
     return {
-        ok: true,
-        intent: 'brand_year_total',
-        answer: buildBrandExecutiveMessage(report),
-        question,
-        report_url: getPublicUrl(`/public/reports/brand?brand=${encodeURIComponent(report.brand.slug)}&year=${targetYear}`),
-        parser: groqQuery?.intent ? 'groq' : 'rules',
-        used_default_year: years.length === 0,
-        available_latest_year: latestPeriod.year,
-        available_latest_month: latestPeriod.month,
-        data: report
+        ok: true, intent: 'text_to_sql',
+        answer: plainAnswer,
+        parser: 'text-to-sql-raw',
+        sql,
+        rowCount: result.rowCount
     };
 }
 

@@ -360,7 +360,58 @@ Tüm satış verisini silip yeniden oluşturur. `model_year` dahil (~70% aynı y
 
 ---
 
-## 12. YAPILMAMASI GEREKENLER (YASAK LİSTESİ)
+## 12. WHATSAPP AI ASİSTAN (TEXT-TO-SQL)
+
+### 12.1 Mimari
+WhatsApp Business API → Webhook (`/webhook/whatsapp`) → Groq AI (Llama 3.3 70B) → PostgreSQL → AI Yorumlama → WhatsApp Yanıt
+
+### 12.2 İşleyiş Zinciri
+1. **Doğal Dil Sorusu** → WhatsApp'tan gelir
+2. **textToSql(question)** → Groq AI, veritabanı şemasını (`DB_SCHEMA_PROMPT`) bilerek SQL üretir
+3. **isSafeSql(sql)** → Güvenlik kontrolü: sadece `SELECT` izinli; `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `TRUNCATE` yasaklı
+4. **executeSafeSql(sql)** → 5 saniye timeout ile çalıştırır, maks 20 satır (`LIMIT 20`)
+5. **interpretResults(question, sql, result)** → Groq AI ham veriyi yorumlar, sektörel analiz ve kısa yorum ekler
+6. **WhatsApp Yanıt** → Kullanıcıya doğal dilde gönderilir
+
+### 12.3 Güvenlik Katmanları
+| Katman | Kural |
+|--------|-------|
+| SQL Doğrulama | Sadece `SELECT` komutları izinli |
+| Yasaklı Kelimeler | `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `TRUNCATE`, `GRANT`, `REVOKE` |
+| Timeout | 5.000ms (5 saniye) |
+| Satır Limiti | Maksimum 20 satır döner |
+| Hata Yönetimi | SQL hatası kullanıcıya "Teknik hata" olarak döner, detay loglanır |
+
+### 12.4 Yerleşik Komutlar (Built-in Intents)
+- `yardım` / `help` / `merhaba` → Asistan yetenek listesi
+- `toplam satış` → Toplam adet (yıl bazlı)
+- `en çok satan marka` → Top 5 marka
+- `en çok satan il` → Top 5 il
+- `hp dağılımı` → HP segment bazlı adet
+- **Diğer tüm sorular** → Text-to-SQL fallback
+
+### 12.5 Ortam Değişkenleri
+| Değişken | Açıklama |
+|----------|----------|
+| `WHATSAPP_VERIFY_TOKEN` | Meta webhook doğrulama tokeni |
+| `WHATSAPP_ACCESS_TOKEN` | Meta Graph API erişim tokeni |
+| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp iş telefon numarası ID |
+| `GROQ_API_KEY` | Groq API anahtarı (Llama 3.3 70B) |
+| `WHATSAPP_QUERY_API_KEY` | Dahili sorgu API güvenlik anahtarı |
+
+### 12.6 Endpoint'ler
+| Yol | Metod | Açıklama |
+|-----|-------|----------|
+| `/webhook/whatsapp` | GET | Meta webhook doğrulama (verify token) |
+| `/webhook/whatsapp` | POST | Gelen mesaj işleme + AI yanıt |
+| `/api/whatsapp/query` | POST | Dahili API (API key ile) - doğrudan soru gönderme |
+
+### 12.7 DB_SCHEMA_PROMPT
+Groq AI'ya gönderilen prompt, veritabanının tam şemasını (tablolar, sütunlar, ilişkiler, örnek değerler) içerir. Bu sayede AI doğru SQL üretir. Şema güncellendiğinde `DB_SCHEMA_PROMPT` de güncellenmelidir.
+
+---
+
+## 13. YAPILMAMASI GEREKENLER (YASAK LİSTESİ)
 
 1. `FROM sales_data` kullanarak analitik sorgu yazmak (sadece `FROM sales_view`)
 2. HP segment aralıklarını değiştirmek
@@ -374,6 +425,8 @@ Tüm satış verisini silip yeniden oluşturur. `model_year` dahil (~70% aynı y
 10. React/Vue/Angular framework eklemek
 11. Veritabanına elle INSERT atmak (import-tuik.js kullanılmalı)
 12. `railway up` yerine `git push` ile deploy beklemek
+13. WhatsApp Text-to-SQL'de `SELECT` dışında SQL komutu izin vermek
+14. `DB_SCHEMA_PROMPT`'u veritabanı şeması değişince güncellememek
 
 ---
 
