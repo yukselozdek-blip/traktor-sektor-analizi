@@ -122,6 +122,7 @@ function navigateTo(page) {
     if (leafletMap) { leafletMap.remove(); leafletMap = null; geoJsonLayer = null; }
     if (mapFullInstance) { mapFullInstance.remove(); mapFullInstance = null; mapFullGeoJson = null; }
     if (riMapInstance) { riMapInstance.remove(); riMapInstance = null; }
+    if (_bmMap) { _bmMap.remove(); _bmMap = null; }
 
     const titles = {
         dashboard: ['Dashboard', 'Genel Bakış'],
@@ -3438,6 +3439,422 @@ function fmtPrice(n) {
     return n.toLocaleString('tr-TR') + ' ₺';
 }
 function fmtPct(n, dec = 1) { return n != null ? n.toFixed(dec) + '%' : '-'; }
+
+// ============================================
+// BENCHMARK PAGE - 4 Katmanlı Teknik Kıyaslama
+// ============================================
+let _bmMap = null;
+async function loadBenchmarkPage() {
+    try {
+        if (!allBrands || allBrands.length === 0) allBrands = await API.getBrands();
+        const b1Id = window._bm_brand1 || (allBrands[0]?.id);
+        const b2Id = window._bm_brand2 || (allBrands[1]?.id || allBrands[0]?.id);
+
+        try { await API.seedModels(); } catch(e) {}
+        const data = await API.getBenchmark(b1Id, b2Id);
+        if (!data) return;
+
+        const { brand1, brand2, years, max_year, max_month, prev_year, mktYearly, dominanceMap, mktHp } = data;
+        const d1 = brand1.data, d2 = brand2.data;
+        const monthNames = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
+        const hpOrder = ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+        const c1 = brand1.primary_color || '#3b82f6';
+        const c2 = brand2.primary_color || '#ef4444';
+
+        let b1Opts = '', b2Opts = '';
+        allBrands.forEach(b => {
+            b1Opts += `<option value="${b.id}" ${b.id == b1Id ? 'selected' : ''}>${b.name}</option>`;
+            b2Opts += `<option value="${b.id}" ${b.id == b2Id ? 'selected' : ''}>${b.name}</option>`;
+        });
+
+        // ── KATMAN 1: SCORECARD DATA ──
+        const sc = [
+            { icon:'fas fa-horse-head', label:'Ort. Beygir Gücü', v1: d1.avgHp + ' HP', v2: d2.avgHp + ' HP', w: d1.avgHp >= d2.avgHp ? 1 : 2 },
+            { icon:'fas fa-coins', label:'Birim Güç Maliyeti (₺/HP)', v1: d1.costPerHp > 0 ? fmtNum(Math.round(d1.costPerHp)) + ' ₺' : 'N/A', v2: d2.costPerHp > 0 ? fmtNum(Math.round(d2.costPerHp)) + ' ₺' : 'N/A', w: (d1.costPerHp > 0 && d2.costPerHp > 0) ? (d1.costPerHp <= d2.costPerHp ? 1 : 2) : 0 },
+            { icon:'fas fa-tractor', label:'Toplam Satış (' + max_year + ')', v1: fmtNum(d1.yearly[max_year] || d1.currPartial), v2: fmtNum(d2.yearly[max_year] || d2.currPartial), w: (d1.currPartial) >= (d2.currPartial) ? 1 : 2 },
+            { icon:'fas fa-chart-pie', label:'Pazar Payı (' + max_year + ')', v1: fmtPct(brand1.mktShare[max_year]), v2: fmtPct(brand2.mktShare[max_year]), w: (brand1.mktShare[max_year] || 0) >= (brand2.mktShare[max_year] || 0) ? 1 : 2 },
+            { icon:'fas fa-tag', label:'Ort. Liste Fiyatı', v1: d1.avgPrice > 0 ? fmtPrice(d1.avgPrice) : 'N/A', v2: d2.avgPrice > 0 ? fmtPrice(d2.avgPrice) : 'N/A', w: 0 },
+            { icon:'fas fa-boxes', label:'Model Sayısı', v1: d1.models.length, v2: d2.models.length, w: d1.models.length >= d2.models.length ? 1 : 2 },
+            { icon:'fas fa-arrow-up', label:'YoY Büyüme (İlk ' + max_month + ' Ay)', v1: fmtPct(d1.yoyPartial), v2: fmtPct(d2.yoyPartial), w: d1.yoyPartial >= d2.yoyPartial ? 1 : 2 },
+            { icon:'fas fa-map-marked-alt', label:'Aktif İl Sayısı', v1: d1.provinces.length, v2: d2.provinces.length, w: d1.provinces.length >= d2.provinces.length ? 1 : 2 }
+        ];
+        let scoreHtml = '';
+        sc.forEach(s => {
+            scoreHtml += `<div class="bm-sc-card">
+                <div class="bm-sc-icon"><i class="${s.icon}"></i></div>
+                <div class="bm-sc-label">${s.label}</div>
+                <div class="bm-sc-vals">
+                    <span class="bm-sc-v ${s.w===1?'bm-win':''}" style="color:${c1}">${s.v1}</span>
+                    <span class="bm-sc-vs">vs</span>
+                    <span class="bm-sc-v ${s.w===2?'bm-win':''}" style="color:${c2}">${s.v2}</span>
+                </div>
+            </div>`;
+        });
+
+        // ── KATMAN 1: SEGMENT PAYI (HP bazlı bar chart data) ──
+        const segLabels = [], segD1 = [], segD2 = [];
+        hpOrder.forEach(hp => {
+            segLabels.push(hp);
+            segD1.push((brand1.segShare[hp] || 0).toFixed(1));
+            segD2.push((brand2.segShare[hp] || 0).toFixed(1));
+        });
+
+        // ── KATMAN 1: BAHÇE/TARLA/4WD/KABİN ──
+        const t1 = d1.totalQty || 1, t2 = d2.totalQty || 1;
+        const feats = [
+            { label: 'Tarla', v1: ((d1.catDist.tarla||0)/t1*100), v2: ((d2.catDist.tarla||0)/t2*100), color: '#22c55e' },
+            { label: 'Bahçe', v1: ((d1.catDist.bahce||0)/t1*100), v2: ((d2.catDist.bahce||0)/t2*100), color: '#f59e0b' },
+            { label: '4WD', v1: ((d1.driveDist['4WD']||0)/t1*100), v2: ((d2.driveDist['4WD']||0)/t2*100), color: '#3b82f6' },
+            { label: 'Kabinli', v1: ((d1.cabinDist.kabinli||0)/t1*100), v2: ((d2.cabinDist.kabinli||0)/t2*100), color: '#8b5cf6' }
+        ];
+        let featHtml = '';
+        feats.forEach(f => {
+            featHtml += `<div class="bm-feat-row">
+                <div class="bm-feat-bar-wrap">
+                    <div class="bm-feat-bar" style="width:${f.v1}%;background:${c1}">${f.v1.toFixed(0)}%</div>
+                </div>
+                <div class="bm-feat-label">${f.label}</div>
+                <div class="bm-feat-bar-wrap bm-feat-right">
+                    <div class="bm-feat-bar" style="width:${f.v2}%;background:${c2}">${f.v2.toFixed(0)}%</div>
+                </div>
+            </div>`;
+        });
+
+        // ── KATMAN 2: HP vs Fiyat scatter data ──
+        const scatterD1 = d1.models.filter(m => m.price > 0).map(m => ({ x: m.hp, y: m.price, name: m.name }));
+        const scatterD2 = d2.models.filter(m => m.price > 0).map(m => ({ x: m.hp, y: m.price, name: m.name }));
+
+        // ── KATMAN 3: YoY tablo ──
+        let yoyHtml = '<tr><th>Yıl</th>';
+        years.forEach(y => yoyHtml += `<th>${y}</th>`);
+        yoyHtml += '</tr>';
+        yoyHtml += `<tr style="color:${c1}"><td>${brand1.name}</td>`;
+        years.forEach(y => { const v = d1.yoyByYear[y]; yoyHtml += `<td class="${v>0?'bm-up':v<0?'bm-down':''}">${y===years[0]?'-':fmtPct(v)}</td>`; });
+        yoyHtml += '</tr>';
+        yoyHtml += `<tr style="color:${c2}"><td>${brand2.name}</td>`;
+        years.forEach(y => { const v = d2.yoyByYear[y]; yoyHtml += `<td class="${v>0?'bm-up':v<0?'bm-down':''}">${y===years[0]?'-':fmtPct(v)}</td>`; });
+        yoyHtml += '</tr>';
+
+        // ── KATMAN 3: Pazar payı trendi chart data ──
+        const shareLabels = years.map(String);
+        const shareD1 = years.map(y => (brand1.mktShare[y] || 0).toFixed(2));
+        const shareD2 = years.map(y => (brand2.mktShare[y] || 0).toFixed(2));
+
+        // ── KATMAN 3: Aylık trend chart data ──
+        const mLabels = [], mD1 = [], mD2 = [];
+        for (let m = 1; m <= max_month; m++) { mLabels.push(monthNames[m-1]); mD1.push(d1.monthly[m]||0); mD2.push(d2.monthly[m]||0); }
+
+        // ── KATMAN 4: Fiyat karşılaştırma tablosu ──
+        const priceHpRanges = {};
+        const toHpRange = hp => hp<40?'1-39':hp<50?'40-49':hp<55?'50-54':hp<60?'55-59':hp<70?'60-69':hp<80?'70-79':hp<90?'80-89':hp<100?'90-99':hp<110?'100-109':hp<120?'110-119':'120+';
+        d1.models.filter(m=>m.price>0).forEach(m => { const hr=toHpRange(m.hp); if(!priceHpRanges[hr])priceHpRanges[hr]={m1:[],m2:[]}; priceHpRanges[hr].m1.push(m); });
+        d2.models.filter(m=>m.price>0).forEach(m => { const hr=toHpRange(m.hp); if(!priceHpRanges[hr])priceHpRanges[hr]={m1:[],m2:[]}; priceHpRanges[hr].m2.push(m); });
+
+        let priceRows = '';
+        hpOrder.forEach(hr => {
+            const g = priceHpRanges[hr]; if(!g) return;
+            const maxLen = Math.max(g.m1.length, g.m2.length);
+            for (let i = 0; i < maxLen; i++) {
+                const p1=g.m1[i], p2=g.m2[i];
+                const cheaper1 = p1&&p2&&p1.price<=p2.price;
+                const cheaper2 = p1&&p2&&p2.price<=p1.price;
+                priceRows += `<tr>
+                    <td class="bm-mdl">${p1?`<b>${p1.name}</b><br><small>${p1.hp} HP</small>`:'-'}</td>
+                    <td class="bm-prc ${cheaper1?'bm-cheaper':''}">${p1?fmtPrice(p1.price):'-'}</td>
+                    <td class="bm-hp-mid">${i===0?hr+' HP':''}</td>
+                    <td class="bm-prc ${cheaper2?'bm-cheaper':''}">${p2?fmtPrice(p2.price):'-'}</td>
+                    <td class="bm-mdl">${p2?`<b>${p2.name}</b><br><small>${p2.hp} HP</small>`:'-'}</td>
+                </tr>`;
+            }
+        });
+
+        // ── KATMAN 2: Dominance map province list ──
+        let domRows = '';
+        const domSorted = [...dominanceMap].sort((a,b) => (b.s1+b.s2) - (a.s1+a.s2));
+        domSorted.slice(0,25).forEach(p => {
+            const cls = p.dominance === 'brand1' ? 'bm-dom1' : p.dominance === 'brand2' ? 'bm-dom2' : 'bm-dom-n';
+            domRows += `<tr class="${cls}"><td>${p.name}</td><td>${fmtNum(p.s1)}</td><td>${fmtNum(p.s2)}</td><td>${fmtNum(p.s1-p.s2)}</td></tr>`;
+        });
+
+        // ── KATMAN 4: Özellik Kesişimi (Venn verisi) ──
+        const f1 = brand1.features, f2 = brand2.features;
+        const vennKeys = ['4WD_kabinli_tarla','4WD_kabinli_bahce','4WD_rollbar_tarla','4WD_rollbar_bahce','2WD_kabinli_tarla','2WD_kabinli_bahce','2WD_rollbar_tarla','2WD_rollbar_bahce'];
+        const vennLabels = ['4WD+Kabin+Tarla','4WD+Kabin+Bahçe','4WD+Rollbar+Tarla','4WD+Rollbar+Bahçe','2WD+Kabin+Tarla','2WD+Kabin+Bahçe','2WD+Rollbar+Tarla','2WD+Rollbar+Bahçe'];
+        let vennHtml = '';
+        vennKeys.forEach((k,i) => {
+            const v1 = f1.combos[k]||0, v2 = f2.combos[k]||0;
+            const p1 = f1.total>0?(v1/f1.total*100).toFixed(1):0, p2 = f2.total>0?(v2/f2.total*100).toFixed(1):0;
+            if (v1===0 && v2===0) return;
+            vennHtml += `<tr><td>${vennLabels[i]}</td><td style="color:${c1}">${fmtNum(v1)} <small>(${p1}%)</small></td><td style="color:${c2}">${fmtNum(v2)} <small>(${p2}%)</small></td></tr>`;
+        });
+
+        // ── HP segment detail table ──
+        let hpDetHtml = '';
+        hpOrder.forEach(hp => {
+            const h1 = d1.hpSegments.find(s=>s.hp===hp)||{qty:0,pct:0};
+            const h2 = d2.hpSegments.find(s=>s.hp===hp)||{qty:0,pct:0};
+            const mkt = mktHp[hp]||0;
+            hpDetHtml += `<tr>
+                <td class="bm-hp-l">${hp} HP</td>
+                <td>${fmtNum(mkt)}</td>
+                <td style="color:${c1}"><b>${fmtNum(h1.qty)}</b><br><small>${fmtPct(h1.pct)}</small></td>
+                <td style="color:${c1}"><small>${fmtPct(brand1.segShare[hp])}</small></td>
+                <td style="color:${c2}"><b>${fmtNum(h2.qty)}</b><br><small>${fmtPct(h2.pct)}</small></td>
+                <td style="color:${c2}"><small>${fmtPct(brand2.segShare[hp])}</small></td>
+            </tr>`;
+        });
+
+        // ── BUILD PAGE ──
+        document.getElementById('pageContent').innerHTML = `
+        <div class="bm-container">
+            <!-- BRAND SELECTORS -->
+            <div class="bm-header">
+                <div class="bm-sel" style="border-color:${c1}">
+                    <div class="bm-badge" style="background:${c1}"><i class="fas fa-tractor"></i></div>
+                    <select class="bm-select" onchange="window._bm_brand1=parseInt(this.value);loadBenchmarkPage()">${b1Opts}</select>
+                </div>
+                <div class="bm-vs-badge"><span>VS</span></div>
+                <div class="bm-sel" style="border-color:${c2}">
+                    <select class="bm-select" onchange="window._bm_brand2=parseInt(this.value);loadBenchmarkPage()">${b2Opts}</select>
+                    <div class="bm-badge" style="background:${c2}"><i class="fas fa-tractor"></i></div>
+                </div>
+            </div>
+
+            <!-- KATMAN 1: TEKNİK BENCHMARKING -->
+            <div class="bm-layer">
+                <div class="bm-layer-title"><i class="fas fa-flask"></i> Katman 1: Teknik Benchmarking (Scorecards)</div>
+                <div class="bm-scorecards">${scoreHtml}</div>
+
+                <div class="bm-row-2">
+                    <div class="bm-card bm-card-wide">
+                        <div class="bm-card-title"><i class="fas fa-chart-bar"></i> Segment Bazlı Pazar Payı (%)</div>
+                        <div style="position:relative;height:300px;"><canvas id="bmSegChart"></canvas></div>
+                    </div>
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-sliders-h"></i> Kategori & Donanım Dağılımı</div>
+                        <div class="bm-feat-grid">
+                            <div class="bm-feat-head"><span style="color:${c1}">${brand1.name}</span><span></span><span style="color:${c2}">${brand2.name}</span></div>
+                            ${featHtml}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- KATMAN 2: PAZAR BOŞLUĞU (GAP ANALYSIS) -->
+            <div class="bm-layer">
+                <div class="bm-layer-title"><i class="fas fa-search-location"></i> Katman 2: Pazar Boşluğu & Penetrasyon Analizi</div>
+                <div class="bm-row-2">
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-map"></i> Hakimiyet Haritası
+                            <span class="bm-legend-inline">
+                                <span class="bm-leg" style="background:${c1}"></span>${brand1.name}
+                                <span class="bm-leg" style="background:#64748b"></span>Baş Başa
+                                <span class="bm-leg" style="background:${c2}"></span>${brand2.name}
+                            </span>
+                        </div>
+                        <div id="bmDomMap" style="height:400px;border-radius:8px;background:#0f172a;"></div>
+                    </div>
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-list-ol"></i> İl Bazlı Hakimiyet (Top 25)</div>
+                        <div style="overflow-y:auto;max-height:400px;">
+                            <table class="bm-tbl bm-tbl-dom">
+                                <thead><tr><th>İl</th><th style="color:${c1}">${brand1.name}</th><th style="color:${c2}">${brand2.name}</th><th>Fark</th></tr></thead>
+                                <tbody>${domRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="bm-row-2">
+                    <div class="bm-card bm-card-wide">
+                        <div class="bm-card-title"><i class="fas fa-braille"></i> Fiyat / Performans Dağılımı (Scatter Plot)</div>
+                        <div style="position:relative;height:350px;"><canvas id="bmScatterChart"></canvas></div>
+                    </div>
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-th"></i> HP Segment Detay</div>
+                        <div style="overflow-y:auto;max-height:350px;">
+                            <table class="bm-tbl bm-tbl-hp">
+                                <thead><tr><th>Segment</th><th>Pazar</th><th style="color:${c1}">Adet/Ağırlık</th><th style="color:${c1}">Pay</th><th style="color:${c2}">Adet/Ağırlık</th><th style="color:${c2}">Pay</th></tr></thead>
+                                <tbody>${hpDetHtml}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- KATMAN 3: BÜYÜME & MOMENTUM -->
+            <div class="bm-layer">
+                <div class="bm-layer-title"><i class="fas fa-rocket"></i> Katman 3: Büyüme & Momentum Kıyaslaması</div>
+                <div class="bm-row-2">
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-chart-bar"></i> ${max_year} Aylık Satış Trendi</div>
+                        <div style="position:relative;height:280px;"><canvas id="bmMonthChart"></canvas></div>
+                    </div>
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-chart-line"></i> Pazar Payı Trendi (${years[0]}-${max_year})</div>
+                        <div style="position:relative;height:280px;"><canvas id="bmShareChart"></canvas></div>
+                    </div>
+                </div>
+                <div class="bm-card" style="margin-top:16px;">
+                    <div class="bm-card-title"><i class="fas fa-percentage"></i> Yıllık Büyüme Oranı (YoY %)</div>
+                    <div style="overflow-x:auto"><table class="bm-tbl bm-tbl-yoy"><tbody>${yoyHtml}</tbody></table></div>
+                </div>
+            </div>
+
+            <!-- KATMAN 4: PROFESYONEL FİYAT & ÖZELLİK -->
+            <div class="bm-layer">
+                <div class="bm-layer-title"><i class="fas fa-gem"></i> Katman 4: Fiyat Karşılaştırma & Özellik Kesişimi</div>
+                <div class="bm-row-2">
+                    <div class="bm-card bm-card-wide">
+                        <div class="bm-card-title"><i class="fas fa-tag"></i> Model Fiyat Karşılaştırması (HP Segmentine Göre)</div>
+                        <div style="overflow-x:auto">
+                            <table class="bm-tbl bm-tbl-price">
+                                <thead><tr>
+                                    <th style="color:${c1}">Model</th><th style="color:${c1}">Fiyat</th>
+                                    <th>Segment</th>
+                                    <th style="color:${c2}">Fiyat</th><th style="color:${c2}">Model</th>
+                                </tr></thead>
+                                <tbody>${priceRows||'<tr><td colspan="5" style="text-align:center;color:#64748b">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="bm-card">
+                        <div class="bm-card-title"><i class="fas fa-project-diagram"></i> Özellik Kesişimi (Venn Analizi)</div>
+                        <div style="overflow-y:auto;max-height:350px;">
+                            <table class="bm-tbl bm-tbl-venn">
+                                <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${brand1.name}</th><th style="color:${c2}">${brand2.name}</th></tr></thead>
+                                <tbody>${vennHtml||'<tr><td colspan="3" style="text-align:center;color:#64748b">Veri yok</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="ai-action-bar">
+                <button class="ai-btn" onclick="requestAiAnalysis('benchmark',{b1:'${brand1.name}',b2:'${brand2.name}',d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
+                    <i class="fas fa-robot"></i> AI Benchmark Raporu
+                </button>
+                <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
+            </div>
+            <div id="bmAiPanel" class="ai-panel" style="display:none"></div>
+        </div>`;
+
+        // ── CHARTS ──
+        // Segment share horizontal bar
+        if (charts.bmSeg) charts.bmSeg.destroy();
+        charts.bmSeg = new Chart(document.getElementById('bmSegChart'), {
+            type: 'bar',
+            data: {
+                labels: segLabels,
+                datasets: [
+                    { label: brand1.name, data: segD1, backgroundColor: c1 + 'cc', borderColor: c1, borderWidth: 1, borderRadius: 3 },
+                    { label: brand2.name, data: segD2, backgroundColor: c2 + 'cc', borderColor: c2, borderWidth: 1, borderRadius: 3 }
+                ]
+            },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { labels: { color:'#94a3b8', font:{size:11} } }, datalabels: { display: false } },
+                scales: {
+                    x: { ticks: { color:'#64748b', callback: v => v+'%' }, grid: { color:'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color:'#94a3b8', font:{size:10} }, grid: { display:false } }
+                }
+            }
+        });
+
+        // Monthly bar chart
+        if (charts.bmMonth) charts.bmMonth.destroy();
+        charts.bmMonth = new Chart(document.getElementById('bmMonthChart'), {
+            type: 'bar',
+            data: {
+                labels: mLabels,
+                datasets: [
+                    { label: brand1.name, data: mD1, backgroundColor: c1+'cc', borderColor: c1, borderWidth:1, borderRadius:4 },
+                    { label: brand2.name, data: mD2, backgroundColor: c2+'cc', borderColor: c2, borderWidth:1, borderRadius:4 }
+                ]
+            },
+            options: {
+                responsive:true, maintainAspectRatio:false,
+                plugins: { legend:{labels:{color:'#94a3b8',font:{size:11}}}, datalabels:{display:false} },
+                scales: {
+                    x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,0.05)'}},
+                    y:{ticks:{color:'#64748b',callback:v=>fmtNum(v)},grid:{color:'rgba(255,255,255,0.05)'}}
+                }
+            }
+        });
+
+        // Market share trend line
+        if (charts.bmShare) charts.bmShare.destroy();
+        charts.bmShare = new Chart(document.getElementById('bmShareChart'), {
+            type: 'line',
+            data: {
+                labels: shareLabels,
+                datasets: [
+                    { label: brand1.name, data: shareD1, borderColor:c1, backgroundColor:c1+'33', fill:true, tension:0.3, pointRadius:4, pointBackgroundColor:c1 },
+                    { label: brand2.name, data: shareD2, borderColor:c2, backgroundColor:c2+'33', fill:true, tension:0.3, pointRadius:4, pointBackgroundColor:c2 }
+                ]
+            },
+            options: {
+                responsive:true, maintainAspectRatio:false,
+                plugins: { legend:{labels:{color:'#94a3b8',font:{size:11}}}, datalabels:{display:false} },
+                scales: {
+                    x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,0.05)'}},
+                    y:{ticks:{color:'#64748b',callback:v=>v+'%'},grid:{color:'rgba(255,255,255,0.05)'}}
+                }
+            }
+        });
+
+        // Scatter plot (HP vs Price)
+        if (charts.bmScatter) charts.bmScatter.destroy();
+        charts.bmScatter = new Chart(document.getElementById('bmScatterChart'), {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    { label: brand1.name, data: scatterD1, backgroundColor: c1+'cc', borderColor: c1, pointRadius: 8, pointHoverRadius: 12 },
+                    { label: brand2.name, data: scatterD2, backgroundColor: c2+'cc', borderColor: c2, pointRadius: 8, pointHoverRadius: 12 }
+                ]
+            },
+            options: {
+                responsive:true, maintainAspectRatio:false,
+                plugins: {
+                    legend:{labels:{color:'#94a3b8',font:{size:11}}},
+                    datalabels:{display:false},
+                    tooltip:{
+                        callbacks:{
+                            label: ctx => {
+                                const p = ctx.raw;
+                                return `${ctx.dataset.label}: ${p.name || ''} · ${p.x} HP · ${fmtPrice(p.y)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x:{title:{display:true,text:'Beygir Gücü (HP)',color:'#94a3b8'},ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,0.05)'}},
+                    y:{title:{display:true,text:'Liste Fiyatı (₺)',color:'#94a3b8'},ticks:{color:'#64748b',callback:v=>fmtPrice(v)},grid:{color:'rgba(255,255,255,0.05)'}}
+                }
+            }
+        });
+
+        // ── DOMINANCE MAP ──
+        if (_bmMap) { _bmMap.remove(); _bmMap = null; }
+        setTimeout(() => {
+            _bmMap = L.map('bmDomMap', { zoomControl: true, attributionControl: false }).setView([39.0, 35.5], 6);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(_bmMap);
+            dominanceMap.forEach(p => {
+                if (!p.lat || !p.lng) return;
+                const color = p.dominance === 'brand1' ? c1 : p.dominance === 'brand2' ? c2 : '#64748b';
+                const radius = Math.max(6, Math.min(20, Math.sqrt(p.s1 + p.s2) * 1.5));
+                L.circleMarker([p.lat, p.lng], {
+                    radius, fillColor: color, color: '#fff', weight: 1, opacity: 0.8, fillOpacity: 0.7
+                }).addTo(_bmMap).bindTooltip(
+                    `<b>${p.name}</b><br>${brand1.name}: ${fmtNum(p.s1)}<br>${brand2.name}: ${fmtNum(p.s2)}`,
+                    { className: 'bm-tooltip' }
+                );
+            });
+        }, 200);
+
+    } catch (err) {
+        showError(err);
+    }
+}
 
 async function loadBrandComparePage() {
     try {

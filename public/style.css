@@ -1720,3 +1720,88 @@ select {
 .tb2-table tr:hover td {
     background: rgba(255, 255, 255, 0.03);
 }
+
+/* ============================================
+   BENCHMARK PAGE - 4 Katmanlı Teknik Kıyaslama
+   ============================================ */
+.bm-container { max-width: 1400px; margin: 0 auto; padding: 0 16px; }
+
+/* Header / Brand Selectors */
+.bm-header { display: flex; align-items: center; justify-content: center; gap: 24px; margin-bottom: 28px; flex-wrap: wrap; }
+.bm-sel { display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 2px solid; border-radius: 12px; padding: 8px 16px; }
+.bm-badge { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; }
+.bm-select { background: transparent; border: none; color: var(--text-primary); font-size: 15px; font-weight: 600; cursor: pointer; outline: none; min-width: 160px; }
+.bm-select option { background: #1e293b; color: #e2e8f0; }
+.bm-vs-badge { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #3b82f6, #ef4444); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 14px; color: #fff; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+
+/* Layer sections */
+.bm-layer { background: var(--card-bg); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid var(--border-color); }
+.bm-layer-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 18px; display: flex; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
+.bm-layer-title i { color: #3b82f6; font-size: 18px; }
+
+/* Scorecards */
+.bm-scorecards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.bm-sc-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; transition: transform 0.15s; }
+.bm-sc-card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.15); }
+.bm-sc-icon { font-size: 18px; color: #64748b; }
+.bm-sc-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.bm-sc-vals { display: flex; align-items: center; gap: 8px; }
+.bm-sc-v { font-size: 16px; font-weight: 700; flex: 1; }
+.bm-sc-vs { font-size: 10px; color: #475569; font-weight: 800; }
+.bm-win { text-shadow: 0 0 8px currentColor; }
+.bm-win::after { content: ' ★'; font-size: 10px; }
+
+/* Row layouts */
+.bm-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 900px) { .bm-row-2 { grid-template-columns: 1fr; } }
+.bm-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; }
+.bm-card-wide { grid-column: span 1; }
+.bm-card-title { font-size: 13px; font-weight: 700; color: #94a3b8; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bm-card-title i { color: #3b82f6; }
+
+/* Feature bars (Bahçe/Tarla/4WD/Kabin) */
+.bm-feat-grid { display: flex; flex-direction: column; gap: 8px; }
+.bm-feat-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: #94a3b8; padding: 0 4px; }
+.bm-feat-row { display: flex; align-items: center; gap: 8px; }
+.bm-feat-bar-wrap { flex: 1; height: 24px; background: rgba(255,255,255,0.04); border-radius: 4px; overflow: hidden; position: relative; }
+.bm-feat-right { direction: rtl; }
+.bm-feat-bar { height: 100%; border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-size: 10px; font-weight: 700; color: #fff; min-width: 30px; transition: width 0.5s ease; }
+.bm-feat-label { min-width: 60px; text-align: center; font-size: 11px; font-weight: 700; color: #94a3b8; }
+
+/* Legends inline */
+.bm-legend-inline { font-size: 10px; color: #64748b; margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.bm-leg { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-left: 8px; }
+
+/* Tables */
+.bm-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bm-tbl th { background: rgba(255,255,255,0.05); padding: 8px 10px; text-align: center; color: #94a3b8; font-weight: 700; font-size: 11px; border-bottom: 1px solid var(--border-color); }
+.bm-tbl td { padding: 6px 10px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.bm-tbl tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+/* Dominance table */
+.bm-dom1 { background: rgba(59,130,246,0.08) !important; }
+.bm-dom2 { background: rgba(239,68,68,0.08) !important; }
+.bm-dom-n { background: rgba(100,116,139,0.05) !important; }
+
+/* YoY table */
+.bm-tbl-yoy th, .bm-tbl-yoy td { padding: 10px 14px; }
+.bm-up { color: #22c55e !important; }
+.bm-up::before { content: '▲ '; font-size: 8px; }
+.bm-down { color: #ef4444 !important; }
+.bm-down::before { content: '▼ '; font-size: 8px; }
+
+/* Price table */
+.bm-tbl-price { min-width: 700px; }
+.bm-mdl { text-align: left; max-width: 180px; }
+.bm-mdl b { color: var(--text-primary); font-size: 12px; }
+.bm-mdl small { color: #64748b; }
+.bm-prc { font-weight: 600; white-space: nowrap; }
+.bm-cheaper { color: #22c55e !important; }
+.bm-hp-mid { font-weight: 700; color: #f59e0b; background: rgba(245,158,11,0.05); min-width: 70px; }
+
+/* HP segment detail */
+.bm-hp-l { font-weight: 700; color: #f59e0b; text-align: left !important; }
+.bm-tbl-hp small { color: #64748b; }
+
+/* Tooltip */
+.bm-tooltip { background: #1e293b !important; border: 1px solid #334155 !important; color: #e2e8f0 !important; font-size: 12px !important; border-radius: 8px !important; box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important; }
