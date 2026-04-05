@@ -4289,23 +4289,19 @@ async function initDB() {
             const schema = fs.readFileSync(schemaPath, 'utf8');
             await pool.query(schema);
             console.log('✅ Veritabanı şeması yüklendi');
-            
-            try {
-                await pool.query('ALTER TABLE sales_data ADD COLUMN model_year INTEGER');
-                console.log('✅ sales_data tablosuna model_year sütunu eklendi');
-            } catch (e) {
-                // Sütun zaten varsa hata verecek, yoksayıyoruz.
-            }
-
-            // Model yılı filtreli view: sadece N ve N-1 model yılı verilerini döndürür
-            // model_year NULL ise (eski veri) kayıt dahil edilir, set ise son 2 model yılı kuralı uygulanır
-            await pool.query(`
-                CREATE OR REPLACE VIEW sales_view AS
-                SELECT * FROM sales_data
-                WHERE model_year IS NULL OR year = model_year OR year = model_year + 1
-            `);
-            console.log('✅ sales_view (model yılı filtreli) oluşturuldu');
         }
+
+        // Model yılı filtreli view: her zaman oluştur/güncelle (schema bloğundan bağımsız)
+        // model_year NULL ise (eski veri) kayıt dahil edilir, set ise son 2 model yılı kuralı uygulanır
+        try {
+            await pool.query('ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER');
+        } catch(e) { /* zaten var */ }
+        await pool.query(`
+            CREATE OR REPLACE VIEW sales_view AS
+            SELECT * FROM sales_data
+            WHERE model_year IS NULL OR year = model_year OR year = model_year + 1
+        `);
+        console.log('✅ sales_view (model yılı filtreli) oluşturuldu');
 
         // Temel verileri seed et (markalar, iller, planlar, admin)
         const brandCheck = await pool.query('SELECT COUNT(*) FROM brands');
