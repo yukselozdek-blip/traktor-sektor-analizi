@@ -494,8 +494,9 @@ KURALLAR:
 2. Marka ismi gerekiyorsa brands tablosu ile JOIN yap
 3. İl ismi gerekiyorsa provinces tablosu ile JOIN yap
 4. Sonuçları LIMIT 20 ile sınırla (çok büyük sonuç seti önle)
-5. Türkçe karakter uyumu: Marka isimleri İngilizce (NEW HOLLAND, JOHN DEERE vb.)
-6. İl isimleri Türkçe büyük harf (İSTANBUL, ANKARA vb.) - ILIKE kullan
+5. Türkçe karakter uyumu: Marka isimleri DAİMA BÜYÜK HARF (NEW HOLLAND, JOHN DEERE, MASSEY FERGUSON, CASE, DEUTZ, TÜMOSAN, BAŞAK, ERKUNT, SAME, HATTAT, KUBOTA, FARMTRAC, VALTRA, CLAAS, KIOTI vb.)
+6. Marka karşılaştırmalarında UPPER(b.name) veya büyük harf kullan: WHERE b.name IN ('NEW HOLLAND', 'MASSEY FERGUSON')
+7. İl isimleri Türkçe (Konya, İzmir, Ankara vb.) - ILIKE kullan
 7. SUM(quantity) ile satış toplamı al
 8. Yıl belirtilmemişse en son veri yılını kullan
 9. SADECE geçerli SQL döndür, açıklama ekleme
