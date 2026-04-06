@@ -4637,7 +4637,7 @@ async function initDB() {
                   AND tv.fiyat_usd IS NOT NULL
                   AND tv.fiyat_usd > 0
             `);
-            // İkincil: model adı kısmi eşleşme (tuik_model_adi içinde model_name geçiyorsa)
+            // İkincil: tuik_model_adi kısmi eşleşme
             await pool.query(`
                 UPDATE tractor_models tm
                 SET price_usd = tv.fiyat_usd
@@ -4649,6 +4649,41 @@ async function initDB() {
                        OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.tuik_model_adi) || '%')
                   AND tv.fiyat_usd IS NOT NULL
                   AND tv.fiyat_usd > 0
+            `);
+            // Üçüncül: model sütunu ile eşleştirme (tuik_model_adi eşleşmezse)
+            await pool.query(`
+                UPDATE tractor_models tm
+                SET price_usd = tv.fiyat_usd
+                FROM teknik_veri tv
+                JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
+                WHERE tm.brand_id = b.id
+                  AND (tm.price_usd IS NULL OR tm.price_usd = 0)
+                  AND (UPPER(tm.model_name) = UPPER(tv.model)
+                       OR UPPER(tv.model) LIKE '%' || UPPER(tm.model_name) || '%'
+                       OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.model) || '%')
+                  AND tv.fiyat_usd IS NOT NULL
+                  AND tv.fiyat_usd > 0
+            `);
+            // Dördüncül: model numarası çıkararak eşleştirme
+            // tractor_models'daki "MF 2615" → "2615" numarası teknik_veri.tuik_model_adi'de geçiyorsa
+            await pool.query(`
+                UPDATE tractor_models tm
+                SET price_usd = subq.fiyat_usd
+                FROM (
+                    SELECT DISTINCT ON (b2.id, regexp_replace(tm2.model_name, '[^0-9]', '', 'g'))
+                           tm2.id as tm_id, tv2.fiyat_usd
+                    FROM tractor_models tm2
+                    JOIN brands b2 ON tm2.brand_id = b2.id
+                    JOIN teknik_veri tv2 ON UPPER(tv2.marka) = UPPER(b2.name)
+                    WHERE (tm2.price_usd IS NULL OR tm2.price_usd = 0)
+                      AND tm2.is_current_model = true
+                      AND tv2.fiyat_usd IS NOT NULL AND tv2.fiyat_usd > 0
+                      AND LENGTH(regexp_replace(tm2.model_name, '[^0-9]', '', 'g')) >= 3
+                      AND tv2.tuik_model_adi LIKE '%' || regexp_replace(tm2.model_name, '[^0-9]', '', 'g') || '%'
+                    ORDER BY b2.id, regexp_replace(tm2.model_name, '[^0-9]', '', 'g'), tv2.fiyat_usd
+                ) subq
+                WHERE tm.id = subq.tm_id
+                  AND (tm.price_usd IS NULL OR tm.price_usd = 0)
             `);
             if (syncResult.rowCount > 0) console.log(`💰 ${syncResult.rowCount} model fiyatı teknik_veri'den USD olarak senkronize edildi`);
 
