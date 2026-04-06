@@ -514,9 +514,11 @@ async function textToSql(question) {
 
 Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
 - Basit soru ("kaç satıldı?") → basit SUM/COUNT sorgusu yeter
-- Karşılaştırma sorusu → ilgili boyutları yan yana getir (marka, il, yıl bazında)
-- Çok boyutlu/derin soru → gerekli tüm JOIN'leri yap, provinces tablosundaki soil_type/climate_zone/primary_crops alanlarını dahil et
-- Eğer yıllık değişim/trend soruluyorsa, hem mevcut hem önceki yıl verilerini çek
+- Marka karşılaştırma → Her marka için SUM(quantity) GROUP BY kullan, satır bazında değil toplam bazında. Örnek:
+  SELECT b.name, SUM(quantity) AS toplam, ... FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE b.name IN ('MARKA1','MARKA2') GROUP BY b.name
+- Yıllık trend/karşılaştırma → Aynı sorguda yıl bazlı kırılım: GROUP BY b.name, sv.year
+- Bölgesel analiz → provinces tablosundaki region, soil_type, climate_zone, primary_crops alanlarını dahil et
+- Bölme (/) işlemlerinde NULLIF kullan: SUM(x) * 100.0 / NULLIF(SUM(y), 0)
 Sadece SQL kodu döndür, başka bir şey yazma. Açıklama ekleme.
 Eğer soru veritabanıyla ilgili değilse veya SQL yazılamıyorsa sadece "UNSUPPORTED" yaz.`;
 
