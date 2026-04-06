@@ -72,6 +72,20 @@ Brands tablosundaki marka isimleri aşağıdaki standart listeyle uyumlu olmalı
 - Frontend'de `fmtPrice()` fonksiyonu otomatik $ gösterir.
 - **Tek istisna:** Abonelik planı fiyatları ₺ ile gösterilir.
 
+### F) Tablo Eşleştirme Kuralı — teknik_veri ↔ tractor_models (KRİTİK ANAYASA MADDESİ)
+`teknik_veri` ve `tractor_models` tablolarının ortak eşleştirme alanları:
+
+| teknik_veri | tractor_models | Eşleştirme |
+|-------------|----------------|------------|
+| `marka` | `brands.name` (FK: brand_id) | Marka eşleştirmesi |
+| `tuik_model_adi` | `model_name` | Model eşleştirmesi |
+
+**ZORUNLU KURALLAR:**
+1. Model eşleştirmesi **DAİMA** `teknik_veri.tuik_model_adi` üzerinden yapılır
+2. `teknik_veri.model` alanı (kısa model adı) eşleştirme için **KULLANILMAZ**
+3. Senkronizasyon SQL'i: `WHERE UPPER(tm.model_name) = UPPER(tv.tuik_model_adi)`
+4. Fiyat senkronizasyonu bu eşleştirme ile `teknik_veri.fiyat_usd` → `tractor_models.price_usd` aktarılır
+
 ---
 
 ## 3. MODEL YILI FİLTRESİ (N ve N-1 KURALI) - EN KRİTİK KURAL

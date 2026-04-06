@@ -4625,18 +4625,19 @@ async function initDB() {
         try {
             await pool.query('ALTER TABLE tractor_models ADD COLUMN IF NOT EXISTS price_usd DECIMAL(12,2)');
             // teknik_veri.fiyat_usd → tractor_models.price_usd (marka+model eşleştirmesi)
-            // Ana eşleştirme: marka+model tam eşleşme
+            // ═══ ANA EŞLEŞTİRME: marka + tuik_model_adi ═══
+            // teknik_veri.tuik_model_adi ↔ tractor_models.model_name (TÜİK adı)
             const syncResult = await pool.query(`
                 UPDATE tractor_models tm
                 SET price_usd = tv.fiyat_usd
                 FROM teknik_veri tv
                 JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
                 WHERE tm.brand_id = b.id
-                  AND (UPPER(tm.model_name) = UPPER(tv.model) OR UPPER(tm.model_name) = UPPER(tv.tuik_model_adi))
+                  AND UPPER(tm.model_name) = UPPER(tv.tuik_model_adi)
                   AND tv.fiyat_usd IS NOT NULL
                   AND tv.fiyat_usd > 0
             `);
-            // İkincil: model adı içerme eşleştirmesi (kısmi eşleşme)
+            // İkincil: model adı kısmi eşleşme (tuik_model_adi içinde model_name geçiyorsa)
             await pool.query(`
                 UPDATE tractor_models tm
                 SET price_usd = tv.fiyat_usd
@@ -4644,7 +4645,8 @@ async function initDB() {
                 JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
                 WHERE tm.brand_id = b.id
                   AND (tm.price_usd IS NULL OR tm.price_usd = 0)
-                  AND (UPPER(tv.model) LIKE '%' || UPPER(tm.model_name) || '%' OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.model) || '%')
+                  AND (UPPER(tv.tuik_model_adi) LIKE '%' || UPPER(tm.model_name) || '%'
+                       OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.tuik_model_adi) || '%')
                   AND tv.fiyat_usd IS NOT NULL
                   AND tv.fiyat_usd > 0
             `);
@@ -4707,7 +4709,7 @@ async function initDB() {
                     FROM teknik_veri tv
                     JOIN brands b ON UPPER(b.name) = UPPER($1)
                     WHERE tm.brand_id = b.id
-                      AND UPPER(tm.model_name) = UPPER(tv.model)
+                      AND UPPER(tm.model_name) = UPPER(tv.tuik_model_adi)
                       AND UPPER(tv.marka) = UPPER($2)
                       AND tv.fiyat_usd IS NOT NULL
                       AND tv.fiyat_usd > 0
