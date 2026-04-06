@@ -4598,9 +4598,13 @@ async function initDB() {
             const oldBrand = (await pool.query('SELECT id FROM brands WHERE name = $1', [oldName])).rows[0];
             const newBrand = (await pool.query('SELECT id FROM brands WHERE name = $1', [newName])).rows[0];
             if (oldBrand && newBrand && oldBrand.id !== newBrand.id) {
-                // Her iki isim de var: satış verilerini yeni markaya taşı, eski kaydı sil
+                // Her iki isim de var: tüm FK referanslarını yeni markaya taşı, eski kaydı sil
                 await pool.query('UPDATE sales_data SET brand_id = $1 WHERE brand_id = $2', [newBrand.id, oldBrand.id]);
                 await pool.query('UPDATE tractor_models SET brand_id = $1 WHERE brand_id = $2', [newBrand.id, oldBrand.id]);
+                await pool.query('UPDATE users SET brand_id = $1 WHERE brand_id = $2', [newBrand.id, oldBrand.id]);
+                // Diğer olası FK referansları
+                try { await pool.query('UPDATE user_favorites SET brand_id = $1 WHERE brand_id = $2', [newBrand.id, oldBrand.id]); } catch(e) {}
+                try { await pool.query('UPDATE brand_settings SET brand_id = $1 WHERE brand_id = $2', [newBrand.id, oldBrand.id]); } catch(e) {}
                 await pool.query('DELETE FROM brands WHERE id = $1', [oldBrand.id]);
                 console.log(`🔄 Marka birleştirildi: ${oldName} (id:${oldBrand.id}) → ${newName} (id:${newBrand.id})`);
             } else if (oldBrand && !newBrand) {
