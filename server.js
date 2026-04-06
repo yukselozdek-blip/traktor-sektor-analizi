@@ -4620,20 +4620,61 @@ async function initDB() {
         try {
             await pool.query('ALTER TABLE tractor_models ADD COLUMN IF NOT EXISTS price_usd DECIMAL(12,2)');
             // teknik_veri.fiyat_usd → tractor_models.price_usd (marka+model eşleştirmesi)
+            // Ana eşleştirme: marka+model tam eşleşme
             const syncResult = await pool.query(`
                 UPDATE tractor_models tm
                 SET price_usd = tv.fiyat_usd
                 FROM teknik_veri tv
                 JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
                 WHERE tm.brand_id = b.id
-                  AND UPPER(tm.model_name) = UPPER(tv.model)
+                  AND (UPPER(tm.model_name) = UPPER(tv.model) OR UPPER(tm.model_name) = UPPER(tv.tuik_model_adi))
+                  AND tv.fiyat_usd IS NOT NULL
+                  AND tv.fiyat_usd > 0
+            `);
+            // İkincil: model adı içerme eşleştirmesi (kısmi eşleşme)
+            await pool.query(`
+                UPDATE tractor_models tm
+                SET price_usd = tv.fiyat_usd
+                FROM teknik_veri tv
+                JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
+                WHERE tm.brand_id = b.id
+                  AND (tm.price_usd IS NULL OR tm.price_usd = 0)
+                  AND (UPPER(tv.model) LIKE '%' || UPPER(tm.model_name) || '%' OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.model) || '%')
                   AND tv.fiyat_usd IS NOT NULL
                   AND tv.fiyat_usd > 0
             `);
             if (syncResult.rowCount > 0) console.log(`💰 ${syncResult.rowCount} model fiyatı teknik_veri'den USD olarak senkronize edildi`);
 
+            // Eşleşmeyen markaları logla
+            const unmatchedBrands = await pool.query(`
+                SELECT DISTINCT UPPER(tv.marka) as teknik_marka
+                FROM teknik_veri tv
+                WHERE tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0
+                  AND NOT EXISTS (SELECT 1 FROM brands b WHERE UPPER(b.name) = UPPER(tv.marka))
+            `);
+            if (unmatchedBrands.rows.length > 0) {
+                console.log(`⚠️ teknik_veri'de eşleşmeyen markalar: ${unmatchedBrands.rows.map(r => r.teknik_marka).join(', ')}`);
+            }
+
+            // Eşleşmeyen modelleri logla (marka eşleşti ama model eşleşmedi)
+            const unmatchedModels = await pool.query(`
+                SELECT UPPER(tv.marka) as marka, tv.model as teknik_model, tv.fiyat_usd
+                FROM teknik_veri tv
+                JOIN brands b ON UPPER(b.name) = UPPER(tv.marka)
+                WHERE tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM tractor_models tm
+                    WHERE tm.brand_id = b.id AND UPPER(tm.model_name) = UPPER(tv.model)
+                  )
+                LIMIT 20
+            `);
+            if (unmatchedModels.rows.length > 0) {
+                console.log(`⚠️ teknik_veri'de eşleşmeyen modeller (${unmatchedModels.rows.length}):`);
+                unmatchedModels.rows.forEach(r => console.log(`   ${r.marka} / ${r.teknik_model} → ${r.fiyat_usd} $`));
+            }
+
             // CASE IH / CASE, DEUTZ-FAHR / DEUTZ gibi farklı isimlerde de eşleştir
-            const altBrandMap = { 'CASE': 'CASE IH', 'DEUTZ': 'DEUTZ-FAHR' };
+            const altBrandMap = { 'CASE': 'CASE IH', 'DEUTZ': 'DEUTZ-FAHR', 'MASSEY FERGUSON': 'MF', 'MASSEY FERGUSON': 'MASSEY-FERGUSON' };
             for (const [brandName, teknikName] of Object.entries(altBrandMap)) {
                 await pool.query(`
                     UPDATE tractor_models tm
