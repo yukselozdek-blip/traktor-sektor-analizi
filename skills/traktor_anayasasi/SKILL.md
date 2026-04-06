@@ -63,13 +63,14 @@ Brands tablosundaki marka isimleri aşağıdaki standart listeyle uyumlu olmalı
 
 `initDB()` içinde otomatik normalizasyon çalışır. Yeni marka eklerken standart listeyi kontrol et.
 
-### E) Fiyat Birimi (KRİTİK)
+### E) Fiyat Birimi — TEK KAYNAK KURALI (KRİTİK ANAYASA MADDESİ)
+- **Fiyat kaynağı: `teknik_veri.fiyat_usd`** — Bu tablo tek ve mutlak fiyat kaynağıdır.
 - **Para birimi: USD ($)**. Tüm fiyat ve ciro gösterimlerinde dolar kullanılır.
-- `tractor_models.price_usd`: Ana fiyat sütunu (teknik_veri.fiyat_usd'den senkronize edilir)
-- `tractor_models.price_list_tl`: Eski TL fiyat (fallback olarak kullanılır)
-- Sorgularda: `COALESCE(price_usd, price_list_tl)` kullan
-- Frontend'de `fmtPrice()` fonksiyonu otomatik $ gösterir
-- **Tek istisna:** Abonelik planı fiyatları ₺ ile gösterilir
+- `initDB()` sırasında `teknik_veri.fiyat_usd` → `tractor_models.price_usd` olarak senkronize edilir.
+- Sorgularda **sadece `price_usd`** kullanılır. `price_list_tl` **ASLA** kullanılmaz.
+- TL'den dolara çevirme, fallback, COALESCE gibi geçici çözümler **YASAKTIR**.
+- Frontend'de `fmtPrice()` fonksiyonu otomatik $ gösterir.
+- **Tek istisna:** Abonelik planı fiyatları ₺ ile gösterilir.
 
 ---
 
@@ -457,6 +458,8 @@ Groq AI'ya gönderilen prompt, veritabanının tam şemasını (tablolar, sütun
 12. `railway up` yerine `git push` ile deploy beklemek
 13. WhatsApp Text-to-SQL'de `SELECT` dışında SQL komutu izin vermek
 14. `DB_SCHEMA_PROMPT`'u veritabanı şeması değişince güncellememek
+15. Fiyat sorgularında `price_list_tl` kullanmak (`price_usd` tek kaynak)
+16. TL fiyatını dolara çevirmek veya COALESCE ile TL fallback yapmak
 
 ---
 
