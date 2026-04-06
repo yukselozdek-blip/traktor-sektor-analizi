@@ -4656,6 +4656,10 @@ async function initDB() {
                 console.log(`⚠️ teknik_veri'de eşleşmeyen markalar: ${unmatchedBrands.rows.map(r => r.teknik_marka).join(', ')}`);
             }
 
+            // Tüm teknik_veri markalarını logla (debugging)
+            const allTeknikBrands = await pool.query('SELECT DISTINCT marka FROM teknik_veri WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0 ORDER BY marka');
+            console.log(`📋 teknik_veri markaları: ${allTeknikBrands.rows.map(r => r.marka).join(', ')}`);
+
             // Eşleşmeyen modelleri logla (marka eşleşti ama model eşleşmedi)
             const unmatchedModels = await pool.query(`
                 SELECT UPPER(tv.marka) as marka, tv.model as teknik_model, tv.fiyat_usd
