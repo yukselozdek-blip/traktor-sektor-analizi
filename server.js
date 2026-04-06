@@ -480,7 +480,8 @@ VERİTABANI ŞEMASI:
 --   population INT, agricultural_area_hectare DECIMAL, primary_crops TEXT[], soil_type VARCHAR,
 --   climate_zone VARCHAR, annual_rainfall_mm DECIMAL, avg_temperature DECIMAL
 -- tractor_models: id SERIAL, brand_id INT (FK brands), model_name VARCHAR, horsepower DECIMAL,
---   price_list_tl DECIMAL, category VARCHAR, cabin_type VARCHAR, drive_type VARCHAR, gear_config VARCHAR
+--   price_usd DECIMAL (USD fiyat), price_list_tl DECIMAL (eski TL fiyat), category VARCHAR, cabin_type VARCHAR, drive_type VARCHAR, gear_config VARCHAR
+--   NOT: Fiyat sorguları için DAİMA price_usd kullan (COALESCE(price_usd, price_list_tl))
 
 HP SEGMENTLERI: '1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'
 KATEGORİLER: 'tarla','bahce'
@@ -1107,7 +1108,7 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
             GROUP BY drive_type ORDER BY total DESC
         `, [brand.id, year, limitMonth]),
         pool.query(`
-            SELECT model_name, horsepower, price_list_tl
+            SELECT model_name, horsepower, COALESCE(price_usd, price_list_tl) as price_usd
             FROM tractor_models
             WHERE brand_id = $1 AND is_current_model = true
             ORDER BY horsepower
@@ -1144,7 +1145,7 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
     const models = modelsRes.rows.map(row => ({
         name: row.model_name,
         hp: row.horsepower ? parseFloat(row.horsepower) : null,
-        price: row.price_list_tl ? parseFloat(row.price_list_tl) : null
+        price: row.price_usd ? parseFloat(row.price_usd) : null
     }));
     const avgPrice = models.filter(m => m.price).length
         ? models.filter(m => m.price).reduce((sum, item) => sum + item.price, 0) / models.filter(m => m.price).length
@@ -3441,7 +3442,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
         const brandRes = await pool.query('SELECT id, name, slug, primary_color FROM brands WHERE is_active = true ORDER BY name');
 
         // Models with prices
-        const modelRes = await pool.query(`SELECT m.id, m.brand_id, m.model_name, m.horsepower, m.hp_range, m.category, m.cabin_type, m.drive_type, m.gear_config, m.price_list_tl, b.name as brand_name, b.primary_color FROM tractor_models m JOIN brands b ON m.brand_id = b.id WHERE m.is_current_model = true ORDER BY b.name, m.horsepower`);
+        const modelRes = await pool.query(`SELECT m.id, m.brand_id, m.model_name, m.horsepower, m.hp_range, m.category, m.cabin_type, m.drive_type, m.gear_config, COALESCE(m.price_usd, m.price_list_tl) as price_usd, b.name as brand_name, b.primary_color FROM tractor_models m JOIN brands b ON m.brand_id = b.id WHERE m.is_current_model = true ORDER BY b.name, m.horsepower`);
 
         // Sales by province, brand, year with details
         const salesRes = await pool.query(`
@@ -3506,8 +3507,8 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
                 const yoyGrowth = prevYearSales > 0 ? ((lastYearSales - prevYearSales) / prevYearSales * 100) : 0;
 
                 // Revenue estimate (using avg model price for this brand)
-                const brandModels = modelRes.rows.filter(m => m.brand_id == b.id && m.price_list_tl);
-                const avgPrice = brandModels.length > 0 ? brandModels.reduce((s, m) => s + parseFloat(m.price_list_tl), 0) / brandModels.length : 0;
+                const brandModels = modelRes.rows.filter(m => m.brand_id == b.id && m.price_usd);
+                const avgPrice = brandModels.length > 0 ? brandModels.reduce((s, m) => s + parseFloat(m.price_usd), 0) / brandModels.length : 0;
                 const estimatedRevenue = data.total * avgPrice;
                 const currRevenue = currBrand * avgPrice;
 
@@ -3545,7 +3546,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
                 totalSales: totalBrandSales,
                 totalRevenue,
                 models: modelRes.rows.filter(m => m.brand_id == b.id).map(m => ({
-                    name: m.model_name, hp: parseFloat(m.horsepower), price: m.price_list_tl ? parseFloat(m.price_list_tl) : null,
+                    name: m.model_name, hp: parseFloat(m.horsepower), price: m.price_usd ? parseFloat(m.price_usd) : null,
                     category: m.category, hp_range: m.hp_range
                 })),
                 topProvinces: provStats.slice(0, 15),
@@ -3633,8 +3634,8 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
             const avgHp = totalQty > 0 ? Math.round(hpWeightedSum / totalQty) : 0;
 
             // Price stats from models
-            const priceModels = models.filter(m => m.price_list_tl > 0);
-            const avgPrice = priceModels.length > 0 ? priceModels.reduce((s, m) => s + parseFloat(m.price_list_tl), 0) / priceModels.length : 0;
+            const priceModels = models.filter(m => (m.price_usd || m.price_list_tl) > 0);
+            const avgPrice = priceModels.length > 0 ? priceModels.reduce((s, m) => s + parseFloat(m.price_usd || m.price_list_tl), 0) / priceModels.length : 0;
             const avgHpModel = priceModels.length > 0 ? priceModels.reduce((s, m) => s + parseFloat(m.horsepower), 0) / priceModels.length : 0;
             const costPerHp = avgHpModel > 0 ? avgPrice / avgHpModel : 0;
 
@@ -3674,7 +3675,7 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
                 hpSegments, catDist, driveDist, cabinDist, gearDist,
                 provinces: provArr.slice(0, 20),
                 models: models.map(m => ({
-                    name: m.model_name, hp: parseFloat(m.horsepower), price: m.price_list_tl ? parseFloat(m.price_list_tl) : 0,
+                    name: m.model_name, hp: parseFloat(m.horsepower), price: (m.price_usd || m.price_list_tl) ? parseFloat(m.price_usd || m.price_list_tl) : 0,
                     category: m.category, cabin: m.cabin_type, drive: m.drive_type, gear: m.gear_config, hp_range: m.hp_range
                 }))
             };
@@ -3861,11 +3862,11 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
             driveRows.rows.forEach(r => { driveTypes[r.drive_type] = parseInt(r.total); });
 
             // Models with prices from tractor_models
-            const modelRows = await pool.query(`SELECT model_name, horsepower, price_list_tl, category, cabin_type, drive_type FROM tractor_models WHERE brand_id = $1 AND is_current_model = true ORDER BY horsepower`, [brandId]);
+            const modelRows = await pool.query(`SELECT model_name, horsepower, COALESCE(price_usd, price_list_tl) as price_usd, category, cabin_type, drive_type FROM tractor_models WHERE brand_id = $1 AND is_current_model = true ORDER BY horsepower`, [brandId]);
             const models = modelRows.rows.map(r => ({
                 name: r.model_name,
                 hp: parseFloat(r.horsepower),
-                price: r.price_list_tl ? parseFloat(r.price_list_tl) : null,
+                price: r.price_usd ? parseFloat(r.price_usd) : null,
                 category: r.category,
                 cabin: r.cabin_type,
                 drive: r.drive_type
@@ -3929,7 +3930,7 @@ app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
             // Brand-specific regional analysis
             const { brandName, provinces, models, totalSales, totalRevenue } = context;
             const topProvStr = (provinces || []).slice(0, 10).map((p, i) =>
-                `${i + 1}. ${p.name} (${p.region}): ${p.total} adet, Pazar payı: ${p.marketShareCurr}%, YoY: ${p.yoyGrowth}%, Bahçe: ${(p.bahce / (p.total || 1) * 100).toFixed(0)}%, Toprak: ${p.soil_type || '-'}, İklim: ${p.climate_zone || '-'}, Ürünler: ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : (p.primary_crops || '-')}, Tahmini Ciro: ${Math.round(p.estimatedRevenue / 1000000)}M TL`
+                `${i + 1}. ${p.name} (${p.region}): ${p.total} adet, Pazar payı: ${p.marketShareCurr}%, YoY: ${p.yoyGrowth}%, Bahçe: ${(p.bahce / (p.total || 1) * 100).toFixed(0)}%, Toprak: ${p.soil_type || '-'}, İklim: ${p.climate_zone || '-'}, Ürünler: ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : (p.primary_crops || '-')}, Tahmini Ciro: ${Math.round(p.estimatedRevenue / 1000000)}M $`
             ).join('\n');
             const modelStr = (models || []).map(m => `${m.name} (${m.hp}HP, ${m.category}, ${m.price ? Math.round(m.price / 1000) + 'B TL' : '-'})`).join(', ');
 
@@ -3937,7 +3938,7 @@ app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
 
 TOPLAM VERİ:
 - Toplam satış: ${totalSales} adet
-- Tahmini toplam ciro: ${Math.round(totalRevenue / 1000000)}M TL
+- Tahmini toplam ciro: ${Math.round(totalRevenue / 1000000)}M $
 - Model portföyü: ${modelStr}
 
 İL BAZLI VERİLER (Top 10):
@@ -4584,6 +4585,58 @@ async function initDB() {
             VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi', true)
         `, [forcedHash]);
         console.log('🔥 Admin hesabı (admin2024) bizzat elden onarıldı ve zorla aktifleştirildi');
+
+        // ============================================
+        // MARKA İSİMLERİ NORMALİZASYONU
+        // ============================================
+        const brandNameMap = {
+            'CASE IH': 'CASE',
+            'DEUTZ-FAHR': 'DEUTZ',
+            'KIOTI': 'KİOTİ'
+        };
+        for (const [oldName, newName] of Object.entries(brandNameMap)) {
+            const updated = await pool.query('UPDATE brands SET name = $1 WHERE name = $2 AND NOT EXISTS (SELECT 1 FROM brands WHERE name = $1)', [newName, oldName]);
+            if (updated.rowCount > 0) console.log(`🔄 Marka ismi güncellendi: ${oldName} → ${newName}`);
+        }
+
+        // ============================================
+        // TEKNİK VERİ USD FİYAT SENKRONİZASYONU
+        // ============================================
+        try {
+            await pool.query('ALTER TABLE tractor_models ADD COLUMN IF NOT EXISTS price_usd DECIMAL(12,2)');
+            // teknik_veri.fiyat_usd → tractor_models.price_usd (marka+model eşleştirmesi)
+            const syncResult = await pool.query(`
+                UPDATE tractor_models tm
+                SET price_usd = tv.fiyat_usd
+                FROM teknik_veri tv
+                JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
+                WHERE tm.brand_id = b.id
+                  AND UPPER(tm.model_name) = UPPER(tv.model)
+                  AND tv.fiyat_usd IS NOT NULL
+                  AND tv.fiyat_usd > 0
+            `);
+            if (syncResult.rowCount > 0) console.log(`💰 ${syncResult.rowCount} model fiyatı teknik_veri'den USD olarak senkronize edildi`);
+
+            // CASE IH / CASE, DEUTZ-FAHR / DEUTZ gibi farklı isimlerde de eşleştir
+            const altBrandMap = { 'CASE': 'CASE IH', 'DEUTZ': 'DEUTZ-FAHR' };
+            for (const [brandName, teknikName] of Object.entries(altBrandMap)) {
+                await pool.query(`
+                    UPDATE tractor_models tm
+                    SET price_usd = tv.fiyat_usd
+                    FROM teknik_veri tv
+                    JOIN brands b ON UPPER(b.name) = UPPER($1)
+                    WHERE tm.brand_id = b.id
+                      AND UPPER(tm.model_name) = UPPER(tv.model)
+                      AND UPPER(tv.marka) = UPPER($2)
+                      AND tv.fiyat_usd IS NOT NULL
+                      AND tv.fiyat_usd > 0
+                      AND (tm.price_usd IS NULL OR tm.price_usd = 0)
+                `, [brandName, teknikName]);
+            }
+            console.log('✅ USD fiyat senkronizasyonu tamamlandı');
+        } catch (priceErr) {
+            console.error('USD fiyat senkronizasyon hatası:', priceErr.message);
+        }
 
         // Satış verisi yoksa bilgi ver
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');

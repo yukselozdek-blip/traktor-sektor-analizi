@@ -52,6 +52,25 @@ Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarş
 | `gear_config` | Vites konfigürasyonu (`8+2`, `12+12`, `CVT` vb.) |
 | `model_year` | Traktörün üretim/model yılı |
 
+### D) Marka İsimleri Standardı (KRİTİK)
+Brands tablosundaki marka isimleri aşağıdaki standart listeyle uyumlu olmalıdır:
+
+| Standart İsim | YANLIŞ Kullanım |
+|----------------|-----------------|
+| CASE | ~~CASE IH~~ |
+| DEUTZ | ~~DEUTZ-FAHR~~ |
+| KİOTİ | ~~KIOTI~~ |
+
+`initDB()` içinde otomatik normalizasyon çalışır. Yeni marka eklerken standart listeyi kontrol et.
+
+### E) Fiyat Birimi (KRİTİK)
+- **Para birimi: USD ($)**. Tüm fiyat ve ciro gösterimlerinde dolar kullanılır.
+- `tractor_models.price_usd`: Ana fiyat sütunu (teknik_veri.fiyat_usd'den senkronize edilir)
+- `tractor_models.price_list_tl`: Eski TL fiyat (fallback olarak kullanılır)
+- Sorgularda: `COALESCE(price_usd, price_list_tl)` kullan
+- Frontend'de `fmtPrice()` fonksiyonu otomatik $ gösterir
+- **Tek istisna:** Abonelik planı fiyatları ₺ ile gösterilir
+
 ---
 
 ## 3. MODEL YILI FİLTRESİ (N ve N-1 KURALI) - EN KRİTİK KURAL
