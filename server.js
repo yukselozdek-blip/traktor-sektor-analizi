@@ -4620,91 +4620,107 @@ async function initDB() {
         }
 
         // ============================================
-        // TEKNİK VERİ USD FİYAT SENKRONİZASYONU
+        // TEKNİK VERİ → TRACTOR_MODELS OTOMATİK SYNC
+        // Anayasa Kuralı: marka + tuik_model_adi eşleştirmesi
         // ============================================
         try {
             await pool.query('ALTER TABLE tractor_models ADD COLUMN IF NOT EXISTS price_usd DECIMAL(12,2)');
-            // teknik_veri.fiyat_usd → tractor_models.price_usd (marka+model eşleştirmesi)
-            // ═══ ANA EŞLEŞTİRME: marka + tuik_model_adi ═══
-            // teknik_veri.tuik_model_adi ↔ tractor_models.model_name (TÜİK adı)
-            const syncResult = await pool.query(`
-                UPDATE tractor_models tm
-                SET price_usd = tv.fiyat_usd
+
+            // Marka eşleştirme haritası (teknik_veri marka adı → brands tablosu adı)
+            const brandAliasMap = {
+                'CASE IH': 'CASE', 'DEUTZ-FAHR': 'DEUTZ', 'KIOTI': 'KİOTİ'
+            };
+
+            // teknik_veri'den tüm modelleri al
+            const teknikRows = await pool.query(`
+                SELECT tv.marka, tv.tuik_model_adi, tv.model, tv.fiyat_usd,
+                       tv.motor_gucu_hp, tv.cekis_tipi, tv.koruma, tv.vites_sayisi, tv.kullanim_alani
                 FROM teknik_veri tv
-                JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
-                WHERE tm.brand_id = b.id
-                  AND UPPER(tm.model_name) = UPPER(tv.tuik_model_adi)
-                  AND tv.fiyat_usd IS NOT NULL
-                  AND tv.fiyat_usd > 0
+                WHERE tv.tuik_model_adi IS NOT NULL AND tv.tuik_model_adi != ''
             `);
-            // İkincil: tuik_model_adi kısmi eşleşme
-            await pool.query(`
-                UPDATE tractor_models tm
-                SET price_usd = tv.fiyat_usd
-                FROM teknik_veri tv
-                JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
-                WHERE tm.brand_id = b.id
-                  AND (tm.price_usd IS NULL OR tm.price_usd = 0)
-                  AND (UPPER(tv.tuik_model_adi) LIKE '%' || UPPER(tm.model_name) || '%'
-                       OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.tuik_model_adi) || '%')
-                  AND tv.fiyat_usd IS NOT NULL
-                  AND tv.fiyat_usd > 0
-            `);
-            // Üçüncül: model sütunu ile eşleştirme (tuik_model_adi eşleşmezse)
-            await pool.query(`
-                UPDATE tractor_models tm
-                SET price_usd = tv.fiyat_usd
-                FROM teknik_veri tv
-                JOIN brands b ON UPPER(tv.marka) = UPPER(b.name)
-                WHERE tm.brand_id = b.id
-                  AND (tm.price_usd IS NULL OR tm.price_usd = 0)
-                  AND (UPPER(tm.model_name) = UPPER(tv.model)
-                       OR UPPER(tv.model) LIKE '%' || UPPER(tm.model_name) || '%'
-                       OR UPPER(tm.model_name) LIKE '%' || UPPER(tv.model) || '%')
-                  AND tv.fiyat_usd IS NOT NULL
-                  AND tv.fiyat_usd > 0
-            `);
-            // Dördüncül: model numarası çıkararak eşleştirme
-            // tractor_models'daki "MF 2615" → "2615" numarası teknik_veri.tuik_model_adi'de geçiyorsa
-            await pool.query(`
+
+            let syncCount = 0;
+            let insertCount = 0;
+
+            for (const tv of teknikRows.rows) {
+                const teknikMarka = tv.marka.trim().toUpperCase();
+                const resolvedBrand = brandAliasMap[teknikMarka] || teknikMarka;
+
+                // Brand ID bul
+                const brandRes = await pool.query('SELECT id FROM brands WHERE UPPER(name) = $1', [resolvedBrand]);
+                if (brandRes.rows.length === 0) continue;
+                const brandId = brandRes.rows[0].id;
+
+                const tuikModelAdi = tv.tuik_model_adi.trim();
+                const hp = parseFloat(tv.motor_gucu_hp) || null;
+                const hpRange = hp ? (hp <= 39 ? '1-39' : hp <= 49 ? '40-49' : hp <= 54 ? '50-54' : hp <= 59 ? '55-59' : hp <= 69 ? '60-69' : hp <= 79 ? '70-79' : hp <= 89 ? '80-89' : hp <= 99 ? '90-99' : hp <= 109 ? '100-109' : hp <= 119 ? '110-119' : '120+') : null;
+                const cabinType = String(tv.koruma || '').toLowerCase().includes('kabin') ? 'kabinli' : 'rollbar';
+                const driveType = String(tv.cekis_tipi || '') || '4WD';
+                const gearConfig = String(tv.vites_sayisi || '') || '12+12';
+                const category = String(tv.kullanim_alani || '').toLowerCase().includes('bahçe') ? 'bahce' : 'tarla';
+                const priceUsd = parseFloat(tv.fiyat_usd) || null;
+
+                // tractor_models'da tuik_model_adi ile eşleşen kayıt var mı?
+                const existing = await pool.query(
+                    'SELECT id FROM tractor_models WHERE brand_id = $1 AND UPPER(model_name) = UPPER($2)',
+                    [brandId, tuikModelAdi]
+                );
+
+                if (existing.rows.length > 0) {
+                    // Varsa: price_usd ve teknik bilgileri güncelle
+                    if (priceUsd && priceUsd > 0) {
+                        await pool.query(
+                            `UPDATE tractor_models SET price_usd = $1, horsepower = COALESCE($2, horsepower),
+                             hp_range = COALESCE($3, hp_range), cabin_type = $4, drive_type = $5,
+                             gear_config = $6, category = $7
+                             WHERE id = $8`,
+                            [priceUsd, hp, hpRange, cabinType, driveType, gearConfig, category, existing.rows[0].id]
+                        );
+                        syncCount++;
+                    }
+                } else {
+                    // Yoksa: teknik_veri'den yeni model oluştur
+                    await pool.query(
+                        `INSERT INTO tractor_models (brand_id, model_name, horsepower, hp_range, category,
+                         cabin_type, drive_type, gear_config, price_usd, is_current_model)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+                         ON CONFLICT DO NOTHING`,
+                        [brandId, tuikModelAdi, hp, hpRange, category, cabinType, driveType, gearConfig, priceUsd]
+                    );
+                    insertCount++;
+                }
+            }
+
+            console.log(`💰 teknik_veri sync: ${syncCount} model güncellendi, ${insertCount} yeni model eklendi`);
+
+            // Eski hardcoded modellere de numara bazlı fiyat eşleştirmeyi dene
+            // (teknik_veri'den gelmeyen ama seed'den gelen modeller için)
+            const numericSync = await pool.query(`
                 UPDATE tractor_models tm
                 SET price_usd = subq.fiyat_usd
                 FROM (
-                    SELECT DISTINCT ON (b2.id, regexp_replace(tm2.model_name, '[^0-9]', '', 'g'))
+                    SELECT DISTINCT ON (tm2.id)
                            tm2.id as tm_id, tv2.fiyat_usd
                     FROM tractor_models tm2
                     JOIN brands b2 ON tm2.brand_id = b2.id
-                    JOIN teknik_veri tv2 ON UPPER(tv2.marka) = UPPER(b2.name)
+                    JOIN teknik_veri tv2 ON (UPPER(tv2.marka) = UPPER(b2.name)
+                        OR (UPPER(tv2.marka) = 'CASE IH' AND UPPER(b2.name) = 'CASE')
+                        OR (UPPER(tv2.marka) = 'DEUTZ-FAHR' AND UPPER(b2.name) = 'DEUTZ')
+                        OR (UPPER(tv2.marka) = 'KIOTI' AND UPPER(b2.name) = 'KİOTİ'))
                     WHERE (tm2.price_usd IS NULL OR tm2.price_usd = 0)
                       AND tm2.is_current_model = true
                       AND tv2.fiyat_usd IS NOT NULL AND tv2.fiyat_usd > 0
                       AND LENGTH(regexp_replace(tm2.model_name, '[^0-9]', '', 'g')) >= 3
-                      AND tv2.tuik_model_adi LIKE '%' || regexp_replace(tm2.model_name, '[^0-9]', '', 'g') || '%'
-                    ORDER BY b2.id, regexp_replace(tm2.model_name, '[^0-9]', '', 'g'), tv2.fiyat_usd
+                      AND tv2.tuik_model_adi ILIKE '%' || regexp_replace(tm2.model_name, '[^0-9]', '', 'g') || '%'
+                    ORDER BY tm2.id, tv2.fiyat_usd
                 ) subq
                 WHERE tm.id = subq.tm_id
-                  AND (tm.price_usd IS NULL OR tm.price_usd = 0)
             `);
-            if (syncResult.rowCount > 0) console.log(`💰 ${syncResult.rowCount} model fiyatı teknik_veri'den USD olarak senkronize edildi`);
+            if (numericSync.rowCount > 0) console.log(`💰 ${numericSync.rowCount} eski model numarayla eşleştirildi`);
 
-            // Eşleşmeyen markaları logla
-            const unmatchedBrands = await pool.query(`
-                SELECT DISTINCT UPPER(tv.marka) as teknik_marka
-                FROM teknik_veri tv
-                WHERE tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0
-                  AND NOT EXISTS (SELECT 1 FROM brands b WHERE UPPER(b.name) = UPPER(tv.marka))
-            `);
-            if (unmatchedBrands.rows.length > 0) {
-                console.log(`⚠️ teknik_veri'de eşleşmeyen markalar: ${unmatchedBrands.rows.map(r => r.teknik_marka).join(', ')}`);
-            }
-
-            // Tüm teknik_veri markalarını logla (debugging)
-            const allTeknikBrands = await pool.query('SELECT DISTINCT marka FROM teknik_veri WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0 ORDER BY marka');
-            console.log(`📋 teknik_veri markaları: ${allTeknikBrands.rows.map(r => r.marka).join(', ')}`);
-
-            // price_usd senkronize edilmemiş modelleri logla
+            // Hala price_usd boş olan modelleri logla
             const unsyncedModels = await pool.query(`
-                SELECT b.name as brand_name, tm.model_name, tm.price_usd
+                SELECT b.name as brand_name, tm.model_name
                 FROM tractor_models tm
                 JOIN brands b ON tm.brand_id = b.id
                 WHERE tm.is_current_model = true AND (tm.price_usd IS NULL OR tm.price_usd = 0)
@@ -4716,41 +4732,6 @@ async function initDB() {
                 unsyncedModels.rows.forEach(r => console.log(`   ${r.brand_name} / ${r.model_name}`));
             }
 
-            // Eşleşmeyen modelleri logla (teknik_veri'de var ama tractor_models'da yok)
-            const unmatchedModels = await pool.query(`
-                SELECT UPPER(tv.marka) as marka, tv.model as teknik_model, tv.fiyat_usd
-                FROM teknik_veri tv
-                JOIN brands b ON UPPER(b.name) = UPPER(tv.marka)
-                WHERE tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0
-                  AND NOT EXISTS (
-                    SELECT 1 FROM tractor_models tm
-                    WHERE tm.brand_id = b.id AND UPPER(tm.model_name) = UPPER(tv.model)
-                  )
-                LIMIT 30
-            `);
-            if (unmatchedModels.rows.length > 0) {
-                console.log(`⚠️ teknik_veri'de eşleşmeyen modeller (${unmatchedModels.rows.length}):`);
-                unmatchedModels.rows.forEach(r => console.log(`   ${r.marka} / ${r.teknik_model} → ${r.fiyat_usd} $`));
-            }
-
-            // CASE IH / CASE, DEUTZ-FAHR / DEUTZ gibi farklı isimlerde de eşleştir
-            const altBrandPairs = [
-                ['CASE', 'CASE IH'], ['DEUTZ', 'DEUTZ-FAHR'], ['KİOTİ', 'KIOTI']
-            ];
-            for (const [brandName, teknikName] of altBrandPairs) {
-                await pool.query(`
-                    UPDATE tractor_models tm
-                    SET price_usd = tv.fiyat_usd
-                    FROM teknik_veri tv
-                    JOIN brands b ON UPPER(b.name) = UPPER($1)
-                    WHERE tm.brand_id = b.id
-                      AND UPPER(tm.model_name) = UPPER(tv.tuik_model_adi)
-                      AND UPPER(tv.marka) = UPPER($2)
-                      AND tv.fiyat_usd IS NOT NULL
-                      AND tv.fiyat_usd > 0
-                      AND (tm.price_usd IS NULL OR tm.price_usd = 0)
-                `, [brandName, teknikName]);
-            }
             console.log('✅ USD fiyat senkronizasyonu tamamlandı');
         } catch (priceErr) {
             console.error('USD fiyat senkronizasyon hatası:', priceErr.message);
