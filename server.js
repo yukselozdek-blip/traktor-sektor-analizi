@@ -4665,7 +4665,21 @@ async function initDB() {
             const allTeknikBrands = await pool.query('SELECT DISTINCT marka FROM teknik_veri WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0 ORDER BY marka');
             console.log(`📋 teknik_veri markaları: ${allTeknikBrands.rows.map(r => r.marka).join(', ')}`);
 
-            // Eşleşmeyen modelleri logla (marka eşleşti ama model eşleşmedi)
+            // price_usd senkronize edilmemiş modelleri logla
+            const unsyncedModels = await pool.query(`
+                SELECT b.name as brand_name, tm.model_name, tm.price_usd
+                FROM tractor_models tm
+                JOIN brands b ON tm.brand_id = b.id
+                WHERE tm.is_current_model = true AND (tm.price_usd IS NULL OR tm.price_usd = 0)
+                ORDER BY b.name, tm.model_name
+                LIMIT 30
+            `);
+            if (unsyncedModels.rows.length > 0) {
+                console.log(`⚠️ price_usd boş olan modeller (${unsyncedModels.rows.length}):`);
+                unsyncedModels.rows.forEach(r => console.log(`   ${r.brand_name} / ${r.model_name}`));
+            }
+
+            // Eşleşmeyen modelleri logla (teknik_veri'de var ama tractor_models'da yok)
             const unmatchedModels = await pool.query(`
                 SELECT UPPER(tv.marka) as marka, tv.model as teknik_model, tv.fiyat_usd
                 FROM teknik_veri tv
@@ -4675,7 +4689,7 @@ async function initDB() {
                     SELECT 1 FROM tractor_models tm
                     WHERE tm.brand_id = b.id AND UPPER(tm.model_name) = UPPER(tv.model)
                   )
-                LIMIT 20
+                LIMIT 30
             `);
             if (unmatchedModels.rows.length > 0) {
                 console.log(`⚠️ teknik_veri'de eşleşmeyen modeller (${unmatchedModels.rows.length}):`);
@@ -4683,8 +4697,10 @@ async function initDB() {
             }
 
             // CASE IH / CASE, DEUTZ-FAHR / DEUTZ gibi farklı isimlerde de eşleştir
-            const altBrandMap = { 'CASE': 'CASE IH', 'DEUTZ': 'DEUTZ-FAHR', 'MASSEY FERGUSON': 'MF', 'MASSEY FERGUSON': 'MASSEY-FERGUSON' };
-            for (const [brandName, teknikName] of Object.entries(altBrandMap)) {
+            const altBrandPairs = [
+                ['CASE', 'CASE IH'], ['DEUTZ', 'DEUTZ-FAHR'], ['KİOTİ', 'KIOTI']
+            ];
+            for (const [brandName, teknikName] of altBrandPairs) {
                 await pool.query(`
                     UPDATE tractor_models tm
                     SET price_usd = tv.fiyat_usd
