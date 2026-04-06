@@ -483,6 +483,11 @@ VERİTABANI ŞEMASI:
 --   price_usd DECIMAL (USD fiyat - teknik_veri.fiyat_usd kaynağından), category VARCHAR, cabin_type VARCHAR, drive_type VARCHAR, gear_config VARCHAR
 --   NOT: Fiyat sorguları için DAİMA price_usd kullan. TL fiyat (price_list_tl) KULLANILMAZ.
 
+-- teknik_veri: id SERIAL, marka VARCHAR, model VARCHAR, tuik_model_adi VARCHAR, fiyat_usd DECIMAL,
+--   emisyon_seviyesi VARCHAR, cekis_tipi VARCHAR, koruma VARCHAR, vites_sayisi VARCHAR,
+--   mensei VARCHAR, motor_marka VARCHAR, silindir_sayisi INT, motor_gucu_hp DECIMAL
+--   NOT: Fiyat sorguları için teknik_veri.fiyat_usd kullan
+
 HP SEGMENTLERI: '1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'
 KATEGORİLER: 'tarla','bahce'
 ÇEKIS: '2WD','4WD'
