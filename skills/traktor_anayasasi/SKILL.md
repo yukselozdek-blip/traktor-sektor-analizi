@@ -195,10 +195,21 @@ Yeni bir sekme eklerken şu adımlar takip edilmelidir:
 
 ### 6.6 Sayı Formatlama Kuralları
 ```javascript
-fmtNum(n)   // 5.000 → "5 B", 10.000.000 → "10 M", <1000 → "1.234"
-fmtPrice(n) // 5.000 → "5 B ₺", 8.250.000 → "8.3 M ₺"
+fmtNum(n)   // 1.500 → "1,5 B", 10.000.000 → "10 M", 2.500.000.000 → "2,5 Mr", <1000 → "1.234"
+fmtPrice(n) // 5.000 → "5 B $", 8.250.000 → "8,3 M $", 1.200.000.000 → "1,2 Mr $"
 fmtPct(n)   // 45.67 → "45.7%"
 ```
+
+**Para Birimi Kuralı:** Traktör fiyatları veritabanında dolar ($) bazında kayıtlıdır. Tüm fiyat ve ciro gösterimlerinde **$** kullanılır, **₺** kullanılmaz. Tek istisna: abonelik planı fiyatları (₺ ile satılır).
+
+**Kısaltma Kuralı (Türkçe):**
+| Büyüklük | Kısaltma | Örnek |
+|----------|----------|-------|
+| Bin (1.000) | B | 5,2 B |
+| Milyon (1.000.000) | M | 45,6 M |
+| Milyar (1.000.000.000) | Mr | 1,2 Mr |
+
+**Ondalık Ayracı:** Virgül kullanılır (Türkçe format). 45.6 → "45,6"
 
 ### 6.7 Chart.js Kuralları
 - Canvas mutlaka `<div style="position:relative;height:XXXpx;">` içinde olmalı (sonsuz büyüme engeli)

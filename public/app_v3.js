@@ -3451,16 +3451,18 @@ async function loadModelRegionPage() {
 function fmtNum(n) {
     if (n == null || isNaN(n)) return '-';
     const abs = Math.abs(n);
-    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + ' M';
-    if (abs >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + ' B';
+    if (abs >= 1000000000) return (n / 1000000000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' Mr';
+    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' M';
+    if (abs >= 1000) return (n / 1000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' B';
     return n.toLocaleString('tr-TR');
 }
 function fmtPrice(n) {
     if (!n || n === 0) return '-';
     const abs = Math.abs(n);
-    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + ' M ₺';
-    if (abs >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + ' B ₺';
-    return n.toLocaleString('tr-TR') + ' ₺';
+    if (abs >= 1000000000) return (n / 1000000000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' Mr $';
+    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' M $';
+    if (abs >= 1000) return (n / 1000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' B $';
+    return n.toLocaleString('tr-TR') + ' $';
 }
 function fmtPct(n, dec = 1) { return n != null ? n.toFixed(dec) + '%' : '-'; }
 
@@ -3494,7 +3496,7 @@ async function loadBenchmarkPage() {
         // ── KATMAN 1: SCORECARD DATA ──
         const sc = [
             { icon:'fas fa-horse-head', label:'Ort. Beygir Gücü', v1: d1.avgHp + ' HP', v2: d2.avgHp + ' HP', w: d1.avgHp >= d2.avgHp ? 1 : 2 },
-            { icon:'fas fa-coins', label:'Birim Güç Maliyeti (₺/HP)', v1: d1.costPerHp > 0 ? fmtNum(Math.round(d1.costPerHp)) + ' ₺' : 'N/A', v2: d2.costPerHp > 0 ? fmtNum(Math.round(d2.costPerHp)) + ' ₺' : 'N/A', w: (d1.costPerHp > 0 && d2.costPerHp > 0) ? (d1.costPerHp <= d2.costPerHp ? 1 : 2) : 0 },
+            { icon:'fas fa-coins', label:'Birim Güç Maliyeti ($/HP)', v1: d1.costPerHp > 0 ? fmtNum(Math.round(d1.costPerHp)) + ' $' : 'N/A', v2: d2.costPerHp > 0 ? fmtNum(Math.round(d2.costPerHp)) + ' $' : 'N/A', w: (d1.costPerHp > 0 && d2.costPerHp > 0) ? (d1.costPerHp <= d2.costPerHp ? 1 : 2) : 0 },
             { icon:'fas fa-tractor', label:'Toplam Satış (' + max_year + ')', v1: fmtNum(d1.yearly[max_year] || d1.currPartial), v2: fmtNum(d2.yearly[max_year] || d2.currPartial), w: (d1.currPartial) >= (d2.currPartial) ? 1 : 2 },
             { icon:'fas fa-chart-pie', label:'Pazar Payı (' + max_year + ')', v1: fmtPct(brand1.mktShare[max_year]), v2: fmtPct(brand2.mktShare[max_year]), w: (brand1.mktShare[max_year] || 0) >= (brand2.mktShare[max_year] || 0) ? 1 : 2 },
             { icon:'fas fa-tag', label:'Ort. Liste Fiyatı', v1: d1.avgPrice > 0 ? fmtPrice(d1.avgPrice) : 'N/A', v2: d2.avgPrice > 0 ? fmtPrice(d2.avgPrice) : 'N/A', w: 0 },
@@ -3852,7 +3854,7 @@ async function loadBenchmarkPage() {
                 },
                 scales: {
                     x:{title:{display:true,text:'Beygir Gücü (HP)',color:'#94a3b8'},ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,0.05)'}},
-                    y:{title:{display:true,text:'Liste Fiyatı (₺)',color:'#94a3b8'},ticks:{color:'#64748b',callback:v=>fmtPrice(v)},grid:{color:'rgba(255,255,255,0.05)'}}
+                    y:{title:{display:true,text:'Liste Fiyatı ($)',color:'#94a3b8'},ticks:{color:'#64748b',callback:v=>fmtPrice(v)},grid:{color:'rgba(255,255,255,0.05)'}}
                 }
             }
         });
