@@ -487,6 +487,7 @@ KATEGORİLER: 'tarla','bahce'
 ÇEKIS: '2WD','4WD'
 KABİN: 'kabinli','rollbar'
 VİTES: '8+2','8+8','12+12','16+16','32+32','CVT'
+BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu','Güneydoğu Anadolu'
 
 KURALLAR:
 1. Satış sorguları için DAİMA "FROM sales_view" kullan (sales_data değil!)
@@ -498,6 +499,9 @@ KURALLAR:
 7. SUM(quantity) ile satış toplamı al
 8. Yıl belirtilmemişse en son veri yılını kullan
 9. SADECE geçerli SQL döndür, açıklama ekleme
+10. Sorunun karmaşıklığına göre birden fazla boyut çek (marka, il, HP, kategori, YoY)
+11. Karşılaştırma sorularında hem mevcut hem önceki dönem verilerini çek
+12. provinces tablosundaki soil_type, climate_zone, primary_crops sütunlarını coğrafi sorularda kullan
 `;
 
 async function textToSql(question) {
@@ -509,6 +513,10 @@ async function textToSql(question) {
     const userPrompt = `Kullanıcı sorusu: "${question}"
 
 Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
+- Basit soru ("kaç satıldı?") → basit SUM/COUNT sorgusu yeter
+- Karşılaştırma sorusu → ilgili boyutları yan yana getir (marka, il, yıl bazında)
+- Çok boyutlu/derin soru → gerekli tüm JOIN'leri yap, provinces tablosundaki soil_type/climate_zone/primary_crops alanlarını dahil et
+- Eğer yıllık değişim/trend soruluyorsa, hem mevcut hem önceki yıl verilerini çek
 Sadece SQL kodu döndür, başka bir şey yazma. Açıklama ekleme.
 Eğer soru veritabanıyla ilgili değilse veya SQL yazılamıyorsa sadece "UNSUPPORTED" yaz.`;
 
@@ -575,23 +583,46 @@ async function executeSafeSql(sql) {
 async function interpretResults(question, sql, result) {
     if (!GROQ_API_KEY) return null;
 
-    const dataPreview = JSON.stringify(result.rows.slice(0, 15), null, 0);
-    const systemPrompt = `Sen kıdemli bir traktör sektörü veri analistisin. 20+ yıl deneyimin var.
-Kullanıcının WhatsApp üzerinden sorduğu soruyu, veritabanından dönen sonuçlarla birlikte cevapla.
+    const dataPreview = JSON.stringify(result.rows.slice(0, 20), null, 0);
+    const isSimpleQuestion = question.split(/\s+/).length <= 8 && !/karşılaştır|neden|analiz|strateji|tavsiye|yorum|değerlendir/i.test(question);
+    const depthInstruction = isSimpleQuestion
+        ? 'KISA CEVAP VER. Sadece sorulan veriyi net olarak sun. Sorulmayan bilgileri ekleme. 2-4 satır yeterli.'
+        : 'DERİN ANALİZ YAP. Veriyi çok boyutlu yorumla, neden-sonuç ilişkisi kur, sektörel bağlam ekle, stratejik tavsiye ver.';
 
-KURALLAR:
-1. Kısa, öz ve profesyonel cevap ver (WhatsApp mesajı, max 500 karakter)
-2. Sayıları Türkçe formatta yaz (nokta ile binlik ayracı: 1.234)
-3. Yüzdeleri virgüllü yaz (%12,5)
-4. Sektörel yorum ekle (kısa, 1-2 cümle)
-5. Emoji kullanabilirsin (📊 🏆 📈 📉 🚜)
-6. Eğer veri yoksa bunu belirt
-7. Karşılaştırma varsa farkı ve trendi vurgula`;
+    const systemPrompt = `Sen, Türkiye Tarım Makinaları ve Traktör Sektörü üzerine uzmanlaşmış *Kıdemli Veri Analisti ve Tarım Stratejisti*sin. 20+ yıl sektör deneyimin var.
 
-    const userPrompt = `Soru: "${question}"
-SQL: ${sql}
-Toplam satır: ${result.rowCount}
-Sonuç (ilk 15): ${dataPreview}`;
+TEMEL FELSEFE: SIFIR ŞABLON POLİTİKASI
+- Sabit "Pazar Bülteni" şablonları YASAK. Her cevap o soruya özel "terzi işi" yazılır.
+- ${depthInstruction}
+
+ÖLÇEKLENEBİLİR DERİNLİK:
+- Basit soru ("kaç traktör satıldı?") → Sadece istenen veriyi ver, süslemeden. Örn: "2025 yılı toplam traktör satış adedi 18.914'tür."
+- Karmaşık soru ("Karasal iklimde buğday yoğun illerde 4WD oranı?") → Coğrafi/tarımsal bağlam, neden-sonuç, stratejik yorum ekle.
+
+BAĞLAM VE YORUMLAMA:
+- Rakamları sadece listeleme, hikayeye dönüştür. "%32 düşüş" yerine "Pazarda %32'lik daralma, özellikle 50-60 HP segmentindeki küçük çiftçi yatırımlarının yavaşlamasından kaynaklanıyor"
+- 4WD yüksekse → dağlık arazi, ağır toprak, pancar/patates bölgesi olabilir
+- Bahçe traktörü yoğunsa → Ege, Akdeniz, narenciye/zeytin kuşağı
+- Tarla traktörü yoğunsa → İç Anadolu, tahıl kuşağı
+- HP segmenti büyükse → büyük işletme, kiralama, müteahhitlik
+
+WHATSAPP FORMATLAMA:
+- Vurgu: *kalın metin* kullan
+- Listeler: tire (-) veya emoji (🚜 📊 📉 🌱) ile
+- Çok emoji kullanma, ciddi ama modern kurumsal dil
+- Sayılar: Türkçe format (1.234 ve %12,5)
+- Paragraflar kısa, WhatsApp'ta okunabilir
+
+HALÜSİNASYON ÖNLEYİCİ:
+- Veritabanında olmayan kırılım sorulursa uydurma. "Bu kırılım veritabanında mevcut değil, ancak mevcut verilerle en yakın analiz şudur..." de.
+- SADECE gelen SQL sonuç verisine dayanarak cevap ver, veri dışı rakam üretme.`;
+
+    const userPrompt = `Kullanıcı sorusu: "${question}"
+Çalıştırılan SQL: ${sql}
+Toplam satır sayısı: ${result.rowCount}
+Dönen veri: ${dataPreview}
+
+Bu veriye dayanarak soruya cevap ver. Sabit şablon kullanma, soruya özel cevap yaz.`;
 
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -602,8 +633,8 @@ Sonuç (ilk 15): ${dataPreview}`;
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
             ],
-            temperature: 0.3,
-            max_tokens: 600
+            temperature: 0.4,
+            max_tokens: 1500
         })
     });
 
@@ -613,13 +644,10 @@ Sonuç (ilk 15): ${dataPreview}`;
 }
 
 async function resolveAssistantQuestion(question) {
-    const [brands, latestPeriod] = await Promise.all([
-        getBrandCatalog(),
-        getLatestSalesPeriod()
-    ]);
+    const latestPeriod = await getLatestSalesPeriod();
 
     if (!latestPeriod) {
-        return { ok: false, answer: 'Henuz satis verisi bulunmuyor.', intent: 'no_data' };
+        return { ok: false, answer: 'Henüz satış verisi bulunmuyor.', intent: 'no_data' };
     }
 
     // Yardım komutu
@@ -627,61 +655,17 @@ async function resolveAssistantQuestion(question) {
     if (['yardim', 'help', 'komutlar', 'neler sorabilirm', 'merhaba', 'selam'].some(k => normalizedQ.includes(k))) {
         return {
             ok: true, intent: 'help',
-            answer: `🚜 *Traktör Sektör AI Asistan*\n\nBana her türlü soru sorabilirsiniz:\n\n📊 "2024 yılında en çok satan 5 marka"\n🏆 "New Holland ile John Deere karşılaştır"\n📈 "Konya'da hangi HP segmenti çok satıyor?"\n🗺️ "Ege bölgesinde 4WD oranı nedir?"\n💰 "En pahalı 10 traktör modeli"\n🌾 "Bahçe traktörlerinde lider marka"\n📉 "2023-2024 pazar büyüme oranı"\n\nDoğal dilde soru sorun, ben veritabanından analiz yapayım!`
+            answer: `🚜 *Traktör Sektör AI Asistan*\n\nTürkiye traktör sektörü hakkında her soruyu yanıtlarım:\n\n📊 "2025'te kaç traktör satıldı?"\n🏆 "New Holland ile Massey Ferguson'u karşılaştır"\n📈 "Konya'da hangi HP segmenti çok satıyor?"\n🗺️ "Ege bölgesinde 4WD oranı nedir?"\n🌾 "Bahçe traktörlerinde lider marka"\n📉 "Geçen yıla göre pazar nasıl değişti?"\n💡 "Karasal iklimde buğday illeri analizi"\n\nBasit sorulara kısa, karmaşık sorulara derin analiz sunarım.`
         };
     }
 
-    // İlk deneme: Mevcut built-in intent'ler (hızlı, özel formatlanmış)
-    const years = extractYears(question);
-    const heuristicBrands = findBrandsInQuestion(question, brands);
-    const groqQuery = await inferSalesQueryWithGroq(question, brands, latestPeriod);
-    const targetYear = groqQuery?.year || years[0] || latestPeriod.year;
-    const matchedBrands = groqQuery?.brands?.length ? groqQuery.brands : heuristicBrands;
-
-    // Market overview
-    if (groqQuery?.intent === 'market_overview' || (!matchedBrands.length && /pazar|market|lider mark|genel ozet|özet|ozet|top marka/i.test(question))) {
-        try {
-            const report = await buildMarketOverviewData(targetYear, latestPeriod);
-            return {
-                ok: true, intent: 'market_overview',
-                answer: buildMarketOverviewMessage(report),
-                parser: 'built-in', data: report
-            };
-        } catch (e) { /* built-in başarısız, text-to-sql denesin */ }
-    }
-
-    // Karşılaştırma
-    const compareMode = groqQuery?.intent === 'brand_year_compare' || isComparisonQuestion(question, matchedBrands);
-    if (compareMode && matchedBrands.length >= 2) {
-        try {
-            const report = await buildBrandCompareExecutiveData(matchedBrands.slice(0, 2), targetYear, latestPeriod);
-            return {
-                ok: true, intent: 'brand_year_compare',
-                answer: buildBrandCompareMessage(report),
-                parser: 'built-in', data: report
-            };
-        } catch (e) { /* fallback */ }
-    }
-
-    // Tek marka sorgusu
-    if (groqQuery?.intent === 'brand_year_total' && matchedBrands.length === 1) {
-        try {
-            const report = await buildBrandExecutiveData(matchedBrands[0], targetYear, latestPeriod);
-            return {
-                ok: true, intent: 'brand_year_total',
-                answer: buildBrandExecutiveMessage(report),
-                parser: 'built-in', data: report
-            };
-        } catch (e) { /* fallback */ }
-    }
-
-    // ═══ TEXT-TO-SQL MOTORU (Esnek sorgulama) ═══
+    // ═══ TEXT-TO-SQL MOTORU — Tüm sorular buradan geçer ═══
     console.log(`🤖 Text-to-SQL aktif: "${question}"`);
     const sql = await textToSql(question);
     if (!sql) {
         return {
             ok: false, intent: 'unsupported',
-            answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak örnek sorular görebilirsiniz.'
+            answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak neler sorabileceğinizi görebilirsiniz.'
         };
     }
 
@@ -689,22 +673,21 @@ async function resolveAssistantQuestion(question) {
     const result = await executeSafeSql(sql);
     if (result.error) {
         console.error(`❌ SQL hata: ${result.error}`);
-        // Hata durumunda kullanıcıya teknik detay gösterme
         return {
             ok: false, intent: 'sql_error',
-            answer: 'Sorgunuz işlenirken bir hata oluştu. Lütfen sorunuzu farklı şekilde ifade edin.'
+            answer: 'Sorgunuz işlenirken teknik bir hata oluştu. Lütfen sorunuzu farklı şekilde ifade edin veya daha spesifik bir kriter belirtin.'
         };
     }
 
     if (!result.rows || result.rows.length === 0) {
         return {
             ok: true, intent: 'text_to_sql',
-            answer: '📊 Sorgunuz için veri bulunamadı. Farklı bir yıl, marka veya kriter deneyebilirsiniz.',
+            answer: 'Sorgunuz için veri bulunamadı. Farklı bir yıl, marka veya bölge deneyebilirsiniz.',
             sql
         };
     }
 
-    // AI ile sonuçları yorumla
+    // AI ile sonuçları soruya özel yorumla
     const interpretation = await interpretResults(question, sql, result);
     if (interpretation) {
         return {
@@ -718,7 +701,7 @@ async function resolveAssistantQuestion(question) {
 
     // AI yorumlama başarısız olursa ham veriyi formatla
     const fields = result.fields || Object.keys(result.rows[0] || {});
-    let plainAnswer = `📊 Sorgu sonucu (${result.rowCount} satır):\n\n`;
+    let plainAnswer = `📊 *Sorgu Sonucu* (${result.rowCount} satır)\n\n`;
     result.rows.slice(0, 10).forEach((row, i) => {
         const vals = fields.map(f => `${f}: ${row[f] != null ? row[f] : '-'}`).join(' | ');
         plainAnswer += `${i + 1}. ${vals}\n`;
@@ -1669,68 +1652,54 @@ app.get('/api/public/whatsapp/webhook', async (req, res) => {
     return res.status(403).send('verify token mismatch');
 });
 
+
 app.post('/api/public/whatsapp/webhook', async (req, res) => {
     // 1. Meta'ya anında yanıt ver (HTTP 200)
     res.status(200).json({ received: true });
 
     try {
-        // GEÇİCİ LOG: Gelen tüm paketi görelim
-        console.log("📦 Webhook tetiklendi! Gelen Body:", JSON.stringify(req.body, null, 2));
-
         const entry = req.body.entry?.[0];
         const change = entry?.changes?.[0];
         const value = change?.value || {};
         const message = value.messages?.[0];
 
-        // Eğer mesaj değilse (örn: okundu bilgisi) sessizce çıkma, bize haber ver
-        if (!message) {
-            console.log("⚠️ Bu bir mesaj değil, durum güncellemesi (iletildi/okundu vs).");
-            return;
-        }
-        if (message.type !== 'text') {
-            console.log(`⚠️ Mesaj text formatında değil. Format: ${message.type}`);
-            return;
-        }
+        // Eğer mesaj değilse sessizce çık
+        if (!message || message.type !== 'text') return;
 
         const question = message.text?.body?.trim();
         const from = message.from;
-        const messageId = message.id;
         const profileName = value.contacts?.[0]?.profile?.name || 'Bilinmiyor';
 
         if (!question || !from) return;
 
-        // MESAJI YAKALADIĞIMIZI GÖRELİM
         console.log(`\n🟢 YENİ MESAJ -> Kimden: ${profileName} (${from}) | Soru: "${question}"\n`);
 
-        // n8n YÖNLENDİRME TESTİ
-        try {
-            console.log("🔄 Soru n8n'e yönlendiriliyor...");
-            const n8nResult = await forwardWhatsAppEventToN8n({
-                question,
-                from,
-                message_id: messageId,
-                profile_name: profileName
-            });
+        // --- N8N YÖNLENDİRMESİ TAMAMEN KALDIRILDI ---
+        // Doğrudan kendi sisteminizdeki Groq AI modelini çalıştırıyoruz
 
-            if (n8nResult) {
-                console.log("✅ Mesaj başarıyla n8n'e iletildi! Süreç n8n üzerinde devam ediyor.");
-                return;
-            }
-        } catch (forwardErr) {
-            console.error('❌ n8n Yönlendirme Hatası (Node.js AI fonksiyona düşecek):', forwardErr.message);
+        console.log("🤖 Node.js AI (resolveAssistantQuestion) devreye giriyor...");
+
+        try {
+            // Yapay zeka soruyu SQL'e çevirip cevabı üretiyor
+            const result = await resolveAssistantQuestion(question);
+            console.log("✅ AI Cevabı Başarıyla Üretildi:", result.answer);
+
+            // Üretilen cevabı WhatsApp'a geri gönderiyor
+            console.log("📤 AI Cevabı WhatsApp'a gönderiliyor...");
+            const whatsappResponse = await sendWhatsAppTextMessage(from, result.answer || 'Anlayamadım, tekrar sorar mısınız?');
+            console.log("✅ WhatsApp Gönderim Başarılı!");
+
+        } catch (aiError) {
+            console.error('❌ YZ veya WhatsApp Gönderim Hatası:', aiError.message, aiError.response?.data);
         }
 
-        console.log("🤖 n8n kullanılamadı, doğrudan Node.js AI (resolveAssistantQuestion) devreye giriyor...");
-        const result = await resolveAssistantQuestion(question);
-
-        console.log("📤 AI Cevabı hazırlandı, WhatsApp'a geri gönderiliyor...");
-        await sendWhatsAppTextMessage(from, result.answer || 'Sorunuz islenemedi.');
-        console.log("✅ AI Cevabı gönderildi!");
-
     } catch (err) {
-        console.error('❌ WhatsApp Webhook İç Hatası:', err);
+        console.error('❌ WhatsApp Webhook Genel İç Hatası:', err);
     }
 });
+
+
+
 
 
 
