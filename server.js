@@ -551,6 +551,54 @@ Eğer soru veritabanıyla ilgili değilse veya SQL yazılamıyorsa sadece "UNSUP
     return sql;
 }
 
+async function textToSqlRetry(question, failedSql, errorMessage) {
+    if (!GROQ_API_KEY) return null;
+
+    const latestPeriod = await getLatestSalesPeriod();
+    const systemPrompt = DB_SCHEMA_PROMPT + `\nGüncel en son yıl: ${latestPeriod?.year || 2025}, en son ay: ${latestPeriod?.month || 5}`;
+
+    const userPrompt = `Kullanıcı sorusu: "${question}"
+
+Önceki SQL sorgusu HATA verdi:
+SQL: ${failedSql}
+Hata: ${errorMessage}
+
+Hatayı düzelt ve çalışan bir PostgreSQL SELECT sorgusu yaz.
+- Division by zero hatası varsa NULLIF kullan
+- Syntax hatası varsa SQL yapısını düzelt (SELECT, FROM, JOIN, WHERE, GROUP BY sırası)
+- Sadece SQL kodu döndür, açıklama ekleme.`;
+
+    try {
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.05,
+                max_tokens: 800
+            })
+        });
+
+        if (!groqRes.ok) return null;
+        const data = await groqRes.json();
+        let sql = data.choices?.[0]?.message?.content?.trim();
+        if (!sql || sql === 'UNSUPPORTED') return null;
+
+        sql = sql.replace(/^```sql\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+        sql = sql.split(';')[0].trim();
+        if (!isSafeSql(sql)) return null;
+
+        return sql;
+    } catch (err) {
+        console.error('Text-to-SQL retry error:', err.message);
+        return null;
+    }
+}
+
 function isSafeSql(sql) {
     const upper = sql.toUpperCase();
     const dangerous = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'COPY'];
@@ -568,11 +616,15 @@ async function executeSafeSql(sql) {
         return { error: 'Güvenlik: Sadece SELECT sorguları çalıştırılabilir.' };
     }
 
-    // Timeout ile çalıştır (5 saniye)
+    // Division by zero koruması: NULLIF ile sıfıra bölmeyi önle
+    sql = sql.replace(/\/\s*SUM\(([^)]+)\)/g, '/ NULLIF(SUM($1), 0)');
+    sql = sql.replace(/\/\s*COUNT\(([^)]+)\)/g, '/ NULLIF(COUNT($1), 0)');
+
+    // Timeout ile çalıştır (8 saniye - karmaşık sorgular için)
     try {
         const result = await Promise.race([
             pool.query(sql),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Sorgu zaman asimi (5s)')), 5000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Sorgu zaman asimi (8s)')), 8000))
         ]);
         return { rows: result.rows, rowCount: result.rowCount, fields: result.fields?.map(f => f.name) };
     } catch (err) {
@@ -661,7 +713,7 @@ async function resolveAssistantQuestion(question) {
 
     // ═══ TEXT-TO-SQL MOTORU — Tüm sorular buradan geçer ═══
     console.log(`🤖 Text-to-SQL aktif: "${question}"`);
-    const sql = await textToSql(question);
+    let sql = await textToSql(question);
     if (!sql) {
         return {
             ok: false, intent: 'unsupported',
@@ -670,9 +722,21 @@ async function resolveAssistantQuestion(question) {
     }
 
     console.log(`📝 Üretilen SQL: ${sql}`);
-    const result = await executeSafeSql(sql);
+    let result = await executeSafeSql(sql);
+
+    // SQL hatası varsa, hatayı Groq'a gönderip düzeltmesini iste (1 retry)
     if (result.error) {
-        console.error(`❌ SQL hata: ${result.error}`);
+        console.log(`🔄 SQL retry: hata="${result.error}"`);
+        const retrySql = await textToSqlRetry(question, sql, result.error);
+        if (retrySql) {
+            console.log(`📝 Düzeltilmiş SQL: ${retrySql}`);
+            sql = retrySql;
+            result = await executeSafeSql(retrySql);
+        }
+    }
+
+    if (result.error) {
+        console.error(`❌ SQL hata (retry sonrası): ${result.error}`);
         return {
             ok: false, intent: 'sql_error',
             answer: 'Sorgunuz işlenirken teknik bir hata oluştu. Lütfen sorunuzu farklı şekilde ifade edin veya daha spesifik bir kriter belirtin.'
