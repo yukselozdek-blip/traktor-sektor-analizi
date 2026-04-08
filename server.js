@@ -502,7 +502,11 @@ BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu',
 -- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE p.name ILIKE '%Konya%' GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
 -- En çok satan model (il): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 5
 -- Teknik özellik: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd, kullanim_alani FROM teknik_veri WHERE UPPER(marka) = 'NEW HOLLAND' AND (UPPER(tuik_model_adi) ILIKE '%BOOMER%' OR UPPER(model) ILIKE '%BOOMER%')
--- Ciro hesaplama: SELECT b.name, SUM(sv.quantity) as adet, SUM(sv.quantity * tv.fiyat_usd) as ciro_usd FROM sales_view sv JOIN brands b ON sv.brand_id=b.id LEFT JOIN teknik_veri tv ON UPPER(tv.marka) = UPPER(b.name) WHERE sv.year=2023 AND b.name = 'HATTAT' GROUP BY b.name
+-- Ciro hesaplama (ÖNEMLİ: teknik_veri ile sales_view arasında model JOIN yok, AVG fiyat ile subquery kullan):
+-- SELECT b.name, SUM(sv.quantity) as adet,
+--   SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = UPPER(b.name) AND tv.fiyat_usd > 0) as tahmini_ciro_usd
+-- FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2023 AND UPPER(b.name) = 'HATTAT' GROUP BY b.name
+-- DİKKAT: teknik_veri ile sales_view'i doğrudan JOIN yapma! Kartezyen çarpım olur. Subquery kullan.
 -- Bahçe traktörü lider: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.category='bahce' GROUP BY b.name ORDER BY toplam DESC LIMIT 5
 -- İl toprak/iklim: SELECT p.name, p.soil_type, p.climate_zone, p.primary_crops FROM provinces p WHERE p.name ILIKE '%Kars%'
 
@@ -521,7 +525,7 @@ KURALLAR:
 12. Karşılaştırma sorularında hem mevcut hem önceki dönem verilerini çek
 13. provinces tablosundaki soil_type, climate_zone, primary_crops sütunlarını coğrafi sorularda kullan
 14. Teknik özellik soruları için teknik_veri tablosunu kullan (marka, model, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, fiyat_usd, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, kullanim_alani)
-15. "Ciro", "gelir", "satış tutarı" → SUM(quantity * fiyat_usd) hesapla
+15. "Ciro", "gelir", "satış tutarı" → Subquery ile AVG(fiyat_usd) hesapla, teknik_veri ile sales_view'i doğrudan JOIN YAPMA (kartezyen çarpım olur)
 16. "Lider", "en çok", "birinci" → ORDER BY ... DESC LIMIT 1-5 kullan
 `;
 
@@ -542,7 +546,8 @@ Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
 - "Lider marka", "en çok satan", "en popüler" → SUM(quantity) ile ORDER BY DESC LIMIT 1-5
 - "kaç traktör satıldı" → SUM(quantity) FROM sales_view
 - Teknik özellik soruları → teknik_veri tablosundan çek: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd FROM teknik_veri
-- "Ciro/gelir/satış tutarı" → SUM(quantity * tm.price_usd) FROM sales_view sv JOIN tractor_models tm ON ... (veya doğrudan teknik_veri.fiyat_usd)
+- "Ciro/gelir/satış tutarı" → DİKKAT: teknik_veri ile sales_view arasında model seviyesinde JOIN YOK. Subquery ile AVG fiyat hesapla:
+  SELECT b.name, SUM(sv.quantity) as adet, SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = UPPER(b.name) AND tv.fiyat_usd > 0) as tahmini_ciro_usd FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE ... GROUP BY b.name
 - Marka + model teknik bilgi → teknik_veri tablosunda WHERE UPPER(marka) = 'MARKA' AND (UPPER(tuik_model_adi) ILIKE '%MODEL%' OR UPPER(model) ILIKE '%MODEL%')
 - "Bu model", "onun", "önceki" gibi referanslar → KONUŞMA BAĞLAMI'ndan çöz, önceki soruda geçen marka/model/il/yıl bilgilerini kullan
 - Basit soru ("kaç satıldı?") → basit SUM/COUNT sorgusu yeter
@@ -602,6 +607,9 @@ Hata: ${errorMessage}
 Hatayı düzelt ve çalışan bir PostgreSQL SELECT sorgusu yaz.
 - Division by zero hatası varsa NULLIF kullan
 - Syntax hatası varsa SQL yapısını düzelt (SELECT, FROM, JOIN, WHERE, GROUP BY sırası)
+- Timeout/performans hatası varsa sorguyu sadeleştir, gereksiz JOIN çıkar
+- Ciro hesaplamada teknik_veri ile sales_view'i doğrudan JOIN YAPMA (kartezyen çarpım olur). Subquery kullan:
+  SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = UPPER(b.name) AND tv.fiyat_usd > 0)
 - Sadece SQL kodu döndür, açıklama ekleme.`;
 
     try {
