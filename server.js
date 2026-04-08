@@ -884,78 +884,75 @@ async function resolveAssistantQuestion(question, phoneNumber) {
     const conversationCtx = buildConversationContext(history);
 
     // ═══ CİRO SORGULARI İÇİN ÖZEL MOTOR ═══
-    // Groq'un kartezyen çarpım hatasını önlemek için ciro SQL'ini biz üretiyoruz
-    const ciroSql = buildCiroSql(question, history, latestPeriod);
-    if (ciroSql) {
-        console.log(`💰 Ciro özel motoru aktif: ${ciroSql}`);
-        const ciroResult = await executeSafeSql(ciroSql);
-        if (ciroResult.error) {
-            console.error(`❌ Ciro SQL hatası: ${ciroResult.error}`);
-        }
-        if (!ciroResult.error && ciroResult.rows && ciroResult.rows.length > 0) {
-            const row = ciroResult.rows[0];
-            console.log(`💰 Ciro sonucu:`, JSON.stringify(row));
-            const adet = Number(row.adet) || 0;
-            const ciroUsd = Number(row.tahmini_ciro_usd) || 0;
-            const avgPrice = Number(row.ortalama_fiyat_usd) || 0;
-            const marka = row.marka || '?';
-            const yil = row.yil || '';
+    try {
+        const ciroSql = buildCiroSql(question, history, latestPeriod);
+        console.log(`💰 buildCiroSql sonucu: ${ciroSql ? 'SQL üretildi' : 'null (ciro değil)'}`);
+        if (ciroSql) {
+            console.log(`💰 Ciro SQL: ${ciroSql.substring(0, 200)}`);
+            const ciroResult = await executeSafeSql(ciroSql);
+            console.log(`💰 Ciro execute: error=${ciroResult.error || 'yok'}, rows=${ciroResult.rows?.length || 0}`);
+            if (ciroResult.error) {
+                console.error(`❌ Ciro SQL hatası: ${ciroResult.error}`);
+            }
+            if (!ciroResult.error && ciroResult.rows && ciroResult.rows.length > 0) {
+                const row = ciroResult.rows[0];
+                console.log(`💰 Ciro ham veri:`, JSON.stringify(row));
+                const adet = Number(row.adet) || 0;
+                const ciroUsd = Number(row.tahmini_ciro_usd) || 0;
+                const avgPrice = Number(row.ortalama_fiyat_usd) || 0;
+                const marka = row.marka || '?';
+                const yil = row.yil || '';
 
-            // Ciro NULL/0 ise → fiyat verisi yok
-            if (ciroUsd === 0 || avgPrice === 0) {
-                console.log(`⚠️ Ciro=0 for ${marka}. teknik_veri'de fiyat bulunamadı. Alternatif: tractor_models.price_usd denenecek`);
-                // Fallback: tractor_models.price_usd üzerinden dene
-                const fallbackSql = `SELECT b.name as marka, ${yil} as yil, SUM(sv.quantity) as adet,
-                    (SELECT AVG(tm.price_usd) FROM tractor_models tm WHERE tm.brand_id = b.id AND tm.price_usd IS NOT NULL AND tm.price_usd > 0 AND tm.is_current_model = true) as ortalama_fiyat_usd,
-                    SUM(sv.quantity) * (SELECT AVG(tm.price_usd) FROM tractor_models tm WHERE tm.brand_id = b.id AND tm.price_usd IS NOT NULL AND tm.price_usd > 0 AND tm.is_current_model = true) as tahmini_ciro_usd
-                FROM sales_view sv JOIN brands b ON sv.brand_id = b.id
-                WHERE UPPER(b.name) = '${marka.toUpperCase()}' AND sv.year = ${yil}
-                GROUP BY b.name, b.id`;
-                const fbResult = await executeSafeSql(fallbackSql);
-                if (!fbResult.error && fbResult.rows && fbResult.rows.length > 0) {
-                    const fbRow = fbResult.rows[0];
-                    const fbCiro = Number(fbRow.tahmini_ciro_usd) || 0;
-                    const fbAvg = Number(fbRow.ortalama_fiyat_usd) || 0;
-                    if (fbCiro > 0 && fbAvg > 0) {
-                        console.log(`✅ Fallback ciro (tractor_models): ${fbCiro}`);
-                        const ciroStr = fbCiro >= 1e9 ? (fbCiro / 1e9).toFixed(1).replace('.', ',') + ' Mr $'
-                            : fbCiro >= 1e6 ? (fbCiro / 1e6).toFixed(1).replace('.', ',') + ' M $'
-                            : fbCiro.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
-                        const avgStr = fbAvg >= 1000 ? (fbAvg / 1000).toFixed(1).replace('.', ',') + ' B $'
-                            : fbAvg.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
-                        const adetStr2 = adet.toLocaleString('tr-TR');
-                        return {
-                            ok: true, intent: 'ciro',
-                            answer: `*${marka}* markasının ${yil} yılı tahmini cirosu *${ciroStr}* olarak hesaplanmıştır.\n\n📊 Toplam satış: *${adetStr2}* adet\n💰 Ortalama model fiyatı: *${avgStr}*\n\n_Not: Ciro, satış adedi × ortalama model fiyatı (USD) ile tahmin edilmiştir._\n\n💡 Bu markanın teknik özelliklerini, bölgesel dağılımını veya başka bir markayla karşılaştırmasını sorabilirsiniz.`,
-                            parser: 'ciro-engine-fallback', sql: fallbackSql
-                        };
+                // Ciro formatlama helper
+                const formatCiro = (val) => val >= 1e9 ? (val / 1e9).toFixed(1).replace('.', ',') + ' Mr $'
+                    : val >= 1e6 ? (val / 1e6).toFixed(1).replace('.', ',') + ' M $'
+                    : val.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
+                const formatAvg = (val) => val >= 1000 ? (val / 1000).toFixed(1).replace('.', ',') + ' B $'
+                    : val.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
+
+                // Ciro NULL/0 ise → tractor_models.price_usd fallback
+                if (ciroUsd === 0 || avgPrice === 0) {
+                    console.log(`⚠️ Ciro=0 for ${marka}. Fallback: tractor_models.price_usd`);
+                    const fallbackSql = `SELECT b.name as marka, ${yil} as yil, SUM(sv.quantity) as adet,
+                        (SELECT AVG(tm.price_usd) FROM tractor_models tm WHERE tm.brand_id = b.id AND tm.price_usd IS NOT NULL AND tm.price_usd > 0 AND tm.is_current_model = true) as ortalama_fiyat_usd,
+                        SUM(sv.quantity) * (SELECT AVG(tm.price_usd) FROM tractor_models tm WHERE tm.brand_id = b.id AND tm.price_usd IS NOT NULL AND tm.price_usd > 0 AND tm.is_current_model = true) as tahmini_ciro_usd
+                    FROM sales_view sv JOIN brands b ON sv.brand_id = b.id
+                    WHERE UPPER(b.name) = '${marka.toUpperCase()}' AND sv.year = ${yil}
+                    GROUP BY b.name, b.id`;
+                    const fbResult = await executeSafeSql(fallbackSql);
+                    if (!fbResult.error && fbResult.rows && fbResult.rows.length > 0) {
+                        const fbRow = fbResult.rows[0];
+                        const fbCiro = Number(fbRow.tahmini_ciro_usd) || 0;
+                        const fbAvg = Number(fbRow.ortalama_fiyat_usd) || 0;
+                        console.log(`💰 Fallback sonuç: ciro=${fbCiro}, avg=${fbAvg}`);
+                        if (fbCiro > 0 && fbAvg > 0) {
+                            return {
+                                ok: true, intent: 'ciro',
+                                answer: `*${marka}* markasının ${yil} yılı tahmini cirosu *${formatCiro(fbCiro)}* olarak hesaplanmıştır.\n\n📊 Toplam satış: *${adet.toLocaleString('tr-TR')}* adet\n💰 Ortalama model fiyatı: *${formatAvg(fbAvg)}*\n\n_Not: Ciro, satış adedi × ortalama model fiyatı (USD) ile tahmin edilmiştir._\n\n💡 Bu markanın teknik özelliklerini veya başka bir markayla karşılaştırmasını sorabilirsiniz.`,
+                                parser: 'ciro-engine-fallback', sql: fallbackSql
+                            };
+                        }
                     }
+                    return {
+                        ok: true, intent: 'ciro',
+                        answer: `*${marka}* markasının ${yil} yılında toplam *${adet.toLocaleString('tr-TR')} adet* traktör satışı bulunmaktadır.\n\n⚠️ Bu marka için fiyat bilgisi mevcut olmadığından ciro hesaplaması yapılamamıştır.`,
+                        parser: 'ciro-engine-noprice', sql: ciroSql
+                    };
                 }
-                const adetStr = adet.toLocaleString('tr-TR');
+
+                // Ciro var → doğrudan formatla
+                console.log(`✅ Ciro hesaplandı: ${marka} ${yil} → ${ciroUsd} USD`);
                 return {
                     ok: true, intent: 'ciro',
-                    answer: `*${marka}* markasının ${yil} yılında toplam *${adetStr} adet* traktör satışı bulunmaktadır.\n\n⚠️ Bu marka için fiyat bilgisi mevcut olmadığından ciro hesaplaması yapılamamıştır.\n\n💡 Satış adedi bazında analiz veya başka bir marka cirosu sorabilirsiniz.`,
+                    answer: `*${marka}* markasının ${yil} yılı tahmini cirosu *${formatCiro(ciroUsd)}* olarak hesaplanmıştır.\n\n📊 Toplam satış: *${adet.toLocaleString('tr-TR')}* adet\n💰 Ortalama model fiyatı: *${formatAvg(avgPrice)}*\n\n_Not: Ciro, satış adedi × ortalama model fiyatı (USD) ile tahmin edilmiştir._\n\n💡 Bu markanın teknik özelliklerini veya başka bir markayla karşılaştırmasını sorabilirsiniz.`,
                     parser: 'ciro-engine', sql: ciroSql
                 };
+            } else {
+                console.log(`⚠️ Ciro motoru: sorgu çalıştı ama 0 satır döndü`);
             }
-
-            // Ciro var → doğrudan formatla, Groq'a gerek yok (güvenilir sonuç)
-            const ciroStr = ciroUsd >= 1e9
-                ? (ciroUsd / 1e9).toFixed(1).replace('.', ',') + ' Mr $'
-                : ciroUsd >= 1e6
-                ? (ciroUsd / 1e6).toFixed(1).replace('.', ',') + ' M $'
-                : ciroUsd.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
-            const avgStr = avgPrice >= 1000
-                ? (avgPrice / 1000).toFixed(1).replace('.', ',') + ' B $'
-                : avgPrice.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
-            const adetStr = adet.toLocaleString('tr-TR');
-
-            return {
-                ok: true, intent: 'ciro',
-                answer: `*${marka}* markasının ${yil} yılı tahmini cirosu *${ciroStr}* olarak hesaplanmıştır.\n\n📊 Toplam satış: *${adetStr}* adet\n💰 Ortalama model fiyatı: *${avgStr}*\n\n_Not: Ciro, satış adedi × ortalama model fiyatı (USD) ile tahmin edilmiştir._\n\n💡 Bu markanın teknik özelliklerini, bölgesel dağılımını veya başka bir markayla karşılaştırmasını sorabilirsiniz.`,
-                parser: 'ciro-engine', sql: ciroSql
-            };
         }
+    } catch (ciroErr) {
+        console.error(`❌ Ciro motoru exception: ${ciroErr.message}`, ciroErr.stack);
     }
 
     // ═══ TEXT-TO-SQL MOTORU — Tüm sorular buradan geçer ═══
@@ -1932,6 +1929,42 @@ app.get('/public/reports/market', async (req, res) => {
 // ============================================
 // PUBLIC ASSISTANT ENDPOINTS
 // ============================================
+
+// Ciro motoru test endpoint'i (tarayıcıdan test için)
+app.get('/api/debug/ciro-test', async (req, res) => {
+    try {
+        const brand = (req.query.brand || 'KUBOTA').toUpperCase();
+        const year = parseInt(req.query.year) || 2023;
+        const question = `${brand} markasının ${year} cirosu`;
+
+        const latestPeriod = await getLatestSalesPeriod();
+        const ciroSql = buildCiroSql(question, [], latestPeriod);
+
+        if (!ciroSql) {
+            return res.json({ error: 'buildCiroSql returned null', question });
+        }
+
+        const ciroResult = await executeSafeSql(ciroSql);
+
+        // Ayrıca teknik_veri'de bu marka var mı kontrol et
+        const teknikCheck = await pool.query(
+            'SELECT marka, COUNT(*) as model_count, AVG(fiyat_usd) as avg_fiyat FROM teknik_veri WHERE UPPER(marka) ILIKE $1 AND fiyat_usd > 0 GROUP BY marka',
+            [`%${brand}%`]
+        );
+        const brandsCheck = await pool.query('SELECT id, name FROM brands WHERE UPPER(name) ILIKE $1', [`%${brand}%`]);
+
+        return res.json({
+            question,
+            ciroSql: ciroSql.substring(0, 300),
+            ciroResult: ciroResult.error ? { error: ciroResult.error } : { rows: ciroResult.rows, rowCount: ciroResult.rowCount },
+            teknik_veri_check: teknikCheck.rows,
+            brands_check: brandsCheck.rows
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message, stack: err.stack });
+    }
+});
+
 app.post('/api/public/assistant/sales-query', async (req, res) => {
     try {
         if (WHATSAPP_QUERY_API_KEY) {
