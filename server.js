@@ -751,6 +751,89 @@ Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
     return data.choices?.[0]?.message?.content?.trim() || null;
 }
 
+// ═══ CİRO ÖZEL MOTORU ═══
+// Groq'un kartezyen çarpım hatasını önlemek için ciro SQL'ini biz üretiyoruz
+function buildCiroSql(question, history, latestPeriod) {
+    const q = question.toLowerCase().replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g');
+
+    // Ciro/gelir/satış tutarı anahtar kelimeleri
+    const isCiro = /ciro|gelir|satis tutari|satis geliri|hasilat|revenue/i.test(q);
+    if (!isCiro) return null;
+
+    // Marka adını bul (sorudan veya bağlamdan)
+    const brandNames = ['NEW HOLLAND', 'JOHN DEERE', 'MASSEY FERGUSON', 'CASE', 'DEUTZ', 'TUMOSAN', 'TÜMOSAN',
+        'BASAK', 'BAŞAK', 'ERKUNT', 'SAME', 'HATTAT', 'KUBOTA', 'FARMTRAC', 'VALTRA', 'CLAAS', 'KIOTI', 'KİOTİ',
+        'SOLIS', 'ANTONIO CARRARO', 'MCCORMICK', 'FIAT', 'YANMAR', 'FERRARI', 'KARATAS', 'KARATAŞ', 'TAFE',
+        'STEYR', 'FENDT', 'LANDINI', 'ZETOR', 'FOTON', 'LS TRACTOR', 'TUMOSAN', 'TYM'];
+
+    let foundBrand = null;
+    const questionUpper = question.toUpperCase();
+
+    // Önce sorudan marka bul
+    for (const brand of brandNames) {
+        if (questionUpper.includes(brand)) {
+            foundBrand = brand;
+            break;
+        }
+    }
+    // Normalize edilmiş versiyonla da dene
+    if (!foundBrand) {
+        const qNorm = q.toUpperCase();
+        const normalizeMap = { 'TUMOSAN': 'TÜMOSAN', 'BASAK': 'BAŞAK', 'KARATAS': 'KARATAŞ', 'KIOTI': 'KİOTİ' };
+        for (const brand of brandNames) {
+            const brandNorm = brand.replace(/Ü/g, 'U').replace(/Ş/g, 'S').replace(/Ç/g, 'C').replace(/İ/g, 'I').replace(/Ö/g, 'O').replace(/Ğ/g, 'G');
+            if (qNorm.includes(brandNorm)) {
+                foundBrand = normalizeMap[brand] || brand;
+                break;
+            }
+        }
+    }
+
+    // Bağlamdan marka bul (önceki soru/cevaplarda geçen marka)
+    if (!foundBrand && history && history.length > 0) {
+        for (let i = history.length - 1; i >= 0; i--) {
+            const msg = history[i].content.toUpperCase();
+            for (const brand of brandNames) {
+                if (msg.includes(brand)) {
+                    foundBrand = brand;
+                    break;
+                }
+            }
+            if (foundBrand) break;
+        }
+    }
+
+    if (!foundBrand) return null;
+
+    // Yıl bul (sorudan veya bağlamdan)
+    let year = null;
+    const yearMatch = question.match(/(20\d{2})/);
+    if (yearMatch) {
+        year = parseInt(yearMatch[1]);
+    } else if (history && history.length > 0) {
+        // Bağlamdan yıl bul
+        for (let i = history.length - 1; i >= 0; i--) {
+            const yMatch = history[i].content.match(/(20\d{2})/);
+            if (yMatch) { year = parseInt(yMatch[1]); break; }
+        }
+    }
+    if (!year) year = latestPeriod?.year || 2025;
+
+    // DB'deki gerçek brand adını kullan (TUMOSAN → TÜMOSAN)
+    const dbBrandMap = { 'TUMOSAN': 'TÜMOSAN', 'BASAK': 'BAŞAK', 'KARATAS': 'KARATAŞ', 'KIOTI': 'KİOTİ' };
+    const dbBrand = dbBrandMap[foundBrand] || foundBrand;
+
+    console.log(`💰 Ciro motoru: marka=${dbBrand}, yıl=${year}`);
+
+    return `SELECT b.name as marka, ${year} as yil, SUM(sv.quantity) as adet,
+        (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = '${dbBrand.toUpperCase()}' AND tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0) as ortalama_fiyat_usd,
+        SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = '${dbBrand.toUpperCase()}' AND tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0) as tahmini_ciro_usd
+    FROM sales_view sv
+    JOIN brands b ON sv.brand_id = b.id
+    WHERE UPPER(b.name) = '${dbBrand.toUpperCase()}' AND sv.year = ${year}
+    GROUP BY b.name`;
+}
+
 async function resolveAssistantQuestion(question, phoneNumber) {
     const latestPeriod = await getLatestSalesPeriod();
 
@@ -770,6 +853,24 @@ async function resolveAssistantQuestion(question, phoneNumber) {
     // Konuşma bağlamını al
     const history = phoneNumber ? getConversationHistory(phoneNumber) : [];
     const conversationCtx = buildConversationContext(history);
+
+    // ═══ CİRO SORGULARI İÇİN ÖZEL MOTOR ═══
+    // Groq'un kartezyen çarpım hatası yapmaması için ciro SQL'ini biz üretiyoruz
+    const ciroSql = buildCiroSql(question, history, latestPeriod);
+    if (ciroSql) {
+        console.log(`💰 Ciro özel motoru aktif: ${ciroSql}`);
+        const ciroResult = await executeSafeSql(ciroSql);
+        if (!ciroResult.error && ciroResult.rows && ciroResult.rows.length > 0) {
+            const interpretation = await interpretResults(question, ciroSql, ciroResult, conversationCtx);
+            if (interpretation) {
+                return { ok: true, intent: 'text_to_sql', answer: interpretation, parser: 'ciro-engine', sql: ciroSql, rowCount: ciroResult.rowCount };
+            }
+            // Fallback ham veri
+            const row = ciroResult.rows[0];
+            const ciroVal = row.tahmini_ciro_usd ? Number(row.tahmini_ciro_usd).toLocaleString('tr-TR', {maximumFractionDigits: 0}) : '-';
+            return { ok: true, intent: 'text_to_sql', answer: `*${row.marka}* ${row.yil ? row.yil + ' yılı' : ''} tahmini ciro: *${ciroVal} $*\nSatış adedi: ${Number(row.adet).toLocaleString('tr-TR')}`, parser: 'ciro-engine', sql: ciroSql };
+        }
+    }
 
     // ═══ TEXT-TO-SQL MOTORU — Tüm sorular buradan geçer ═══
     console.log(`🤖 Text-to-SQL aktif: "${question}" (bağlam: ${history.length} mesaj)`);
