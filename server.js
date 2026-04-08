@@ -854,46 +854,67 @@ ORDER BY toplam DESC
 LIMIT ${limit}`;
 }
 
-// BÜYÜK HARF şehir adını proper case'e çevir (ERZİNCAN → Erzincan, İZMİR → İzmir)
+// Türkçe karakter varyasyonlarını tanıyan regex kalıbı üret
+// "ERZİNCAN" → "[Ee][Rr][Zz][İiIı][Nn][Cc][Aa][Nn]" — her karakter formunu yakalar
+function buildCityPattern(cityUpper) {
+    const trVariants = {
+        'İ': 'İiIı', 'I': 'İiIı', 'Ş': 'Şş', 'Ç': 'Çç',
+        'Ü': 'Üü', 'Ö': 'Öö', 'Ğ': 'Ğğ'
+    };
+    let pattern = '';
+    for (const ch of cityUpper) {
+        const v = trVariants[ch];
+        if (v) {
+            pattern += `[${v}]`;
+        } else {
+            // Normal harf: büyük+küçük
+            const esc = ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const lower = ch.toLowerCase();
+            pattern += ch === lower ? esc : `[${esc}${lower}]`;
+        }
+    }
+    return pattern;
+}
+
+// Proper case: ERZİNCAN → Erzincan, İZMİR → İzmir, KONYA → Konya
 function cityProperCase(cityUpper) {
     if (!cityUpper) return cityUpper;
-    // İlk harfi koru, geri kalanı küçült
-    return cityUpper.charAt(0).toUpperCase() + cityUpper.slice(1).toLowerCase();
+    // Karakter karakter: ilk harf büyük, geri kalan map ile küçült
+    const trLower = { 'İ': 'i', 'I': 'ı', 'Ş': 'ş', 'Ç': 'ç', 'Ü': 'ü', 'Ö': 'ö', 'Ğ': 'ğ' };
+    let result = cityUpper.charAt(0); // İlk harf büyük kalır
+    for (let i = 1; i < cityUpper.length; i++) {
+        const ch = cityUpper[i];
+        result += trLower[ch] || ch.toLowerCase();
+    }
+    return result;
 }
 
 function expandShortQuery(question, history) {
     if (!history || history.length === 0) return question;
 
     const words = question.trim().split(/\s+/);
-    // Kısa sorgu mu? (≤5 kelime)
     if (words.length > 5) return question;
 
-    // Soruda şehir adı var mı?
-    const cityUpper = detectCity(question); // "ERZİNCAN", "İZMİR" vb.
+    const cityUpper = detectCity(question);
     if (!cityUpper) return question;
-    const city = cityProperCase(cityUpper); // "Erzincan", "İzmir"
+    const city = cityProperCase(cityUpper);
 
-    // Geçmişteki son user mesajlarından bir kalıp bul (en az 6 kelimelik, şehir içeren)
+    // Geçmişteki son user mesajlarından bir kalıp bul
     for (let i = history.length - 1; i >= 0; i--) {
         if (history[i].role !== 'user') continue;
         const prevQ = history[i].content;
-        if (prevQ.trim().split(/\s+/).length < 5) continue; // Çok kısa mesajları atla
+        if (prevQ.trim().split(/\s+/).length < 5) continue;
 
-        // Önceki soruda şehir adı var mı?
         const prevCityUpper = detectCity(prevQ);
         if (prevCityUpper) {
-            // Önceki sorgudaki şehir adını (her formda) bul ve yenisiyle değiştir
-            const prevProper = cityProperCase(prevCityUpper);
-            // Hem büyük harf, hem proper case, hem küçük harf formunu yakala + ek (da/de/'da/'de)
-            const escapedForms = [prevCityUpper, prevProper, prevCityUpper.toLowerCase()]
-                .map(f => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-            const cityRegex = new RegExp(`(${escapedForms.join('|')})['ʼ\`'']*(?:da|de|'da|'de)?`, 'gi');
+            // Önceki şehir adını tüm Türkçe varyasyonlarıyla yakala + 'da/'de eki
+            const pattern = buildCityPattern(prevCityUpper);
+            const cityRegex = new RegExp(pattern + `['ʼ\`'']*(?:da|de|'da|'de)?`, 'g');
             const expanded = prevQ.replace(cityRegex, city + "'da");
             console.log(`🔄 Sorgu genişletme: "${question}" → "${expanded}" (kalıp: "${prevQ}")`);
             return expanded;
         }
 
-        // Şehirsiz ama traktör/satış ile ilgili bir kalıp varsa şehir ekle
         if (/traktör|satış|sat[ıi]lan|marka|model|lider|en çok/i.test(prevQ)) {
             const expanded = `${city}'da ${prevQ}`;
             console.log(`🔄 Sorgu genişletme (şehir ekleme): "${question}" → "${expanded}"`);
@@ -901,7 +922,6 @@ function expandShortQuery(question, history) {
         }
     }
 
-    // Kalıp bulunamadı → varsayılan genişletme
     const defaultExpanded = `${city}'da en çok satan 10 traktör marka ve modelini sırayla yaz`;
     console.log(`🔄 Sorgu genişletme (varsayılan): "${question}" → "${defaultExpanded}"`);
     return defaultExpanded;
