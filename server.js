@@ -469,11 +469,18 @@ Sen Türkiye traktör sektörü veritabanı uzmanısın. PostgreSQL sorguları y
 SADECE SELECT sorguları yaz. INSERT/UPDATE/DELETE/DROP/ALTER YASAK.
 
 VERİTABANI ŞEMASI:
--- sales_view: Ana satış verisi (model yılı N ve N-1 filtreli)
+-- tuik_veri: MODEL BAZLI SATIŞ VERİSİ (en detaylı satış tablosu)
+-- Sütunlar: marka VARCHAR, tuik_model_adi VARCHAR, tescil_yil INT, tescil_ay INT,
+--   sehir_kodu INT, sehir_adi VARCHAR, model_yili INT, satis_adet INT
+--   ÖNEMLİ: "En çok satan model", "model sıralaması", "hangi model" gibi sorularda DAİMA bu tabloyu kullan!
+--   sehir_adi: Türkçe il adı (Konya, İstanbul, Ankara vb.)
+--   marka: BÜYÜK HARF (NEW HOLLAND, MASSEY FERGUSON, TÜMOSAN vb.)
+
+-- sales_view: Aggregated satış verisi (model adı YOK, sadece segment bilgisi var)
 -- Sütunlar: brand_id INT, province_id INT, year INT, month INT (1-12), quantity INT,
 --   category VARCHAR (tarla/bahce), cabin_type VARCHAR (kabinli/rollbar),
---   drive_type VARCHAR (2WD/4WD), hp_range VARCHAR, gear_config VARCHAR,
---   model_year INT
+--   drive_type VARCHAR (2WD/4WD), hp_range VARCHAR, gear_config VARCHAR, model_year INT
+--   NOT: Model bazlı sorgularda sales_view KULLANMA, tuik_veri kullan!
 
 -- brands: id SERIAL, name VARCHAR, slug VARCHAR, primary_color VARCHAR, country_of_origin VARCHAR, parent_company VARCHAR
 -- provinces: id SERIAL, name VARCHAR, plate_code VARCHAR, region VARCHAR, latitude DECIMAL, longitude DECIMAL,
@@ -481,7 +488,6 @@ VERİTABANI ŞEMASI:
 --   climate_zone VARCHAR, annual_rainfall_mm DECIMAL, avg_temperature DECIMAL
 -- tractor_models: id SERIAL, brand_id INT (FK brands), model_name VARCHAR, horsepower DECIMAL,
 --   price_usd DECIMAL (USD fiyat - teknik_veri.fiyat_usd kaynağından), category VARCHAR, cabin_type VARCHAR, drive_type VARCHAR, gear_config VARCHAR
---   NOT: Fiyat sorguları için DAİMA price_usd kullan. TL fiyat (price_list_tl) KULLANILMAZ.
 
 -- teknik_veri: id SERIAL, marka VARCHAR, model VARCHAR, tuik_model_adi VARCHAR, fiyat_usd DECIMAL,
 --   emisyon_seviyesi VARCHAR, cekis_tipi VARCHAR, koruma VARCHAR, vites_sayisi VARCHAR,
@@ -500,7 +506,10 @@ BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu',
 -- Marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id GROUP BY b.name ORDER BY toplam DESC
 -- Yıllık marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2025 GROUP BY b.name ORDER BY toplam DESC
 -- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE p.name ILIKE '%Konya%' GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
--- En çok satan model (il): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 5
+-- En çok satan model (il): SELECT tv.marka, tv.tuik_model_adi, SUM(tv.satis_adet) as toplam FROM tuik_veri tv WHERE tv.sehir_adi ILIKE '%Konya%' GROUP BY tv.marka, tv.tuik_model_adi ORDER BY toplam DESC LIMIT 10
+-- En çok satan model (genel): SELECT marka, tuik_model_adi, SUM(satis_adet) as toplam FROM tuik_veri GROUP BY marka, tuik_model_adi ORDER BY toplam DESC LIMIT 10
+-- Yıllık model satışı: SELECT marka, tuik_model_adi, SUM(satis_adet) as toplam FROM tuik_veri WHERE tescil_yil = 2023 GROUP BY marka, tuik_model_adi ORDER BY toplam DESC LIMIT 10
+-- İl bazlı marka satışı (segment): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 10
 -- Teknik özellik: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd, kullanim_alani FROM teknik_veri WHERE UPPER(marka) = 'NEW HOLLAND' AND (UPPER(tuik_model_adi) ILIKE '%BOOMER%' OR UPPER(model) ILIKE '%BOOMER%')
 -- Ciro hesaplama (ÖNEMLİ: teknik_veri ile sales_view arasında model JOIN yok, AVG fiyat ile subquery kullan):
 -- SELECT b.name, SUM(sv.quantity) as adet,
@@ -543,7 +552,10 @@ Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
 
 ÖNEMLİ KURALLAR:
 - Traktör sektörü ile ilgili HER soruya SQL yazılabilir. "UNSUPPORTED" sadece tamamen alakasız konularda (hava durumu, siyaset vb.) kullan.
-- "Lider marka", "en çok satan", "en popüler" → SUM(quantity) ile ORDER BY DESC LIMIT 1-5
+- "En çok satan MODEL", "model sıralaması", "hangi model", "marka ve model" → DAİMA tuik_veri tablosunu kullan (model bazlı satış verisi):
+  SELECT marka, tuik_model_adi, SUM(satis_adet) as toplam FROM tuik_veri WHERE ... GROUP BY marka, tuik_model_adi ORDER BY toplam DESC LIMIT 10
+  tuik_veri'de il filtresi: sehir_adi ILIKE '%İlAdı%', yıl filtresi: tescil_yil = 2023
+- "Lider marka", "en çok satan MARKA" (model değil marka) → SUM(quantity) ile sales_view
 - "kaç traktör satıldı" → SUM(quantity) FROM sales_view
 - Teknik özellik soruları → teknik_veri tablosundan çek: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd FROM teknik_veri
 - "Ciro/gelir/satış tutarı" → DİKKAT: teknik_veri ile sales_view arasında model seviyesinde JOIN YOK. Subquery ile AVG fiyat hesapla:
