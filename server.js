@@ -582,27 +582,41 @@ Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
 Sadece SQL kodu döndür, başka bir şey yazma. Açıklama ekleme.
 Eğer soru traktör/tarım/satış ile TAMAMEN ilgisizse sadece "UNSUPPORTED" yaz.`;
 
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
-        body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.05,
-            max_tokens: 800
-        })
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    let groqRes;
+    try {
+        groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            signal: controller.signal,
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.05,
+                max_tokens: 800
+            })
+        });
+        clearTimeout(timeout);
+    } catch (fetchErr) {
+        clearTimeout(timeout);
+        console.error(`❌ textToSql fetch hatası: ${fetchErr.name === 'AbortError' ? '12sn timeout' : fetchErr.message}`);
+        return null;
+    }
 
     if (!groqRes.ok) {
-        console.error('Text-to-SQL Groq error:', groqRes.status);
+        const errBody = await groqRes.text().catch(() => '');
+        console.error(`❌ textToSql Groq hata: ${groqRes.status} ${errBody.substring(0, 200)}`);
         return null;
     }
 
     const data = await groqRes.json();
     let sql = data.choices?.[0]?.message?.content?.trim();
+    console.log(`🤖 Groq SQL yanıtı: ${sql ? sql.substring(0, 100) : 'BOŞ/null'}`);
     if (!sql || sql === 'UNSUPPORTED') return null;
 
     // SQL temizleme - markdown code block varsa çıkar
@@ -760,23 +774,93 @@ Bu veriye dayanarak soruya cevap ver. Sabit şablon kullanma, soruya özel cevap
 Verilerin hangi döneme/yıl aralığına ait olduğunu MUTLAKA belirt (SQL'de yıl filtresi varsa o yılı, yoksa tüm dönem bilgisini).
 Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
 
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
-        body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.4,
-            max_tokens: 1500
-        })
-    });
+    // 15 saniye timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-    if (!groqRes.ok) return null;
-    const data = await groqRes.json();
-    return data.choices?.[0]?.message?.content?.trim() || null;
+    try {
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            signal: controller.signal,
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.4,
+                max_tokens: 1500
+            })
+        });
+
+        clearTimeout(timeout);
+
+        if (!groqRes.ok) {
+            const errBody = await groqRes.text().catch(() => '');
+            console.error(`❌ interpretResults Groq hata: ${groqRes.status} ${errBody.substring(0, 200)}`);
+            // Rate limit ise kısa prompt ile tekrar dene
+            if (groqRes.status === 429) {
+                console.log('⏳ Rate limit, 2sn bekleyip kısa prompt ile retry...');
+                await new Promise(r => setTimeout(r, 2000));
+                return await interpretResultsShort(question, result);
+            }
+            return null;
+        }
+
+        const data = await groqRes.json();
+        const content = data.choices?.[0]?.message?.content?.trim();
+        if (!content) {
+            console.error('❌ interpretResults: Groq boş yanıt döndü');
+            return null;
+        }
+        console.log(`✅ interpretResults başarılı (${content.length} karakter)`);
+        return content;
+    } catch (err) {
+        clearTimeout(timeout);
+        if (err.name === 'AbortError') {
+            console.error('❌ interpretResults: 15sn timeout aşıldı, kısa prompt ile retry...');
+            return await interpretResultsShort(question, result);
+        }
+        console.error(`❌ interpretResults exception: ${err.message}`);
+        return null;
+    }
+}
+
+// Kısa/hızlı yorum fonksiyonu — interpretResults timeout/rate-limit olduğunda fallback
+async function interpretResultsShort(question, result) {
+    if (!GROQ_API_KEY) return null;
+    const dataPreview = JSON.stringify(result.rows.slice(0, 10), null, 0);
+
+    try {
+        const controller2 = new AbortController();
+        const timeout2 = setTimeout(() => controller2.abort(), 10000);
+
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            signal: controller2.signal,
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: 'Türkiye traktör sektörü veri analisti. WhatsApp formatında kısa Türkçe cevap ver. *kalın* kullan. Verilerin dönemini belirt. Çince karakter KULLANMA.' },
+                    { role: 'user', content: `Soru: "${question}"\nVeri (${result.rowCount} satır): ${dataPreview}\n\nBu veriyi kısa ve net yorumla. Sonunda 1 proaktif öneri ekle.` }
+                ],
+                temperature: 0.3,
+                max_tokens: 800
+            })
+        });
+
+        clearTimeout(timeout2);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content?.trim();
+        if (content) console.log(`✅ interpretResultsShort başarılı (${content.length} karakter)`);
+        return content || null;
+    } catch (e) {
+        console.error(`❌ interpretResultsShort exception: ${e.message}`);
+        return null;
+    }
 }
 
 // ═══ KISA SORGU GENİŞLETME (Intent Inheritance) ═══
