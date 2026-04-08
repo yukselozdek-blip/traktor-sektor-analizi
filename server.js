@@ -840,11 +840,23 @@ function buildCiroSql(question, history, latestPeriod) {
     const dbBrandMap = { 'TUMOSAN': 'TÜMOSAN', 'BASAK': 'BAŞAK', 'KARATAS': 'KARATAŞ', 'KIOTI': 'KİOTİ' };
     const dbBrand = dbBrandMap[foundBrand] || foundBrand;
 
-    console.log(`💰 Ciro motoru: marka=${dbBrand}, yıl=${year}`);
+    // teknik_veri'de marka adı brands'dan farklı olabilir (CASE IH vs CASE, DEUTZ-FAHR vs DEUTZ)
+    // İki yönlü eşleştirme: hem dbBrand hem de olası alternatif isimler
+    const teknikAltNames = {
+        'CASE': ['CASE', 'CASE IH'],
+        'DEUTZ': ['DEUTZ', 'DEUTZ-FAHR'],
+        'KİOTİ': ['KİOTİ', 'KIOTI'],
+        'TÜMOSAN': ['TÜMOSAN', 'TUMOSAN'],
+        'BAŞAK': ['BAŞAK', 'BASAK']
+    };
+    const teknikNames = teknikAltNames[dbBrand.toUpperCase()] || [dbBrand.toUpperCase()];
+    const teknikWhere = teknikNames.map(n => `UPPER(tv.marka) = '${n}'`).join(' OR ');
+
+    console.log(`💰 Ciro motoru: marka=${dbBrand}, yıl=${year}, teknik_veri WHERE: ${teknikWhere}`);
 
     return `SELECT b.name as marka, ${year} as yil, SUM(sv.quantity) as adet,
-        (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = '${dbBrand.toUpperCase()}' AND tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0) as ortalama_fiyat_usd,
-        SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = '${dbBrand.toUpperCase()}' AND tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0) as tahmini_ciro_usd
+        (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE (${teknikWhere}) AND tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0) as ortalama_fiyat_usd,
+        SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE (${teknikWhere}) AND tv.fiyat_usd IS NOT NULL AND tv.fiyat_usd > 0) as tahmini_ciro_usd
     FROM sales_view sv
     JOIN brands b ON sv.brand_id = b.id
     WHERE UPPER(b.name) = '${dbBrand.toUpperCase()}' AND sv.year = ${year}
@@ -877,20 +889,52 @@ async function resolveAssistantQuestion(question, phoneNumber) {
     if (ciroSql) {
         console.log(`💰 Ciro özel motoru aktif: ${ciroSql}`);
         const ciroResult = await executeSafeSql(ciroSql);
+        if (ciroResult.error) {
+            console.error(`❌ Ciro SQL hatası: ${ciroResult.error}`);
+        }
         if (!ciroResult.error && ciroResult.rows && ciroResult.rows.length > 0) {
             const row = ciroResult.rows[0];
+            console.log(`💰 Ciro sonucu:`, JSON.stringify(row));
             const adet = Number(row.adet) || 0;
             const ciroUsd = Number(row.tahmini_ciro_usd) || 0;
             const avgPrice = Number(row.ortalama_fiyat_usd) || 0;
             const marka = row.marka || '?';
             const yil = row.yil || '';
 
-            // Ciro NULL/0 ise → fiyat verisi yok, doğrudan bilgilendir
+            // Ciro NULL/0 ise → fiyat verisi yok
             if (ciroUsd === 0 || avgPrice === 0) {
+                console.log(`⚠️ Ciro=0 for ${marka}. teknik_veri'de fiyat bulunamadı. Alternatif: tractor_models.price_usd denenecek`);
+                // Fallback: tractor_models.price_usd üzerinden dene
+                const fallbackSql = `SELECT b.name as marka, ${yil} as yil, SUM(sv.quantity) as adet,
+                    (SELECT AVG(tm.price_usd) FROM tractor_models tm WHERE tm.brand_id = b.id AND tm.price_usd IS NOT NULL AND tm.price_usd > 0 AND tm.is_current_model = true) as ortalama_fiyat_usd,
+                    SUM(sv.quantity) * (SELECT AVG(tm.price_usd) FROM tractor_models tm WHERE tm.brand_id = b.id AND tm.price_usd IS NOT NULL AND tm.price_usd > 0 AND tm.is_current_model = true) as tahmini_ciro_usd
+                FROM sales_view sv JOIN brands b ON sv.brand_id = b.id
+                WHERE UPPER(b.name) = '${marka.toUpperCase()}' AND sv.year = ${yil}
+                GROUP BY b.name, b.id`;
+                const fbResult = await executeSafeSql(fallbackSql);
+                if (!fbResult.error && fbResult.rows && fbResult.rows.length > 0) {
+                    const fbRow = fbResult.rows[0];
+                    const fbCiro = Number(fbRow.tahmini_ciro_usd) || 0;
+                    const fbAvg = Number(fbRow.ortalama_fiyat_usd) || 0;
+                    if (fbCiro > 0 && fbAvg > 0) {
+                        console.log(`✅ Fallback ciro (tractor_models): ${fbCiro}`);
+                        const ciroStr = fbCiro >= 1e9 ? (fbCiro / 1e9).toFixed(1).replace('.', ',') + ' Mr $'
+                            : fbCiro >= 1e6 ? (fbCiro / 1e6).toFixed(1).replace('.', ',') + ' M $'
+                            : fbCiro.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
+                        const avgStr = fbAvg >= 1000 ? (fbAvg / 1000).toFixed(1).replace('.', ',') + ' B $'
+                            : fbAvg.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
+                        const adetStr2 = adet.toLocaleString('tr-TR');
+                        return {
+                            ok: true, intent: 'ciro',
+                            answer: `*${marka}* markasının ${yil} yılı tahmini cirosu *${ciroStr}* olarak hesaplanmıştır.\n\n📊 Toplam satış: *${adetStr2}* adet\n💰 Ortalama model fiyatı: *${avgStr}*\n\n_Not: Ciro, satış adedi × ortalama model fiyatı (USD) ile tahmin edilmiştir._\n\n💡 Bu markanın teknik özelliklerini, bölgesel dağılımını veya başka bir markayla karşılaştırmasını sorabilirsiniz.`,
+                            parser: 'ciro-engine-fallback', sql: fallbackSql
+                        };
+                    }
+                }
                 const adetStr = adet.toLocaleString('tr-TR');
                 return {
                     ok: true, intent: 'ciro',
-                    answer: `*${marka}* markasının ${yil} yılında toplam *${adetStr} adet* traktör satışı bulunmaktadır.\n\n⚠️ Bu marka için teknik veri tabanında fiyat bilgisi mevcut olmadığından ciro hesaplaması yapılamamıştır.\n\n💡 Satış adedi bazında analiz veya başka bir marka cirosu sorabilirsiniz.`,
+                    answer: `*${marka}* markasının ${yil} yılında toplam *${adetStr} adet* traktör satışı bulunmaktadır.\n\n⚠️ Bu marka için fiyat bilgisi mevcut olmadığından ciro hesaplaması yapılamamıştır.\n\n💡 Satış adedi bazında analiz veya başka bir marka cirosu sorabilirsiniz.`,
                     parser: 'ciro-engine', sql: ciroSql
                 };
             }
