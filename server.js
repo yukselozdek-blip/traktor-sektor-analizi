@@ -872,20 +872,45 @@ async function resolveAssistantQuestion(question, phoneNumber) {
     const conversationCtx = buildConversationContext(history);
 
     // ═══ CİRO SORGULARI İÇİN ÖZEL MOTOR ═══
-    // Groq'un kartezyen çarpım hatası yapmaması için ciro SQL'ini biz üretiyoruz
+    // Groq'un kartezyen çarpım hatasını önlemek için ciro SQL'ini biz üretiyoruz
     const ciroSql = buildCiroSql(question, history, latestPeriod);
     if (ciroSql) {
         console.log(`💰 Ciro özel motoru aktif: ${ciroSql}`);
         const ciroResult = await executeSafeSql(ciroSql);
         if (!ciroResult.error && ciroResult.rows && ciroResult.rows.length > 0) {
-            const interpretation = await interpretResults(question, ciroSql, ciroResult, conversationCtx);
-            if (interpretation) {
-                return { ok: true, intent: 'text_to_sql', answer: interpretation, parser: 'ciro-engine', sql: ciroSql, rowCount: ciroResult.rowCount };
-            }
-            // Fallback ham veri
             const row = ciroResult.rows[0];
-            const ciroVal = row.tahmini_ciro_usd ? Number(row.tahmini_ciro_usd).toLocaleString('tr-TR', {maximumFractionDigits: 0}) : '-';
-            return { ok: true, intent: 'text_to_sql', answer: `*${row.marka}* ${row.yil ? row.yil + ' yılı' : ''} tahmini ciro: *${ciroVal} $*\nSatış adedi: ${Number(row.adet).toLocaleString('tr-TR')}`, parser: 'ciro-engine', sql: ciroSql };
+            const adet = Number(row.adet) || 0;
+            const ciroUsd = Number(row.tahmini_ciro_usd) || 0;
+            const avgPrice = Number(row.ortalama_fiyat_usd) || 0;
+            const marka = row.marka || '?';
+            const yil = row.yil || '';
+
+            // Ciro NULL/0 ise → fiyat verisi yok, doğrudan bilgilendir
+            if (ciroUsd === 0 || avgPrice === 0) {
+                const adetStr = adet.toLocaleString('tr-TR');
+                return {
+                    ok: true, intent: 'ciro',
+                    answer: `*${marka}* markasının ${yil} yılında toplam *${adetStr} adet* traktör satışı bulunmaktadır.\n\n⚠️ Bu marka için teknik veri tabanında fiyat bilgisi mevcut olmadığından ciro hesaplaması yapılamamıştır.\n\n💡 Satış adedi bazında analiz veya başka bir marka cirosu sorabilirsiniz.`,
+                    parser: 'ciro-engine', sql: ciroSql
+                };
+            }
+
+            // Ciro var → doğrudan formatla, Groq'a gerek yok (güvenilir sonuç)
+            const ciroStr = ciroUsd >= 1e9
+                ? (ciroUsd / 1e9).toFixed(1).replace('.', ',') + ' Mr $'
+                : ciroUsd >= 1e6
+                ? (ciroUsd / 1e6).toFixed(1).replace('.', ',') + ' M $'
+                : ciroUsd.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
+            const avgStr = avgPrice >= 1000
+                ? (avgPrice / 1000).toFixed(1).replace('.', ',') + ' B $'
+                : avgPrice.toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' $';
+            const adetStr = adet.toLocaleString('tr-TR');
+
+            return {
+                ok: true, intent: 'ciro',
+                answer: `*${marka}* markasının ${yil} yılı tahmini cirosu *${ciroStr}* olarak hesaplanmıştır.\n\n📊 Toplam satış: *${adetStr}* adet\n💰 Ortalama model fiyatı: *${avgStr}*\n\n_Not: Ciro, satış adedi × ortalama model fiyatı (USD) ile tahmin edilmiştir._\n\n💡 Bu markanın teknik özelliklerini, bölgesel dağılımını veya başka bir markayla karşılaştırmasını sorabilirsiniz.`,
+                parser: 'ciro-engine', sql: ciroSql
+            };
         }
     }
 
