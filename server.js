@@ -783,11 +783,17 @@ const TURKISH_CITIES = [
 ];
 
 function detectCity(text) {
-    // Türkçe normalize: hem büyük hem küçük harf uyumu
-    const normalize = (s) => s.toUpperCase()
-        .replace(/İ/g, 'I').replace(/Ş/g, 'S').replace(/Ç/g, 'C')
-        .replace(/Ü/g, 'U').replace(/Ö/g, 'O').replace(/Ğ/g, 'G')
-        .replace(/[''ʼ`']/g, '');
+    // Türkçe-güvenli normalize: tüm Türkçe karakterleri ASCII'ye düşür
+    // JS toUpperCase() Türkçe 'i' → 'I' yapar (İ değil), bu yüzden önce küçük harfleri temizle
+    const normalize = (s) => s
+        .replace(/ı/g, 'i').replace(/İ/g, 'I')   // Türkçe ı/İ → ASCII i/I
+        .replace(/ş/g, 's').replace(/Ş/g, 'S')
+        .replace(/ç/g, 'c').replace(/Ç/g, 'C')
+        .replace(/ü/g, 'u').replace(/Ü/g, 'U')
+        .replace(/ö/g, 'o').replace(/Ö/g, 'O')
+        .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+        .replace(/[''ʼ`']/g, '')
+        .toUpperCase();
 
     const textNorm = normalize(text);
 
@@ -796,7 +802,6 @@ function detectCity(text) {
 
     for (const city of sortedCities) {
         const cityNorm = normalize(city);
-        // "ERZINCAN" kelimesinin text içinde bulunması (DA/DE eki olabilir)
         if (textNorm.includes(cityNorm)) {
             // Orijinal şehir adını döndür (proper case: Erzincan, İstanbul, vb.)
             return city.charAt(0) + city.slice(1).toLowerCase();
