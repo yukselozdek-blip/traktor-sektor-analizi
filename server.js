@@ -530,8 +530,12 @@ KURALLAR:
 10. SADECE geçerli SQL döndür, açıklama ekleme
 `;
 
+// Son Groq hata bilgisi (debug için)
+let lastGroqError = null;
+
 async function textToSql(question, conversationCtx) {
-    if (!GROQ_API_KEY) return null;
+    lastGroqError = null;
+    if (!GROQ_API_KEY) { lastGroqError = 'GROQ_API_KEY missing'; return null; }
 
     const latestPeriod = await getLatestSalesPeriod();
     const systemPrompt = DB_SCHEMA_PROMPT + `\nGüncel en son yıl: ${latestPeriod?.year || 2025}, en son ay: ${latestPeriod?.month || 5}`;
@@ -574,20 +578,25 @@ TEK bir PostgreSQL SELECT sorgusu yaz.
         clearTimeout(timeout);
     } catch (fetchErr) {
         clearTimeout(timeout);
-        console.error(`❌ textToSql fetch hatası: ${fetchErr.name === 'AbortError' ? '12sn timeout' : fetchErr.message}`);
+        lastGroqError = fetchErr.name === 'AbortError' ? 'TIMEOUT (12s)' : `FETCH_ERROR: ${fetchErr.message}`;
+        console.error(`❌ textToSql: ${lastGroqError}`);
         return null;
     }
 
     if (!groqRes.ok) {
         const errBody = await groqRes.text().catch(() => '');
-        console.error(`❌ textToSql Groq hata: ${groqRes.status} ${errBody.substring(0, 200)}`);
+        lastGroqError = `HTTP ${groqRes.status}: ${errBody.substring(0, 300)}`;
+        console.error(`❌ textToSql Groq hata: ${lastGroqError}`);
         return null;
     }
 
     const data = await groqRes.json();
     let sql = data.choices?.[0]?.message?.content?.trim();
     console.log(`🤖 Groq SQL yanıtı: ${sql ? sql.substring(0, 100) : 'BOŞ/null'}`);
-    if (!sql || sql === 'UNSUPPORTED') return null;
+    if (!sql || sql === 'UNSUPPORTED') {
+        lastGroqError = sql === 'UNSUPPORTED' ? 'UNSUPPORTED (Groq rejected)' : 'EMPTY_RESPONSE';
+        return null;
+    }
 
     // SQL temizleme - markdown code block varsa çıkar
     sql = sql.replace(/^```sql\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -2295,9 +2304,10 @@ app.get('/api/debug/groq-test', async (req, res) => {
             // Fallback da dene
             const fallbackSql = buildSmartFallbackSql(question, latestPeriod);
             return res.json({
-                groqResult: 'NULL/UNSUPPORTED',
+                groqResult: 'FAILED',
+                groqError: lastGroqError || 'unknown',
                 elapsed: elapsed + 'ms',
-                fallbackSql: fallbackSql || 'NO_FALLBACK',
+                fallbackSql: fallbackSql ? fallbackSql.substring(0, 300) : 'NO_FALLBACK',
                 groqApiKey: GROQ_API_KEY ? 'SET (' + GROQ_API_KEY.substring(0, 8) + '...)' : 'MISSING',
                 question
             });
