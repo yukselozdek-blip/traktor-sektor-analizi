@@ -916,82 +916,179 @@ function cityMatchSql(columnName, cityName) {
 }
 
 // ═══ AKILLI FALLBACK SQL ÜRETİCİ ═══
-// Groq başarısız olduğunda sorunun türüne göre uygun SQL üretir
+// Groq başarısız olduğunda (rate limit, timeout vb.) sorunun türüne göre uygun SQL üretir
+
+// Marka adını sorudan tespit et
+const BRAND_NAMES = ['NEW HOLLAND', 'JOHN DEERE', 'MASSEY FERGUSON', 'CASE', 'DEUTZ', 'TÜMOSAN', 'TUMOSAN',
+    'BAŞAK', 'BASAK', 'ERKUNT', 'SAME', 'HATTAT', 'KUBOTA', 'FARMTRAC', 'VALTRA', 'CLAAS', 'KIOTI', 'KİOTİ',
+    'SOLIS', 'ANTONIO CARRARO', 'MCCORMICK', 'FIAT', 'YANMAR', 'FERRARI', 'KARATAŞ', 'KARATAS', 'TAFE',
+    'STEYR', 'FENDT', 'LANDINI', 'ZETOR', 'FOTON', 'LS TRACTOR', 'TYM'];
+
+function detectBrands(text) {
+    const upper = trNormalize(text);
+    const found = [];
+    for (const brand of BRAND_NAMES) {
+        if (upper.includes(trNormalize(brand))) {
+            // DB formatını al
+            const dbMap = { 'TUMOSAN': 'TÜMOSAN', 'BASAK': 'BAŞAK', 'KARATAS': 'KARATAŞ', 'KIOTI': 'KİOTİ' };
+            found.push(dbMap[brand] || brand);
+        }
+    }
+    // Dedup
+    return [...new Set(found)];
+}
+
 function buildSmartFallbackSql(question, latestPeriod) {
     const q = question.toLowerCase();
-    const qNorm = trNormalize(question);
     const city = detectCity(question);
     const yearMatch = q.match(/(20\d{2})/);
     const yearFilter = yearMatch ? yearMatch[1] : null;
+    const brands = detectBrands(question);
 
-    // Yıl SQL parçası (tuik_veri ve sales_view için)
+    // SQL parçaları
     const tvYearWhere = yearFilter ? `AND tv.tescil_yil = ${yearFilter}` : '';
     const svYearWhere = yearFilter ? `AND sv.year = ${yearFilter}` : '';
-
-    // Şehir SQL parçası
     const tvCityWhere = city ? `AND ${cityMatchSql('tv.sehir_adi', city)}` : '';
     const svCityWhere = city ? `AND ${cityMatchSql('p.name', city)}` : '';
     const needsProvinceJoin = !!city;
+    const svBrandWhere = brands.length > 0 ? `AND UPPER(b.name) IN (${brands.map(b => `'${b}'`).join(',')})` : '';
+    const tvBrandWhere = brands.length > 0 ? `AND UPPER(tv.marka) IN (${brands.map(b => `'${b}'`).join(',')})` : '';
 
-    // Limit
     let limit = 10;
     const limitMatch = q.match(/(\d+)\s*(traktör|traktor|marka|model)/);
     if (limitMatch) limit = parseInt(limitMatch[1]);
 
-    console.log(`🏗️ Smart fallback: city=${city || '-'}, year=${yearFilter || 'all'}, q="${q.substring(0, 50)}"`);
+    console.log(`🏗️ Smart fallback: city=${city || '-'}, year=${yearFilter || 'all'}, brands=${brands.join(',') || '-'}, q="${q.substring(0, 50)}"`);
 
-    // ── PATTERN 1: "En çok satılan yıl" / "hangi yıl" ──
+    // ── PATTERN 1: Marka karşılaştırma ("X ile Y karşılaştır") ──
+    if (brands.length >= 2 && /karşılaştır|kıyasla|karsilastir|kiyasla|fark|vs|ile/i.test(q)) {
+        return `SELECT b.name as marka, sv.year as yil, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id
+WHERE 1=1 ${svBrandWhere} ${svYearWhere}
+GROUP BY b.name, sv.year ORDER BY sv.year DESC, toplam DESC`;
+    }
+
+    // ── PATTERN 2: "En çok satılan yıl" / "hangi yıl" ──
     if (/en çok.*(satıl|sat[ıi]lan|sat[ıi]ş).*y[ıi]l|hangi y[ıi]l|y[ıi]l.*(en çok|en fazla)|y[ıi]llara göre/i.test(q)) {
         const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
         return `SELECT sv.year as yil, SUM(sv.quantity) as toplam
-FROM sales_view sv ${cityJoin}
-WHERE 1=1 ${svYearWhere} ${svCityWhere}
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id ${cityJoin}
+WHERE 1=1 ${svYearWhere} ${svCityWhere} ${svBrandWhere}
 GROUP BY sv.year ORDER BY toplam DESC`;
     }
 
-    // ── PATTERN 2: "Toplam kaç adet/traktör satıldı" (sadece sayı) ──
+    // ── PATTERN 3: "Toplam kaç adet/traktör satıldı" ──
     if (/toplam.*kaç|kaç (adet|traktör|tane)|sadece.*toplam|toplam.*satış|kaç.*satıl/i.test(q)) {
         if (city) {
             return `SELECT SUM(tv.satis_adet) as toplam, MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
-FROM tuik_veri tv WHERE 1=1 ${tvCityWhere} ${tvYearWhere}`;
+FROM tuik_veri tv WHERE 1=1 ${tvCityWhere} ${tvYearWhere} ${tvBrandWhere}`;
         }
-        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
-        return `SELECT SUM(sv.quantity) as toplam FROM sales_view sv ${cityJoin} WHERE 1=1 ${svYearWhere} ${svCityWhere}`;
+        return `SELECT SUM(sv.quantity) as toplam FROM sales_view sv
+JOIN brands b ON sv.brand_id = b.id
+WHERE 1=1 ${svYearWhere} ${svBrandWhere}`;
     }
 
-    // ── PATTERN 3: "En çok satan marka" (model değil) ──
+    // ── PATTERN 4: Tek marka sorgusu ("New Holland satışları") ──
+    if (brands.length === 1) {
+        const brand = brands[0];
+        if (/model|hangi model/i.test(q)) {
+            // Modelleri listele
+            return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam,
+    MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
+FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+WHERE UPPER(tv.marka) = '${brand}' ${tvCityWhere} ${tvYearWhere}
+GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT ${limit}`;
+        }
+        if (/teknik|özellik|motor|hp|beygir|fiyat|spec/i.test(q)) {
+            // Teknik özellikler
+            return `SELECT marka, model, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, fiyat_usd, emisyon_seviyesi, mensei, motor_marka
+FROM teknik_veri WHERE UPPER(marka) = '${brand}' ORDER BY motor_gucu_hp ASC LIMIT 20`;
+        }
+        // Genel marka satışları (yıllara göre)
+        return `SELECT b.name as marka, sv.year as yil, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id
+WHERE UPPER(b.name) = '${brand}' ${svYearWhere}
+GROUP BY b.name, sv.year ORDER BY sv.year DESC`;
+    }
+
+    // ── PATTERN 5: "En çok satan marka" ──
     if (/en çok.*marka|lider marka|marka sıralama|hangi marka/i.test(q) && !/model/i.test(q)) {
         if (city) {
             return `SELECT tv.marka, SUM(tv.satis_adet) as toplam, MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
 FROM tuik_veri tv WHERE 1=1 ${tvCityWhere} ${tvYearWhere}
 GROUP BY tv.marka ORDER BY toplam DESC LIMIT ${limit}`;
         }
-        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
         return `SELECT b.name as marka, SUM(sv.quantity) as toplam
-FROM sales_view sv JOIN brands b ON sv.brand_id = b.id ${cityJoin}
-WHERE 1=1 ${svYearWhere} ${svCityWhere}
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id
+WHERE 1=1 ${svYearWhere}
 GROUP BY b.name ORDER BY toplam DESC LIMIT ${limit}`;
     }
 
-    // ── PATTERN 4: İl + model/marka/traktör sorgusu (en çok satan model) ──
-    if (city && /model|marka|traktör|traktor|satış|satis|satan|lider|en çok|en cok|sıral|siral/i.test(q)) {
+    // ── PATTERN 6: "En çok satan model" (il + model) ──
+    if (/model|marka ve model|marka.*model|sıral/i.test(q) || (city && /traktör|traktor|satan|lider|en çok|en cok/i.test(q))) {
         return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam,
     MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
 FROM tuik_veri tv
 LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
-WHERE 1=1 ${tvCityWhere} ${tvYearWhere}
+WHERE 1=1 ${tvCityWhere} ${tvYearWhere} ${tvBrandWhere}
 GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi)
 ORDER BY toplam DESC LIMIT ${limit}`;
     }
 
-    // ── PATTERN 5: Genel satış sorusu (traktör geçiyorsa) ──
-    if (/traktör|traktor|satış|satis|sat[ıi]l|pazar|piyasa/i.test(q)) {
+    // ── PATTERN 7: HP / segment soruları ──
+    if (/hp|beygir|segment|güç|guc/i.test(q)) {
+        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
+        return `SELECT sv.hp_range, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id ${cityJoin}
+WHERE 1=1 ${svYearWhere} ${svCityWhere} ${svBrandWhere}
+GROUP BY sv.hp_range ORDER BY toplam DESC`;
+    }
+
+    // ── PATTERN 8: Kategori (bahçe/tarla) ──
+    if (/bahçe|bahce|tarla|kategori/i.test(q)) {
+        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
+        return `SELECT sv.category as kategori, b.name as marka, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id ${cityJoin}
+WHERE 1=1 ${svYearWhere} ${svCityWhere} ${svBrandWhere}
+GROUP BY sv.category, b.name ORDER BY toplam DESC LIMIT ${limit}`;
+    }
+
+    // ── PATTERN 9: 4WD/2WD soruları ──
+    if (/4wd|2wd|çekiş|cekis|dört çeker|dort ceker/i.test(q)) {
+        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
+        return `SELECT sv.drive_type as cekis, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id ${cityJoin}
+WHERE 1=1 ${svYearWhere} ${svCityWhere} ${svBrandWhere}
+GROUP BY sv.drive_type ORDER BY toplam DESC`;
+    }
+
+    // ── PATTERN 10: Bölge soruları ──
+    if (/bölge|bolge|marmara|ege|akdeniz|karadeniz|anadolu|güneydoğu|doğu/i.test(q)) {
+        const regionMatch = q.match(/(marmara|ege|akdeniz|karadeniz|iç anadolu|ic anadolu|doğu anadolu|dogu anadolu|güneydoğu|guneydogu)/i);
+        const regionWhere = regionMatch ? `AND p.region ILIKE '%${regionMatch[1]}%'` : '';
+        return `SELECT p.region as bolge, b.name as marka, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id JOIN provinces p ON sv.province_id = p.id
+WHERE 1=1 ${svYearWhere} ${regionWhere} ${svBrandWhere}
+GROUP BY p.region, b.name ORDER BY toplam DESC LIMIT 20`;
+    }
+
+    // ── PATTERN 11: Teknik özellik soruları ──
+    if (/teknik|özellik|ozellik|motor|spec|fiyat|emisyon/i.test(q)) {
+        return `SELECT marka, model, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, fiyat_usd, emisyon_seviyesi, mensei
+FROM teknik_veri ${tvBrandWhere ? 'WHERE 1=1 ' + tvBrandWhere : ''} ORDER BY marka, motor_gucu_hp LIMIT 20`;
+    }
+
+    // ── PATTERN 12: Genel traktör/satış sorusu ──
+    if (/traktör|traktor|satış|satis|sat[ıi]l|pazar|piyasa|sektör|sektor/i.test(q)) {
         return `SELECT sv.year as yil, SUM(sv.quantity) as toplam
 FROM sales_view sv WHERE 1=1 ${svYearWhere}
 GROUP BY sv.year ORDER BY sv.year DESC`;
     }
 
-    return null; // Tanınamadı
+    // ── PATTERN 13: Hiçbir kalıp uymadı ama traktörle ilgili olabilir ──
+    // Son çare: yıllık genel satış özeti döndür
+    return `SELECT sv.year as yil, SUM(sv.quantity) as toplam
+FROM sales_view sv GROUP BY sv.year ORDER BY sv.year DESC`;
 }
 
 // Türkçe karakter varyasyonlarını tanıyan regex kalıbı üret
@@ -1284,16 +1381,17 @@ async function resolveAssistantQuestion(question, phoneNumber) {
     console.log(`🤖 Text-to-SQL aktif: "${question}" (bağlam: ${history.length} mesaj)`);
     let sql = await textToSql(question, conversationCtx);
     if (!sql) {
-        // Fallback: Bağlamsız tekrar dene (belki bağlam karıştırdı)
-        if (conversationCtx) {
+        // Rate limit (429) veya timeout ise tekrar deneme — token israfı
+        const isRateLimit = lastGroqError && (lastGroqError.includes('429') || lastGroqError.includes('TIMEOUT'));
+        if (!isRateLimit && conversationCtx) {
             console.log('🔄 Bağlamsız retry deneniyor...');
             sql = await textToSql(question, '');
         }
         if (!sql) {
-            // Son şans: Akıllı fallback SQL üret
+            // Akıllı fallback SQL üret (Groq olmadan)
             const fallbackSql = buildSmartFallbackSql(question, latestPeriod);
             if (fallbackSql) {
-                console.log(`🏗️ Groq başarısız, fallback SQL: ${fallbackSql.substring(0, 150)}`);
+                console.log(`🏗️ Groq başarısız (${lastGroqError || '?'}), fallback SQL: ${fallbackSql.substring(0, 150)}`);
                 sql = fallbackSql;
             } else {
                 return {
