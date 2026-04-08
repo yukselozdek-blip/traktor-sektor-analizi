@@ -1930,8 +1930,18 @@ app.get('/public/reports/market', async (req, res) => {
 // PUBLIC ASSISTANT ENDPOINTS
 // ============================================
 
-// Ciro motoru test endpoint'i (tarayıcıdan test için)
+// Versiyon kontrolü (deploy doğrulama)
+app.get('/api/debug/version', (req, res) => {
+    res.json({ version: 'ciro-engine-v3', deployed: new Date().toISOString(), commit: '228da9d' });
+});
+
+// Ciro motoru test endpoint'i
 app.get('/api/debug/ciro-test', async (req, res) => {
+    // 15 saniye genel timeout
+    const timer = setTimeout(() => {
+        if (!res.headersSent) res.status(504).json({ error: 'Endpoint timeout (15s)' });
+    }, 15000);
+
     try {
         const brand = (req.query.brand || 'KUBOTA').toUpperCase();
         const year = parseInt(req.query.year) || 2023;
@@ -1941,27 +1951,39 @@ app.get('/api/debug/ciro-test', async (req, res) => {
         const ciroSql = buildCiroSql(question, [], latestPeriod);
 
         if (!ciroSql) {
-            return res.json({ error: 'buildCiroSql returned null', question });
+            clearTimeout(timer);
+            return res.json({ error: 'buildCiroSql returned null', question, isCiroDetected: false });
         }
 
         const ciroResult = await executeSafeSql(ciroSql);
 
-        // Ayrıca teknik_veri'de bu marka var mı kontrol et
-        const teknikCheck = await pool.query(
-            'SELECT marka, COUNT(*) as model_count, AVG(fiyat_usd) as avg_fiyat FROM teknik_veri WHERE UPPER(marka) ILIKE $1 AND fiyat_usd > 0 GROUP BY marka',
-            [`%${brand}%`]
-        );
-        const brandsCheck = await pool.query('SELECT id, name FROM brands WHERE UPPER(name) ILIKE $1', [`%${brand}%`]);
+        // Timeout korumalı DB sorguları
+        const teknikCheck = await Promise.race([
+            pool.query('SELECT marka, COUNT(*) as model_count, AVG(fiyat_usd)::numeric(12,2) as avg_fiyat FROM teknik_veri WHERE UPPER(marka) ILIKE $1 AND fiyat_usd > 0 GROUP BY marka', [`%${brand}%`]),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('teknik_veri timeout')), 5000))
+        ]).catch(e => ({ rows: [], error: e.message }));
+
+        const brandsCheck = await Promise.race([
+            pool.query('SELECT id, name FROM brands WHERE UPPER(name) ILIKE $1', [`%${brand}%`]),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('brands timeout')), 5000))
+        ]).catch(e => ({ rows: [], error: e.message }));
+
+        clearTimeout(timer);
+        if (res.headersSent) return;
 
         return res.json({
+            version: 'ciro-engine-v3',
             question,
-            ciroSql: ciroSql.substring(0, 300),
+            ciroSql: ciroSql.substring(0, 400),
             ciroResult: ciroResult.error ? { error: ciroResult.error } : { rows: ciroResult.rows, rowCount: ciroResult.rowCount },
-            teknik_veri_check: teknikCheck.rows,
-            brands_check: brandsCheck.rows
+            teknik_veri_check: teknikCheck.rows || [],
+            teknik_veri_error: teknikCheck.error || null,
+            brands_check: brandsCheck.rows || [],
+            brands_error: brandsCheck.error || null
         });
     } catch (err) {
-        res.status(500).json({ error: err.message, stack: err.stack });
+        clearTimeout(timer);
+        if (!res.headersSent) res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
     }
 });
 
