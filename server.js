@@ -2385,7 +2385,7 @@ app.get('/public/reports/market', async (req, res) => {
 
 // Versiyon kontrolü (deploy doğrulama)
 app.get('/api/debug/version', (req, res) => {
-    res.json({ version: 'smart-fallback-v5', deployed: new Date().toISOString() });
+    res.json({ version: 'smart-fallback-v6-13patterns', deployed: new Date().toISOString() });
 });
 
 // Groq API test endpoint'i — Groq çalışıyor mu?
