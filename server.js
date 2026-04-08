@@ -507,8 +507,8 @@ BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu',
 -- Toplam satış: SELECT SUM(quantity) as toplam_satis FROM sales_view
 -- Marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id GROUP BY b.name ORDER BY toplam DESC
 -- Yıllık marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2025 GROUP BY b.name ORDER BY toplam DESC
--- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE p.name ILIKE '%Konya%' GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
--- En çok satan model (il): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE tv.sehir_adi ILIKE '%Konya%' GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
+-- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE translate(UPPER(p.name), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%Konya%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
+-- En çok satan model (il): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE translate(UPPER(tv.sehir_adi), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%Konya%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
 -- En çok satan model (genel): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
 -- Yıllık model satışı: SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE tv.tescil_yil = 2023 GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
 -- İl bazlı marka satışı (segment): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 10
@@ -528,7 +528,10 @@ KURALLAR:
 4. Sonuçları LIMIT 20 ile sınırla (çok büyük sonuç seti önle)
 5. Türkçe karakter uyumu: Marka isimleri DAİMA BÜYÜK HARF (NEW HOLLAND, JOHN DEERE, MASSEY FERGUSON, CASE, DEUTZ, TÜMOSAN, BAŞAK, ERKUNT, SAME, HATTAT, KUBOTA, FARMTRAC, VALTRA, CLAAS, KIOTI vb.)
 6. Marka karşılaştırmalarında UPPER(b.name) veya büyük harf kullan: WHERE b.name IN ('NEW HOLLAND', 'MASSEY FERGUSON')
-7. İl isimleri Türkçe (Konya, İzmir, Ankara vb.) - ILIKE kullan
+7. İl isimleri Türkçe (Konya, İzmir, Ankara vb.) - ILIKE Türkçe İ/ı ile sorun yaşar!
+   ÖNEMLİ: tuik_veri.sehir_adi sütunu BÜYÜK HARF Türkçe: "ERZİNCAN", "İZMİR", "KONYA"
+   İl filtresi için DAİMA şu kalıbı kullan: translate(UPPER(tv.sehir_adi), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%İlAdı%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')
+   provinces tablosu ile filtre: translate(UPPER(p.name), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%İlAdı%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')
 8. SUM(quantity) ile satış toplamı al
 9. Yıl belirtilmemişse en son veri yılını kullan
 10. SADECE geçerli SQL döndür, açıklama ekleme
@@ -559,7 +562,8 @@ Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
   FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
   WHERE ... GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
   ÖNEMLİ: teknik_veri.model gerçek model adıdır, tuik_model_adi sadece eşleştirme anahtarı. Raporda DAİMA teknik_veri.model göster.
-  tuik_veri'de il filtresi: sehir_adi ILIKE '%İlAdı%', yıl filtresi: tescil_yil = 2023
+  tuik_veri'de il filtresi (Türkçe İ/ı güvenli): translate(UPPER(tv.sehir_adi), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%İlAdı%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')
+  yıl filtresi: tescil_yil = 2023
 - "Lider marka", "en çok satan MARKA" (model değil marka) → SUM(quantity) ile sales_view
 - "kaç traktör satıldı" → SUM(quantity) FROM sales_view
 - Teknik özellik soruları → teknik_veri tablosundan çek: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd FROM teknik_veri
@@ -782,32 +786,41 @@ const TURKISH_CITIES = [
     'UŞAK','VAN','YALOVA','YOZGAT','ZONGULDAK'
 ];
 
-function detectCity(text) {
-    // Türkçe-güvenli normalize: tüm Türkçe karakterleri ASCII'ye düşür
-    // JS toUpperCase() Türkçe 'i' → 'I' yapar (İ değil), bu yüzden önce küçük harfleri temizle
-    const normalize = (s) => s
-        .replace(/ı/g, 'i').replace(/İ/g, 'I')   // Türkçe ı/İ → ASCII i/I
-        .replace(/ş/g, 's').replace(/Ş/g, 'S')
-        .replace(/ç/g, 'c').replace(/Ç/g, 'C')
-        .replace(/ü/g, 'u').replace(/Ü/g, 'U')
-        .replace(/ö/g, 'o').replace(/Ö/g, 'O')
-        .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
-        .replace(/[''ʼ`']/g, '')
-        .toUpperCase();
+// Türkçe-güvenli normalize: tüm Türkçe karakterleri ASCII'ye düşür
+// JS toUpperCase() Türkçe 'i' → 'I' yapar (İ değil), bu yüzden önce küçük harfleri temizle
+const trNormalize = (s) => s
+    .replace(/ı/g, 'i').replace(/İ/g, 'I')
+    .replace(/ş/g, 's').replace(/Ş/g, 'S')
+    .replace(/ç/g, 'c').replace(/Ç/g, 'C')
+    .replace(/ü/g, 'u').replace(/Ü/g, 'U')
+    .replace(/ö/g, 'o').replace(/Ö/g, 'O')
+    .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+    .replace(/[''ʼ`']/g, '')
+    .toUpperCase();
 
-    const textNorm = normalize(text);
+function detectCity(text) {
+    const textNorm = trNormalize(text);
 
     // Şehirleri uzundan kısaya sırala (KAHRAMANMARAŞ > KARS gibi çakışmaları önle)
     const sortedCities = [...TURKISH_CITIES].sort((a, b) => b.length - a.length);
 
     for (const city of sortedCities) {
-        const cityNorm = normalize(city);
+        const cityNorm = trNormalize(city);
         if (textNorm.includes(cityNorm)) {
-            // Orijinal şehir adını döndür (proper case: Erzincan, İstanbul, vb.)
-            return city.charAt(0) + city.slice(1).toLowerCase();
+            // Orijinal BÜYÜK HARF Türkçe formunu döndür (DB'deki format: ERZİNCAN, İZMİR)
+            return city;
         }
     }
     return null;
+}
+
+// PostgreSQL'de Türkçe-güvenli şehir eşleştirme SQL parçası
+// ILIKE Türkçe İ/i'yi eşleştiremez, bu yüzden translate() ile normalize ediyoruz
+function cityMatchSql(columnName, cityName) {
+    // cityName artık BÜYÜK HARF Türkçe: "ERZİNCAN", "İZMİR" vb.
+    // translate ile hem DB'deki hem sorgu değerindeki Türkçe karakterleri ASCII'ye çevirip karşılaştır
+    const safeCity = cityName.replace(/'/g, "''"); // SQL injection önleme
+    return `translate(UPPER(${columnName}), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%${safeCity}%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')`;
 }
 
 // ═══ İL BAZLI MODEL SORGUSU DOĞRUDAN SQL ÜRETİCİ ═══
@@ -829,15 +842,23 @@ function buildCityModelSql(question) {
     const yearMatch = q.match(/(20\d{2})/);
     if (yearMatch) yearFilter = `AND tv.tescil_yil = ${yearMatch[1]}`;
 
+    const whereCity = cityMatchSql('tv.sehir_adi', city);
     console.log(`🏗️ Doğrudan SQL: ${city}, limit=${limit}, yıl=${yearMatch ? yearMatch[1] : 'tümü'}`);
 
     return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam
 FROM tuik_veri tv
 LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
-WHERE tv.sehir_adi ILIKE '%${city}%' ${yearFilter}
+WHERE ${whereCity} ${yearFilter}
 GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi)
 ORDER BY toplam DESC
 LIMIT ${limit}`;
+}
+
+// BÜYÜK HARF şehir adını proper case'e çevir (ERZİNCAN → Erzincan, İZMİR → İzmir)
+function cityProperCase(cityUpper) {
+    if (!cityUpper) return cityUpper;
+    // İlk harfi koru, geri kalanı küçült
+    return cityUpper.charAt(0).toUpperCase() + cityUpper.slice(1).toLowerCase();
 }
 
 function expandShortQuery(question, history) {
@@ -848,8 +869,9 @@ function expandShortQuery(question, history) {
     if (words.length > 5) return question;
 
     // Soruda şehir adı var mı?
-    const city = detectCity(question);
-    if (!city) return question;
+    const cityUpper = detectCity(question); // "ERZİNCAN", "İZMİR" vb.
+    if (!cityUpper) return question;
+    const city = cityProperCase(cityUpper); // "Erzincan", "İzmir"
 
     // Geçmişteki son user mesajlarından bir kalıp bul (en az 6 kelimelik, şehir içeren)
     for (let i = history.length - 1; i >= 0; i--) {
@@ -858,11 +880,14 @@ function expandShortQuery(question, history) {
         if (prevQ.trim().split(/\s+/).length < 5) continue; // Çok kısa mesajları atla
 
         // Önceki soruda şehir adı var mı?
-        const prevCity = detectCity(prevQ);
-        if (prevCity) {
-            // Şehri değiştirerek yeni sorgu oluştur
-            // Önceki soruda şehir adını bul ve yenisiyle değiştir
-            const cityRegex = new RegExp(prevCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['ʼ`'']*(da|de|DA|DE|'da|'de)?", 'gi');
+        const prevCityUpper = detectCity(prevQ);
+        if (prevCityUpper) {
+            // Önceki sorgudaki şehir adını (her formda) bul ve yenisiyle değiştir
+            const prevProper = cityProperCase(prevCityUpper);
+            // Hem büyük harf, hem proper case, hem küçük harf formunu yakala + ek (da/de/'da/'de)
+            const escapedForms = [prevCityUpper, prevProper, prevCityUpper.toLowerCase()]
+                .map(f => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const cityRegex = new RegExp(`(${escapedForms.join('|')})['ʼ\`'']*(?:da|de|'da|'de)?`, 'gi');
             const expanded = prevQ.replace(cityRegex, city + "'da");
             console.log(`🔄 Sorgu genişletme: "${question}" → "${expanded}" (kalıp: "${prevQ}")`);
             return expanded;
