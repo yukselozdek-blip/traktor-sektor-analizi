@@ -2278,7 +2278,47 @@ app.get('/public/reports/market', async (req, res) => {
 
 // Versiyon kontrolü (deploy doğrulama)
 app.get('/api/debug/version', (req, res) => {
-    res.json({ version: 'ciro-engine-v3', deployed: new Date().toISOString(), commit: '228da9d' });
+    res.json({ version: 'smart-fallback-v5', deployed: new Date().toISOString() });
+});
+
+// Groq API test endpoint'i — Groq çalışıyor mu?
+app.get('/api/debug/groq-test', async (req, res) => {
+    const question = req.query.q || 'New Holland ile Massey Ferguson karşılaştır';
+    try {
+        const t0 = Date.now();
+        const latestPeriod = await getLatestSalesPeriod();
+        const conversationCtx = '';
+        const sql = await textToSql(question, conversationCtx);
+        const elapsed = Date.now() - t0;
+
+        if (!sql) {
+            // Fallback da dene
+            const fallbackSql = buildSmartFallbackSql(question, latestPeriod);
+            return res.json({
+                groqResult: 'NULL/UNSUPPORTED',
+                elapsed: elapsed + 'ms',
+                fallbackSql: fallbackSql || 'NO_FALLBACK',
+                groqApiKey: GROQ_API_KEY ? 'SET (' + GROQ_API_KEY.substring(0, 8) + '...)' : 'MISSING',
+                question
+            });
+        }
+
+        // SQL'i çalıştır
+        const result = await executeSafeSql(sql);
+        const interpretation = await interpretResults(question, sql, result, '');
+
+        res.json({
+            groqResult: 'OK',
+            sql: sql.substring(0, 300),
+            elapsed: elapsed + 'ms',
+            rowCount: result.rowCount || 0,
+            error: result.error || null,
+            interpretation: interpretation ? interpretation.substring(0, 200) + '...' : 'NULL (ham format)',
+            question
+        });
+    } catch (err) {
+        res.json({ error: err.message, question });
+    }
 });
 
 // Ciro motoru test endpoint'i
