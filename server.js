@@ -756,8 +756,25 @@ Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
 function buildCiroSql(question, history, latestPeriod) {
     const q = question.toLowerCase().replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g');
 
-    // Ciro/gelir/satış tutarı anahtar kelimeleri
-    const isCiro = /ciro|gelir|satis tutari|satis geliri|hasilat|revenue/i.test(q);
+    // Ciro/gelir/satış tutarı anahtar kelimeleri — önce sorudan kontrol et
+    let isCiro = /ciro|gelir|satis tutari|satis geliri|hasilat|revenue/i.test(q);
+
+    // Soruda ciro yok ama bağlamda ciro varsa VE soru sadece marka adı gibi kısa bir metinse → niyet devralma
+    if (!isCiro && history && history.length > 0) {
+        const isShortQuery = question.trim().split(/\s+/).length <= 4; // "tümosan", "hattat cirosu", "new holland" gibi kısa sorular
+        if (isShortQuery) {
+            // Son 4 mesajda ciro niyeti var mı?
+            for (let i = history.length - 1; i >= Math.max(0, history.length - 4); i--) {
+                const msgNorm = history[i].content.toLowerCase().replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g');
+                if (/ciro|gelir|satis tutari|hasilat|revenue/.test(msgNorm)) {
+                    isCiro = true;
+                    console.log(`💡 Bağlamdan ciro niyeti devralındı (mesaj #${i})`);
+                    break;
+                }
+            }
+        }
+    }
+
     if (!isCiro) return null;
 
     // Marka adını bul (sorudan veya bağlamdan)
