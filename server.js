@@ -504,43 +504,30 @@ VİTES: '8+2','8+8','12+12','16+16','32+32','CVT'
 BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu','Güneydoğu Anadolu'
 
 ÖRNEK SORGULAR:
--- Toplam satış: SELECT SUM(quantity) as toplam_satis FROM sales_view
+-- Toplam satış: SELECT SUM(quantity) as toplam FROM sales_view
+-- Yıllara göre satış: SELECT sv.year as yil, SUM(sv.quantity) as toplam FROM sales_view sv GROUP BY sv.year ORDER BY toplam DESC
+-- En çok satılan yıl: SELECT sv.year as yil, SUM(sv.quantity) as toplam FROM sales_view sv GROUP BY sv.year ORDER BY toplam DESC LIMIT 1
 -- Marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id GROUP BY b.name ORDER BY toplam DESC
--- Yıllık marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2025 GROUP BY b.name ORDER BY toplam DESC
--- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE translate(UPPER(p.name), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%Konya%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
--- En çok satan model (il): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE translate(UPPER(tv.sehir_adi), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%Konya%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
+-- İl toplam satış: SELECT SUM(tv.satis_adet) as toplam FROM tuik_veri tv WHERE tv.sehir_adi ILIKE '%Van%'
+-- İl + yıl: SELECT SUM(tv.satis_adet) as toplam FROM tuik_veri tv WHERE tv.sehir_adi ILIKE '%Van%' AND tv.tescil_yil = 2022
+-- İl marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name ORDER BY toplam DESC LIMIT 10
+-- En çok satan model (il): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE tv.sehir_adi ILIKE '%Konya%' GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
 -- En çok satan model (genel): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
--- Yıllık model satışı: SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE tv.tescil_yil = 2023 GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
--- İl bazlı marka satışı (segment): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 10
--- Teknik özellik: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd, kullanim_alani FROM teknik_veri WHERE UPPER(marka) = 'NEW HOLLAND' AND (UPPER(tuik_model_adi) ILIKE '%BOOMER%' OR UPPER(model) ILIKE '%BOOMER%')
--- Ciro hesaplama (ÖNEMLİ: teknik_veri ile sales_view arasında model JOIN yok, AVG fiyat ile subquery kullan):
--- SELECT b.name, SUM(sv.quantity) as adet,
---   SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = UPPER(b.name) AND tv.fiyat_usd > 0) as tahmini_ciro_usd
--- FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2023 AND UPPER(b.name) = 'HATTAT' GROUP BY b.name
--- DİKKAT: teknik_veri ile sales_view'i doğrudan JOIN yapma! Kartezyen çarpım olur. Subquery kullan.
--- Bahçe traktörü lider: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.category='bahce' GROUP BY b.name ORDER BY toplam DESC LIMIT 5
+-- Teknik özellik: SELECT marka, model, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, fiyat_usd FROM teknik_veri WHERE UPPER(marka) = 'NEW HOLLAND' AND (UPPER(tuik_model_adi) ILIKE '%BOOMER%' OR UPPER(model) ILIKE '%BOOMER%')
+-- Bahçe lider: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.category='bahce' GROUP BY b.name ORDER BY toplam DESC LIMIT 5
 -- İl toprak/iklim: SELECT p.name, p.soil_type, p.climate_zone, p.primary_crops FROM provinces p WHERE p.name ILIKE '%Kars%'
 
 KURALLAR:
-1. Satış sorguları için DAİMA "FROM sales_view" kullan (sales_data değil!)
-2. Marka ismi gerekiyorsa brands tablosu ile JOIN yap
-3. İl ismi gerekiyorsa provinces tablosu ile JOIN yap
-4. Sonuçları LIMIT 20 ile sınırla (çok büyük sonuç seti önle)
-5. Türkçe karakter uyumu: Marka isimleri DAİMA BÜYÜK HARF (NEW HOLLAND, JOHN DEERE, MASSEY FERGUSON, CASE, DEUTZ, TÜMOSAN, BAŞAK, ERKUNT, SAME, HATTAT, KUBOTA, FARMTRAC, VALTRA, CLAAS, KIOTI vb.)
-6. Marka karşılaştırmalarında UPPER(b.name) veya büyük harf kullan: WHERE b.name IN ('NEW HOLLAND', 'MASSEY FERGUSON')
-7. İl isimleri Türkçe (Konya, İzmir, Ankara vb.) - ILIKE Türkçe İ/ı ile sorun yaşar!
-   ÖNEMLİ: tuik_veri.sehir_adi sütunu BÜYÜK HARF Türkçe: "ERZİNCAN", "İZMİR", "KONYA"
-   İl filtresi için DAİMA şu kalıbı kullan: translate(UPPER(tv.sehir_adi), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%İlAdı%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')
-   provinces tablosu ile filtre: translate(UPPER(p.name), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%İlAdı%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')
-8. SUM(quantity) ile satış toplamı al
-9. Yıl belirtilmemişse en son veri yılını kullan
+1. sales_view: marka ve segment bazlı satışlar (model adı YOK). tuik_veri: model bazlı satışlar
+2. Marka ismi: BÜYÜK HARF (NEW HOLLAND, TÜMOSAN, BAŞAK vb.)
+3. İl filtresi: ILIKE '%İlAdı%' kullan (hem tuik_veri.sehir_adi hem provinces.name)
+4. Sonuçları LIMIT 20 ile sınırla
+5. Yıl belirtilmemişse en son veri yılını kullan
+6. "Ciro/gelir" → Subquery ile AVG(fiyat_usd). Doğrudan JOIN YAPMA
+7. "kaç traktör satıldı" → SUM() ile toplam sayı döndür, model listesi DEĞİL
+8. "en çok satılan yıl" → GROUP BY year ORDER BY toplam DESC LIMIT 1
+9. Soruya tam uygun SQL yaz. "Toplam kaç adet" soruluyorsa SUM döndür, "hangi model" soruluyorsa model listesi döndür
 10. SADECE geçerli SQL döndür, açıklama ekleme
-11. Sorunun karmaşıklığına göre birden fazla boyut çek (marka, il, HP, kategori, YoY)
-12. Karşılaştırma sorularında hem mevcut hem önceki dönem verilerini çek
-13. provinces tablosundaki soil_type, climate_zone, primary_crops sütunlarını coğrafi sorularda kullan
-14. Teknik özellik soruları için teknik_veri tablosunu kullan (marka, model, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, fiyat_usd, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, kullanim_alani)
-15. "Ciro", "gelir", "satış tutarı" → Subquery ile AVG(fiyat_usd) hesapla, teknik_veri ile sales_view'i doğrudan JOIN YAPMA (kartezyen çarpım olur)
-16. "Lider", "en çok", "birinci" → ORDER BY ... DESC LIMIT 1-5 kullan
 `;
 
 async function textToSql(question, conversationCtx) {
@@ -551,36 +538,19 @@ async function textToSql(question, conversationCtx) {
 
     const contextBlock = conversationCtx || '';
 
-    const userPrompt = `Kullanıcı sorusu: "${question}"
+    const userPrompt = `Soru: "${question}"
 ${contextBlock}
-Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
+TEK bir PostgreSQL SELECT sorgusu yaz.
 
-ÖNEMLİ KURALLAR:
-- Traktör sektörü ile ilgili HER soruya SQL yazılabilir. "UNSUPPORTED" sadece tamamen alakasız konularda (hava durumu, siyaset vb.) kullan.
-- "En çok satan MODEL", "model sıralaması", "hangi model", "marka ve model" → tuik_veri + teknik_veri JOIN kullan:
-  SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam
-  FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
-  WHERE ... GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
-  ÖNEMLİ: teknik_veri.model gerçek model adıdır, tuik_model_adi sadece eşleştirme anahtarı. Raporda DAİMA teknik_veri.model göster.
-  tuik_veri'de il filtresi (Türkçe İ/ı güvenli): translate(UPPER(tv.sehir_adi), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%İlAdı%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')
-  yıl filtresi: tescil_yil = 2023
-- "Lider marka", "en çok satan MARKA" (model değil marka) → SUM(quantity) ile sales_view
-- "kaç traktör satıldı" → SUM(quantity) FROM sales_view
-- Teknik özellik soruları → teknik_veri tablosundan çek: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd FROM teknik_veri
-- "Ciro/gelir/satış tutarı" → DİKKAT: teknik_veri ile sales_view arasında model seviyesinde JOIN YOK. Subquery ile AVG fiyat hesapla:
-  SELECT b.name, SUM(sv.quantity) as adet, SUM(sv.quantity) * (SELECT AVG(tv.fiyat_usd) FROM teknik_veri tv WHERE UPPER(tv.marka) = UPPER(b.name) AND tv.fiyat_usd > 0) as tahmini_ciro_usd FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE ... GROUP BY b.name
-- Marka + model teknik bilgi → teknik_veri tablosunda WHERE UPPER(marka) = 'MARKA' AND (UPPER(tuik_model_adi) ILIKE '%MODEL%' OR UPPER(model) ILIKE '%MODEL%')
-- "Bu model", "onun", "önceki" gibi referanslar → KONUŞMA BAĞLAMI'ndan çöz, önceki soruda geçen marka/model/il/yıl bilgilerini kullan
-- Basit soru ("kaç satıldı?") → basit SUM/COUNT sorgusu yeter
-- Marka karşılaştırma → Her marka için SUM(quantity) GROUP BY kullan. Örnek:
-  SELECT b.name, SUM(quantity) AS toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE b.name IN ('MARKA1','MARKA2') GROUP BY b.name
-- Yıllık trend/karşılaştırma → GROUP BY b.name, sv.year
-- Bölgesel analiz → provinces tablosundaki region, soil_type, climate_zone, primary_crops alanlarını dahil et
-- Bölme (/) işlemlerinde NULLIF kullan: SUM(x) * 100.0 / NULLIF(SUM(y), 0)
-- Kategori soruları: "bahçe traktörü" → category = 'bahce', "tarla traktörü" → category = 'tarla'
-
-Sadece SQL kodu döndür, başka bir şey yazma. Açıklama ekleme.
-Eğer soru traktör/tarım/satış ile TAMAMEN ilgisizse sadece "UNSUPPORTED" yaz.`;
+- Traktör/tarım ile ilgili HER soruya SQL yaz. UNSUPPORTED sadece tamamen alakasız sorularda.
+- "Kaç traktör/adet" → SUM() toplam döndür, model listesi DEĞİL
+- "En çok satılan yıl" → GROUP BY year ORDER BY DESC
+- "Model sıralaması/hangi model" → tuik_veri LEFT JOIN teknik_veri, COALESCE(tk.model, tv.tuik_model_adi) as model
+- "Ciro/gelir" → Subquery AVG(fiyat_usd), doğrudan JOIN yapma
+- "Bu model/onun/önceki" → Bağlamdan çöz
+- İl filtresi: ILIKE '%İlAdı%'
+- Sadece SQL döndür. Açıklama yazma.
+- Alakasızsa: "UNSUPPORTED"`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
@@ -624,7 +594,29 @@ Eğer soru traktör/tarım/satış ile TAMAMEN ilgisizse sadece "UNSUPPORTED" ya
     // Sadece ilk sorguyu al (birden fazla varsa)
     sql = sql.split(';')[0].trim();
 
+    // Türkçe İ/ı güvenli hale getir: ILIKE '%CityName%' → translate() kalıbına çevir
+    sql = fixTurkishIlike(sql);
+
     return sql;
+}
+
+// Groq'un ürettiği SQL'deki ILIKE il filtrelerini Türkçe-güvenli translate() ile değiştirir
+function fixTurkishIlike(sql) {
+    // sehir_adi ILIKE '%...%' veya p.name ILIKE '%...%' kalıplarını yakala
+    return sql.replace(
+        /([\w.]+)\s+ILIKE\s+'%([^%]+)%'/gi,
+        (match, column, value) => {
+            // Sadece şehir/il sütunlarında Türkçe fix uygula
+            const col = column.toLowerCase();
+            if (col.includes('sehir') || col.includes('name') || col.includes('il')) {
+                // Değerde Türkçe karakter var mı veya İ/ı riski var mı kontrol et
+                if (/[a-zA-ZçğıiöşüÇĞİÖŞÜ]/.test(value)) {
+                    return `translate(UPPER(${column}), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%${value}%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')`;
+                }
+            }
+            return match; // Şehir sütunu değilse dokunma
+        }
+    );
 }
 
 async function textToSqlRetry(question, failedSql, errorMessage) {
@@ -914,37 +906,83 @@ function cityMatchSql(columnName, cityName) {
     return `translate(UPPER(${columnName}), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg') LIKE translate(UPPER('%${safeCity}%'), 'İıŞşÇçÜüÖöĞğ', 'IISsCcUuOoGg')`;
 }
 
-// ═══ İL BAZLI MODEL SORGUSU DOĞRUDAN SQL ÜRETİCİ ═══
-// Groq UNSUPPORTED döndüğünde, il + "en çok satan model" kalıbı varsa SQL üret
-function buildCityModelSql(question) {
-    const city = detectCity(question);
-    if (!city) return null;
-
-    // Soru model/marka/satış ile ilgiliyse
+// ═══ AKILLI FALLBACK SQL ÜRETİCİ ═══
+// Groq başarısız olduğunda sorunun türüne göre uygun SQL üretir
+function buildSmartFallbackSql(question, latestPeriod) {
     const q = question.toLowerCase();
-    if (!/model|marka|traktör|traktor|satış|satis|satan|lider|en çok|en cok|sıral|siral|kaç|kac/i.test(q)) return null;
+    const qNorm = trNormalize(question);
+    const city = detectCity(question);
+    const yearMatch = q.match(/(20\d{2})/);
+    const yearFilter = yearMatch ? yearMatch[1] : null;
 
+    // Yıl SQL parçası (tuik_veri ve sales_view için)
+    const tvYearWhere = yearFilter ? `AND tv.tescil_yil = ${yearFilter}` : '';
+    const svYearWhere = yearFilter ? `AND sv.year = ${yearFilter}` : '';
+
+    // Şehir SQL parçası
+    const tvCityWhere = city ? `AND ${cityMatchSql('tv.sehir_adi', city)}` : '';
+    const svCityWhere = city ? `AND ${cityMatchSql('p.name', city)}` : '';
+    const needsProvinceJoin = !!city;
+
+    // Limit
     let limit = 10;
     const limitMatch = q.match(/(\d+)\s*(traktör|traktor|marka|model)/);
     if (limitMatch) limit = parseInt(limitMatch[1]);
 
-    // Yıl filtresi
-    let yearFilter = '';
-    const yearMatch = q.match(/(20\d{2})/);
-    if (yearMatch) yearFilter = `AND tv.tescil_yil = ${yearMatch[1]}`;
+    console.log(`🏗️ Smart fallback: city=${city || '-'}, year=${yearFilter || 'all'}, q="${q.substring(0, 50)}"`);
 
-    const whereCity = cityMatchSql('tv.sehir_adi', city);
-    console.log(`🏗️ Doğrudan SQL: ${city}, limit=${limit}, yıl=${yearMatch ? yearMatch[1] : 'tümü'}`);
+    // ── PATTERN 1: "En çok satılan yıl" / "hangi yıl" ──
+    if (/en çok.*(satıl|sat[ıi]lan|sat[ıi]ş).*y[ıi]l|hangi y[ıi]l|y[ıi]l.*(en çok|en fazla)|y[ıi]llara göre/i.test(q)) {
+        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
+        return `SELECT sv.year as yil, SUM(sv.quantity) as toplam
+FROM sales_view sv ${cityJoin}
+WHERE 1=1 ${svYearWhere} ${svCityWhere}
+GROUP BY sv.year ORDER BY toplam DESC`;
+    }
 
-    // MIN/MAX yıl bilgisini de çek (dönem bilgisi için)
-    return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam,
+    // ── PATTERN 2: "Toplam kaç adet/traktör satıldı" (sadece sayı) ──
+    if (/toplam.*kaç|kaç (adet|traktör|tane)|sadece.*toplam|toplam.*satış|kaç.*satıl/i.test(q)) {
+        if (city) {
+            return `SELECT SUM(tv.satis_adet) as toplam, MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
+FROM tuik_veri tv WHERE 1=1 ${tvCityWhere} ${tvYearWhere}`;
+        }
+        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
+        return `SELECT SUM(sv.quantity) as toplam FROM sales_view sv ${cityJoin} WHERE 1=1 ${svYearWhere} ${svCityWhere}`;
+    }
+
+    // ── PATTERN 3: "En çok satan marka" (model değil) ──
+    if (/en çok.*marka|lider marka|marka sıralama|hangi marka/i.test(q) && !/model/i.test(q)) {
+        if (city) {
+            return `SELECT tv.marka, SUM(tv.satis_adet) as toplam, MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
+FROM tuik_veri tv WHERE 1=1 ${tvCityWhere} ${tvYearWhere}
+GROUP BY tv.marka ORDER BY toplam DESC LIMIT ${limit}`;
+        }
+        const cityJoin = needsProvinceJoin ? 'JOIN provinces p ON sv.province_id = p.id' : '';
+        return `SELECT b.name as marka, SUM(sv.quantity) as toplam
+FROM sales_view sv JOIN brands b ON sv.brand_id = b.id ${cityJoin}
+WHERE 1=1 ${svYearWhere} ${svCityWhere}
+GROUP BY b.name ORDER BY toplam DESC LIMIT ${limit}`;
+    }
+
+    // ── PATTERN 4: İl + model/marka/traktör sorgusu (en çok satan model) ──
+    if (city && /model|marka|traktör|traktor|satış|satis|satan|lider|en çok|en cok|sıral|siral/i.test(q)) {
+        return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam,
     MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
 FROM tuik_veri tv
 LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
-WHERE ${whereCity} ${yearFilter}
+WHERE 1=1 ${tvCityWhere} ${tvYearWhere}
 GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi)
-ORDER BY toplam DESC
-LIMIT ${limit}`;
+ORDER BY toplam DESC LIMIT ${limit}`;
+    }
+
+    // ── PATTERN 5: Genel satış sorusu (traktör geçiyorsa) ──
+    if (/traktör|traktor|satış|satis|sat[ıi]l|pazar|piyasa/i.test(q)) {
+        return `SELECT sv.year as yil, SUM(sv.quantity) as toplam
+FROM sales_view sv WHERE 1=1 ${svYearWhere}
+GROUP BY sv.year ORDER BY sv.year DESC`;
+    }
+
+    return null; // Tanınamadı
 }
 
 // Türkçe karakter varyasyonlarını tanıyan regex kalıbı üret
@@ -1243,11 +1281,11 @@ async function resolveAssistantQuestion(question, phoneNumber) {
             sql = await textToSql(question, '');
         }
         if (!sql) {
-            // Son şans: İl + model sorgusu ise doğrudan SQL üret (Groq UNSUPPORTED döndüyse)
-            const cityModelSql = buildCityModelSql(question);
-            if (cityModelSql) {
-                console.log(`🏗️ Groq başarısız, doğrudan il-model SQL: ${cityModelSql.substring(0, 150)}`);
-                sql = cityModelSql;
+            // Son şans: Akıllı fallback SQL üret
+            const fallbackSql = buildSmartFallbackSql(question, latestPeriod);
+            if (fallbackSql) {
+                console.log(`🏗️ Groq başarısız, fallback SQL: ${fallbackSql.substring(0, 150)}`);
+                sql = fallbackSql;
             } else {
                 return {
                     ok: false, intent: 'unsupported',
