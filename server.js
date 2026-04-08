@@ -742,7 +742,13 @@ WHATSAPP FORMATLAMA:
 
 HALÜSİNASYON ÖNLEYİCİ:
 - Veritabanında olmayan kırılım sorulursa uydurma. "Bu kırılım veritabanında mevcut değil, ancak mevcut verilerle en yakın analiz şudur..." de.
-- SADECE gelen SQL sonuç verisine dayanarak cevap ver, veri dışı rakam üretme.`;
+- SADECE gelen SQL sonuç verisine dayanarak cevap ver, veri dışı rakam üretme.
+
+DÖNEM BİLGİSİ (ÇOK ÖNEMLİ):
+- Cevabında verilerin hangi döneme ait olduğunu MUTLAKA belirt.
+- Veride min_yil/max_yil varsa kullan. Yoksa SQL'deki WHERE yil filtresinden çıkar.
+- Yıl filtresi yoksa: "Tüm dönem verileri (2019-2025)" gibi belirt.
+- Örnek: "2019-2025 yılları toplamında Erzincan'da en çok satan 10 traktör..." veya "2023 yılında İzmir'de..."`;
 
     const userPrompt = `Kullanıcı sorusu: "${question}"
 ${contextBlock}
@@ -751,6 +757,7 @@ Toplam satır sayısı: ${result.rowCount}
 Dönen veri: ${dataPreview}
 
 Bu veriye dayanarak soruya cevap ver. Sabit şablon kullanma, soruya özel cevap yaz.
+Verilerin hangi döneme/yıl aralığına ait olduğunu MUTLAKA belirt (SQL'de yıl filtresi varsa o yılı, yoksa tüm dönem bilgisini).
 Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
 
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -845,7 +852,9 @@ function buildCityModelSql(question) {
     const whereCity = cityMatchSql('tv.sehir_adi', city);
     console.log(`🏗️ Doğrudan SQL: ${city}, limit=${limit}, yıl=${yearMatch ? yearMatch[1] : 'tümü'}`);
 
-    return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam
+    // MIN/MAX yıl bilgisini de çek (dönem bilgisi için)
+    return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam,
+    MIN(tv.tescil_yil) as min_yil, MAX(tv.tescil_yil) as max_yil
 FROM tuik_veri tv
 LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
 WHERE ${whereCity} ${yearFilter}
@@ -1208,8 +1217,25 @@ async function resolveAssistantQuestion(question, phoneNumber) {
 
     // AI yorumlama başarısız olursa ham veriyi WhatsApp-dostu formatla
     const fieldLabels = { marka: 'Marka', model: 'Model', toplam: 'Adet', adet: 'Adet', name: 'İsim', satis_adet: 'Satış', yil: 'Yıl', sehir_adi: 'İl', hp_range: 'HP', category: 'Kategori' };
-    const fields = result.fields || Object.keys(result.rows[0] || {});
-    let plainAnswer = `📊 *Sorgu Sonucu* (${result.rowCount} kayıt)\n\n`;
+    // Görüntülenecek alanlar (min_yil, max_yil gibi meta alanları hariç)
+    const hiddenFields = ['min_yil', 'max_yil'];
+    const fields = (result.fields || Object.keys(result.rows[0] || {})).filter(f => !hiddenFields.includes(f));
+
+    // Dönem bilgisi çıkar (varsa)
+    let periodInfo = '';
+    const firstRow = result.rows[0] || {};
+    if (firstRow.min_yil && firstRow.max_yil) {
+        periodInfo = firstRow.min_yil === firstRow.max_yil
+            ? `\n📅 *Dönem:* ${firstRow.min_yil} yılı verileri\n`
+            : `\n📅 *Dönem:* ${firstRow.min_yil}-${firstRow.max_yil} yılları toplamı\n`;
+    } else {
+        // SQL'den dönem bilgisi yoksa latestPeriod kullan
+        if (latestPeriod) {
+            periodInfo = `\n📅 *Dönem:* Mevcut tüm veriler (son veri: ${latestPeriod.year}/${latestPeriod.month})\n`;
+        }
+    }
+
+    let plainAnswer = `📊 *Sorgu Sonucu* (${result.rowCount} kayıt)${periodInfo}\n`;
     result.rows.slice(0, 10).forEach((row, i) => {
         const vals = fields.map(f => {
             const label = fieldLabels[f] || f;
