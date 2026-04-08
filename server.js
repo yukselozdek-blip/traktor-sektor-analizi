@@ -495,6 +495,17 @@ KABİN: 'kabinli','rollbar'
 VİTES: '8+2','8+8','12+12','16+16','32+32','CVT'
 BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu','Güneydoğu Anadolu'
 
+ÖRNEK SORGULAR:
+-- Toplam satış: SELECT SUM(quantity) as toplam_satis FROM sales_view
+-- Marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id GROUP BY b.name ORDER BY toplam DESC
+-- Yıllık marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2025 GROUP BY b.name ORDER BY toplam DESC
+-- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE p.name ILIKE '%Konya%' GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
+-- En çok satan model (il): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 5
+-- Teknik özellik: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd, kullanim_alani FROM teknik_veri WHERE UPPER(marka) = 'NEW HOLLAND' AND (UPPER(tuik_model_adi) ILIKE '%BOOMER%' OR UPPER(model) ILIKE '%BOOMER%')
+-- Ciro hesaplama: SELECT b.name, SUM(sv.quantity) as adet, SUM(sv.quantity * tv.fiyat_usd) as ciro_usd FROM sales_view sv JOIN brands b ON sv.brand_id=b.id LEFT JOIN teknik_veri tv ON UPPER(tv.marka) = UPPER(b.name) WHERE sv.year=2023 AND b.name = 'HATTAT' GROUP BY b.name
+-- Bahçe traktörü lider: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.category='bahce' GROUP BY b.name ORDER BY toplam DESC LIMIT 5
+-- İl toprak/iklim: SELECT p.name, p.soil_type, p.climate_zone, p.primary_crops FROM provinces p WHERE p.name ILIKE '%Kars%'
+
 KURALLAR:
 1. Satış sorguları için DAİMA "FROM sales_view" kullan (sales_data değil!)
 2. Marka ismi gerekiyorsa brands tablosu ile JOIN yap
@@ -503,31 +514,47 @@ KURALLAR:
 5. Türkçe karakter uyumu: Marka isimleri DAİMA BÜYÜK HARF (NEW HOLLAND, JOHN DEERE, MASSEY FERGUSON, CASE, DEUTZ, TÜMOSAN, BAŞAK, ERKUNT, SAME, HATTAT, KUBOTA, FARMTRAC, VALTRA, CLAAS, KIOTI vb.)
 6. Marka karşılaştırmalarında UPPER(b.name) veya büyük harf kullan: WHERE b.name IN ('NEW HOLLAND', 'MASSEY FERGUSON')
 7. İl isimleri Türkçe (Konya, İzmir, Ankara vb.) - ILIKE kullan
-7. SUM(quantity) ile satış toplamı al
-8. Yıl belirtilmemişse en son veri yılını kullan
-9. SADECE geçerli SQL döndür, açıklama ekleme
-10. Sorunun karmaşıklığına göre birden fazla boyut çek (marka, il, HP, kategori, YoY)
-11. Karşılaştırma sorularında hem mevcut hem önceki dönem verilerini çek
-12. provinces tablosundaki soil_type, climate_zone, primary_crops sütunlarını coğrafi sorularda kullan
+8. SUM(quantity) ile satış toplamı al
+9. Yıl belirtilmemişse en son veri yılını kullan
+10. SADECE geçerli SQL döndür, açıklama ekleme
+11. Sorunun karmaşıklığına göre birden fazla boyut çek (marka, il, HP, kategori, YoY)
+12. Karşılaştırma sorularında hem mevcut hem önceki dönem verilerini çek
+13. provinces tablosundaki soil_type, climate_zone, primary_crops sütunlarını coğrafi sorularda kullan
+14. Teknik özellik soruları için teknik_veri tablosunu kullan (marka, model, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, fiyat_usd, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, kullanim_alani)
+15. "Ciro", "gelir", "satış tutarı" → SUM(quantity * fiyat_usd) hesapla
+16. "Lider", "en çok", "birinci" → ORDER BY ... DESC LIMIT 1-5 kullan
 `;
 
-async function textToSql(question) {
+async function textToSql(question, conversationCtx) {
     if (!GROQ_API_KEY) return null;
 
     const latestPeriod = await getLatestSalesPeriod();
     const systemPrompt = DB_SCHEMA_PROMPT + `\nGüncel en son yıl: ${latestPeriod?.year || 2025}, en son ay: ${latestPeriod?.month || 5}`;
 
-    const userPrompt = `Kullanıcı sorusu: "${question}"
+    const contextBlock = conversationCtx || '';
 
+    const userPrompt = `Kullanıcı sorusu: "${question}"
+${contextBlock}
 Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
+
+ÖNEMLİ KURALLAR:
+- Traktör sektörü ile ilgili HER soruya SQL yazılabilir. "UNSUPPORTED" sadece tamamen alakasız konularda (hava durumu, siyaset vb.) kullan.
+- "Lider marka", "en çok satan", "en popüler" → SUM(quantity) ile ORDER BY DESC LIMIT 1-5
+- "kaç traktör satıldı" → SUM(quantity) FROM sales_view
+- Teknik özellik soruları → teknik_veri tablosundan çek: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd FROM teknik_veri
+- "Ciro/gelir/satış tutarı" → SUM(quantity * tm.price_usd) FROM sales_view sv JOIN tractor_models tm ON ... (veya doğrudan teknik_veri.fiyat_usd)
+- Marka + model teknik bilgi → teknik_veri tablosunda WHERE UPPER(marka) = 'MARKA' AND (UPPER(tuik_model_adi) ILIKE '%MODEL%' OR UPPER(model) ILIKE '%MODEL%')
+- "Bu model", "onun", "önceki" gibi referanslar → KONUŞMA BAĞLAMI'ndan çöz, önceki soruda geçen marka/model/il/yıl bilgilerini kullan
 - Basit soru ("kaç satıldı?") → basit SUM/COUNT sorgusu yeter
-- Marka karşılaştırma → Her marka için SUM(quantity) GROUP BY kullan, satır bazında değil toplam bazında. Örnek:
-  SELECT b.name, SUM(quantity) AS toplam, ... FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE b.name IN ('MARKA1','MARKA2') GROUP BY b.name
-- Yıllık trend/karşılaştırma → Aynı sorguda yıl bazlı kırılım: GROUP BY b.name, sv.year
+- Marka karşılaştırma → Her marka için SUM(quantity) GROUP BY kullan. Örnek:
+  SELECT b.name, SUM(quantity) AS toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE b.name IN ('MARKA1','MARKA2') GROUP BY b.name
+- Yıllık trend/karşılaştırma → GROUP BY b.name, sv.year
 - Bölgesel analiz → provinces tablosundaki region, soil_type, climate_zone, primary_crops alanlarını dahil et
 - Bölme (/) işlemlerinde NULLIF kullan: SUM(x) * 100.0 / NULLIF(SUM(y), 0)
+- Kategori soruları: "bahçe traktörü" → category = 'bahce', "tarla traktörü" → category = 'tarla'
+
 Sadece SQL kodu döndür, başka bir şey yazma. Açıklama ekleme.
-Eğer soru veritabanıyla ilgili değilse veya SQL yazılamıyorsa sadece "UNSUPPORTED" yaz.`;
+Eğer soru traktör/tarım/satış ile TAMAMEN ilgisizse sadece "UNSUPPORTED" yaz.`;
 
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -641,14 +668,16 @@ async function executeSafeSql(sql) {
     }
 }
 
-async function interpretResults(question, sql, result) {
+async function interpretResults(question, sql, result, conversationCtx) {
     if (!GROQ_API_KEY) return null;
 
     const dataPreview = JSON.stringify(result.rows.slice(0, 20), null, 0);
     const isSimpleQuestion = question.split(/\s+/).length <= 8 && !/karşılaştır|neden|analiz|strateji|tavsiye|yorum|değerlendir/i.test(question);
     const depthInstruction = isSimpleQuestion
-        ? 'KISA CEVAP VER. Sadece sorulan veriyi net olarak sun. Sorulmayan bilgileri ekleme. 2-4 satır yeterli.'
+        ? 'KISA CEVAP VER. Sadece sorulan veriyi net olarak sun. 2-4 satır yeterli. Ama sonunda her zaman proaktif öneri sun.'
         : 'DERİN ANALİZ YAP. Veriyi çok boyutlu yorumla, neden-sonuç ilişkisi kur, sektörel bağlam ekle, stratejik tavsiye ver.';
+
+    const contextBlock = conversationCtx || '';
 
     const systemPrompt = `Sen, Türkiye Tarım Makinaları ve Traktör Sektörü üzerine uzmanlaşmış *Kıdemli Veri Analisti ve Tarım Stratejisti*sin. 20+ yıl sektör deneyimin var.
 
@@ -659,6 +688,13 @@ TEMEL FELSEFE: SIFIR ŞABLON POLİTİKASI
 ÖLÇEKLENEBİLİR DERİNLİK:
 - Basit soru ("kaç traktör satıldı?") → Sadece istenen veriyi ver, süslemeden. Örn: "2025 yılı toplam traktör satış adedi 18.914'tür."
 - Karmaşık soru ("Karasal iklimde buğday yoğun illerde 4WD oranı?") → Coğrafi/tarımsal bağlam, neden-sonuç, stratejik yorum ekle.
+
+PROAKTİF BİLGİ VE ÖNERİLER (ÇOK ÖNEMLİ):
+- Cevabın sonunda MUTLAKA 1-2 satırlık proaktif öneri ekle.
+- Satış verisi sorulduysa → "Bu modellerin teknik özelliklerini görmek ister misiniz?" veya "Bu ilin toprak ve iklim yapısına göre ideal traktör analizi yapabilirim."
+- Teknik özellik sorulduysa → "Bu traktörün satış performansını görmek ister misiniz?" veya "Aynı HP segmentindeki rakiplerle karşılaştırma yapabilirim."
+- İl/bölge sorulduysa → "Bu bölgenin iklim ve toprak yapısına göre en uygun traktör modelleri analizi yapabilirim."
+- Proaktif önerilerde bölgenin toprak tipi, iklim kuşağı, ana ürünler, mera/orman/bitki örtüsü ile traktör teknik özellikleri arasındaki korelasyonu belirt.
 
 BAĞLAM VE YORUMLAMA:
 - Rakamları sadece listeleme, hikayeye dönüştür. "%32 düşüş" yerine "Pazarda %32'lik daralma, özellikle 50-60 HP segmentindeki küçük çiftçi yatırımlarının yavaşlamasından kaynaklanıyor"
@@ -673,17 +709,20 @@ WHATSAPP FORMATLAMA:
 - Çok emoji kullanma, ciddi ama modern kurumsal dil
 - Sayılar: Türkçe format (1.234 ve %12,5)
 - Paragraflar kısa, WhatsApp'ta okunabilir
+- Çince, Japonca veya başka yabancı dilde karakter KULLANMA. Sadece Türkçe yaz.
 
 HALÜSİNASYON ÖNLEYİCİ:
 - Veritabanında olmayan kırılım sorulursa uydurma. "Bu kırılım veritabanında mevcut değil, ancak mevcut verilerle en yakın analiz şudur..." de.
 - SADECE gelen SQL sonuç verisine dayanarak cevap ver, veri dışı rakam üretme.`;
 
     const userPrompt = `Kullanıcı sorusu: "${question}"
+${contextBlock}
 Çalıştırılan SQL: ${sql}
 Toplam satır sayısı: ${result.rowCount}
 Dönen veri: ${dataPreview}
 
-Bu veriye dayanarak soruya cevap ver. Sabit şablon kullanma, soruya özel cevap yaz.`;
+Bu veriye dayanarak soruya cevap ver. Sabit şablon kullanma, soruya özel cevap yaz.
+Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
 
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -704,7 +743,7 @@ Bu veriye dayanarak soruya cevap ver. Sabit şablon kullanma, soruya özel cevap
     return data.choices?.[0]?.message?.content?.trim() || null;
 }
 
-async function resolveAssistantQuestion(question) {
+async function resolveAssistantQuestion(question, phoneNumber) {
     const latestPeriod = await getLatestSalesPeriod();
 
     if (!latestPeriod) {
@@ -716,18 +755,29 @@ async function resolveAssistantQuestion(question) {
     if (['yardim', 'help', 'komutlar', 'neler sorabilirm', 'merhaba', 'selam'].some(k => normalizedQ.includes(k))) {
         return {
             ok: true, intent: 'help',
-            answer: `🚜 *Traktör Sektör AI Asistan*\n\nTürkiye traktör sektörü hakkında her soruyu yanıtlarım:\n\n📊 "2025'te kaç traktör satıldı?"\n🏆 "New Holland ile Massey Ferguson'u karşılaştır"\n📈 "Konya'da hangi HP segmenti çok satıyor?"\n🗺️ "Ege bölgesinde 4WD oranı nedir?"\n🌾 "Bahçe traktörlerinde lider marka"\n📉 "Geçen yıla göre pazar nasıl değişti?"\n💡 "Karasal iklimde buğday illeri analizi"\n\nBasit sorulara kısa, karmaşık sorulara derin analiz sunarım.`
+            answer: `🚜 *Traktör Sektör AI Asistan*\n\nTürkiye traktör sektörü hakkında her soruyu yanıtlarım:\n\n📊 "2025'te kaç traktör satıldı?"\n🏆 "New Holland ile Massey Ferguson'u karşılaştır"\n📈 "Konya'da hangi HP segmenti çok satıyor?"\n🗺️ "Ege bölgesinde 4WD oranı nedir?"\n🌾 "Bahçe traktörlerinde lider marka"\n📉 "Geçen yıla göre pazar nasıl değişti?"\n💡 "Karasal iklimde buğday illeri analizi"\n🔧 "New Holland T6050 teknik özellikleri"\n💰 "Hattat markasının cirosu ne kadar?"\n\nBasit sorulara kısa, karmaşık sorulara derin analiz sunarım.\nÖnceki sorularınızın devamını sorabilirsiniz — bağlamı hatırlıyorum.`
         };
     }
 
+    // Konuşma bağlamını al
+    const history = phoneNumber ? getConversationHistory(phoneNumber) : [];
+    const conversationCtx = buildConversationContext(history);
+
     // ═══ TEXT-TO-SQL MOTORU — Tüm sorular buradan geçer ═══
-    console.log(`🤖 Text-to-SQL aktif: "${question}"`);
-    let sql = await textToSql(question);
+    console.log(`🤖 Text-to-SQL aktif: "${question}" (bağlam: ${history.length} mesaj)`);
+    let sql = await textToSql(question, conversationCtx);
     if (!sql) {
-        return {
-            ok: false, intent: 'unsupported',
-            answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak neler sorabileceğinizi görebilirsiniz.'
-        };
+        // Fallback: Bağlamsız tekrar dene (belki bağlam karıştırdı)
+        if (conversationCtx) {
+            console.log('🔄 Bağlamsız retry deneniyor...');
+            sql = await textToSql(question, '');
+        }
+        if (!sql) {
+            return {
+                ok: false, intent: 'unsupported',
+                answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak neler sorabileceğinizi görebilirsiniz.'
+            };
+        }
     }
 
     console.log(`📝 Üretilen SQL: ${sql}`);
@@ -760,8 +810,8 @@ async function resolveAssistantQuestion(question) {
         };
     }
 
-    // AI ile sonuçları soruya özel yorumla
-    const interpretation = await interpretResults(question, sql, result);
+    // AI ile sonuçları soruya özel yorumla (konuşma bağlamı ile)
+    const interpretation = await interpretResults(question, sql, result, conversationCtx);
     if (interpretation) {
         return {
             ok: true, intent: 'text_to_sql',
@@ -1701,7 +1751,7 @@ app.post('/api/public/assistant/sales-query', async (req, res) => {
             return res.status(400).json({ error: 'question alani gerekli' });
         }
 
-        const result = await resolveAssistantQuestion(question);
+        const result = await resolveAssistantQuestion(question, null);
         return res.json(result);
     } catch (err) {
         console.error('Public sales query error:', err);
@@ -1747,15 +1797,20 @@ app.post('/api/public/whatsapp/webhook', async (req, res) => {
 
         console.log(`\n🟢 YENİ MESAJ -> Kimden: ${profileName} (${from}) | Soru: "${question}"\n`);
 
-        // --- N8N YÖNLENDİRMESİ TAMAMEN KALDIRILDI ---
-        // Doğrudan kendi sisteminizdeki Groq AI modelini çalıştırıyoruz
+        // Kullanıcı mesajını konuşma hafızasına ekle
+        addToConversation(from, 'user', question);
+        const historyCount = getConversationHistory(from).length;
+        console.log(`🧠 Konuşma hafızası: ${historyCount} mesaj (${from})`);
 
         console.log("🤖 Node.js AI (resolveAssistantQuestion) devreye giriyor...");
 
         try {
-            // Yapay zeka soruyu SQL'e çevirip cevabı üretiyor
-            const result = await resolveAssistantQuestion(question);
-            console.log("✅ AI Cevabı Başarıyla Üretildi:", result.answer);
+            // Yapay zeka soruyu SQL'e çevirip cevabı üretiyor (telefon numarası ile bağlam)
+            const result = await resolveAssistantQuestion(question, from);
+            console.log("✅ AI Cevabı Başarıyla Üretildi:", result.answer?.substring(0, 100));
+
+            // Asistan cevabını konuşma hafızasına ekle
+            addToConversation(from, 'assistant', result.answer || '');
 
             // Üretilen cevabı WhatsApp'a geri gönderiyor
             console.log("📤 AI Cevabı WhatsApp'a gönderiliyor...");
@@ -3918,6 +3973,44 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
 // GROQ AI ANALYSIS
 // ============================================
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+// ============================================
+// WHATSAPP KONUŞMA HAFIZASI (Session Memory)
+// Her kullanıcının son 10 mesajını tutar
+// ============================================
+const conversationMemory = new Map(); // phone → [{role, content, timestamp}]
+const MEMORY_MAX_MESSAGES = 10;
+const MEMORY_TTL_MS = 30 * 60 * 1000; // 30 dakika sonra oturum sıfırlanır
+
+function getConversationHistory(phoneNumber) {
+    const history = conversationMemory.get(phoneNumber);
+    if (!history || history.length === 0) return [];
+    // TTL kontrolü - son mesaj 30dk'dan eskiyse temizle
+    const lastMsg = history[history.length - 1];
+    if (Date.now() - lastMsg.timestamp > MEMORY_TTL_MS) {
+        conversationMemory.delete(phoneNumber);
+        return [];
+    }
+    return history;
+}
+
+function addToConversation(phoneNumber, role, content) {
+    if (!conversationMemory.has(phoneNumber)) {
+        conversationMemory.set(phoneNumber, []);
+    }
+    const history = conversationMemory.get(phoneNumber);
+    history.push({ role, content, timestamp: Date.now() });
+    // Son N mesajı tut
+    while (history.length > MEMORY_MAX_MESSAGES) {
+        history.shift();
+    }
+}
+
+function buildConversationContext(history) {
+    if (!history || history.length === 0) return '';
+    const lines = history.map(h => `${h.role === 'user' ? 'Kullanıcı' : 'Asistan'}: ${h.content.substring(0, 300)}`);
+    return `\n\nÖNCEKİ KONUŞMA BAĞLAMI (son ${history.length} mesaj):\n${lines.join('\n')}\n`;
+}
 
 app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
     try {
