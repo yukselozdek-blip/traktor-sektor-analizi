@@ -475,6 +475,8 @@ VERİTABANI ŞEMASI:
 --   ÖNEMLİ: "En çok satan model", "model sıralaması", "hangi model" gibi sorularda DAİMA bu tabloyu kullan!
 --   sehir_adi: Türkçe il adı (Konya, İstanbul, Ankara vb.)
 --   marka: BÜYÜK HARF (NEW HOLLAND, MASSEY FERGUSON, TÜMOSAN vb.)
+--   tuik_model_adi: TÜİK kaynak adı (eşleştirme anahtarı). Gerçek model adı için teknik_veri.model kullan.
+--   Eşleştirme: tuik_veri LEFT JOIN teknik_veri ON marka + tuik_model_adi → teknik_veri.model = doğru model adı
 
 -- sales_view: Aggregated satış verisi (model adı YOK, sadece segment bilgisi var)
 -- Sütunlar: brand_id INT, province_id INT, year INT, month INT (1-12), quantity INT,
@@ -506,9 +508,9 @@ BÖLGELER: 'Marmara','Ege','Akdeniz','İç Anadolu','Karadeniz','Doğu Anadolu',
 -- Marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id GROUP BY b.name ORDER BY toplam DESC
 -- Yıllık marka satışı: SELECT b.name, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id WHERE sv.year=2025 GROUP BY b.name ORDER BY toplam DESC
 -- İl satışı: SELECT p.name, b.name as marka, SUM(sv.quantity) as toplam FROM sales_view sv JOIN provinces p ON sv.province_id=p.id JOIN brands b ON sv.brand_id=b.id WHERE p.name ILIKE '%Konya%' GROUP BY p.name, b.name ORDER BY toplam DESC LIMIT 10
--- En çok satan model (il): SELECT tv.marka, tv.tuik_model_adi, SUM(tv.satis_adet) as toplam FROM tuik_veri tv WHERE tv.sehir_adi ILIKE '%Konya%' GROUP BY tv.marka, tv.tuik_model_adi ORDER BY toplam DESC LIMIT 10
--- En çok satan model (genel): SELECT marka, tuik_model_adi, SUM(satis_adet) as toplam FROM tuik_veri GROUP BY marka, tuik_model_adi ORDER BY toplam DESC LIMIT 10
--- Yıllık model satışı: SELECT marka, tuik_model_adi, SUM(satis_adet) as toplam FROM tuik_veri WHERE tescil_yil = 2023 GROUP BY marka, tuik_model_adi ORDER BY toplam DESC LIMIT 10
+-- En çok satan model (il): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE tv.sehir_adi ILIKE '%Konya%' GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
+-- En çok satan model (genel): SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
+-- Yıllık model satışı: SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi) WHERE tv.tescil_yil = 2023 GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
 -- İl bazlı marka satışı (segment): SELECT b.name as marka, sv.hp_range, sv.category, SUM(sv.quantity) as toplam FROM sales_view sv JOIN brands b ON sv.brand_id=b.id JOIN provinces p ON sv.province_id=p.id WHERE p.name ILIKE '%Konya%' GROUP BY b.name, sv.hp_range, sv.category ORDER BY toplam DESC LIMIT 10
 -- Teknik özellik: SELECT marka, tuik_model_adi, motor_gucu_hp, cekis_tipi, koruma, vites_sayisi, emisyon_seviyesi, mensei, motor_marka, silindir_sayisi, fiyat_usd, kullanim_alani FROM teknik_veri WHERE UPPER(marka) = 'NEW HOLLAND' AND (UPPER(tuik_model_adi) ILIKE '%BOOMER%' OR UPPER(model) ILIKE '%BOOMER%')
 -- Ciro hesaplama (ÖNEMLİ: teknik_veri ile sales_view arasında model JOIN yok, AVG fiyat ile subquery kullan):
@@ -552,8 +554,11 @@ Bu soruyu cevaplayacak TEK bir PostgreSQL SELECT sorgusu yaz.
 
 ÖNEMLİ KURALLAR:
 - Traktör sektörü ile ilgili HER soruya SQL yazılabilir. "UNSUPPORTED" sadece tamamen alakasız konularda (hava durumu, siyaset vb.) kullan.
-- "En çok satan MODEL", "model sıralaması", "hangi model", "marka ve model" → DAİMA tuik_veri tablosunu kullan (model bazlı satış verisi):
-  SELECT marka, tuik_model_adi, SUM(satis_adet) as toplam FROM tuik_veri WHERE ... GROUP BY marka, tuik_model_adi ORDER BY toplam DESC LIMIT 10
+- "En çok satan MODEL", "model sıralaması", "hangi model", "marka ve model" → tuik_veri + teknik_veri JOIN kullan:
+  SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam
+  FROM tuik_veri tv LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+  WHERE ... GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi) ORDER BY toplam DESC LIMIT 10
+  ÖNEMLİ: teknik_veri.model gerçek model adıdır, tuik_model_adi sadece eşleştirme anahtarı. Raporda DAİMA teknik_veri.model göster.
   tuik_veri'de il filtresi: sehir_adi ILIKE '%İlAdı%', yıl filtresi: tescil_yil = 2023
 - "Lider marka", "en çok satan MARKA" (model değil marka) → SUM(quantity) ile sales_view
 - "kaç traktör satıldı" → SUM(quantity) FROM sales_view
