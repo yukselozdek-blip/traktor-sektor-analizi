@@ -768,6 +768,115 @@ Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
     return data.choices?.[0]?.message?.content?.trim() || null;
 }
 
+// ═══ KISA SORGU GENİŞLETME (Intent Inheritance) ═══
+// "erzincan", "trabzon'da" gibi kısa sorguları önceki sorgunun kalıbıyla genişletir
+const TURKISH_CITIES = [
+    'ADANA','ADIYAMAN','AFYON','AFYONKARAHISAR','AĞRI','AKSARAY','AMASYA','ANKARA','ANTALYA','ARDAHAN',
+    'ARTVİN','AYDIN','BALIKESİR','BARTIN','BATMAN','BAYBURT','BİLECİK','BİNGÖL','BİTLİS','BOLU',
+    'BURDUR','BURSA','ÇANAKKALE','ÇANKIRI','ÇORUM','DENİZLİ','DİYARBAKIR','DÜZCE','EDİRNE','ELAZIĞ',
+    'ERZİNCAN','ERZURUM','ESKİŞEHİR','GAZİANTEP','GİRESUN','GÜMÜŞHANE','HAKKARİ','HATAY','IĞDIR',
+    'ISPARTA','İSTANBUL','İZMİR','KAHRAMANMARAŞ','KARABÜK','KARAMAN','KARS','KASTAMONU','KAYSERİ',
+    'KIRIKKALE','KIRKLARELİ','KIRŞEHİR','KİLİS','KOCAELİ','KONYA','KÜTAHYA','MALATYA','MANİSA',
+    'MARDİN','MERSİN','MUĞLA','MUŞ','NEVŞEHİR','NİĞDE','ORDU','OSMANİYE','RİZE','SAKARYA',
+    'SAMSUN','SİİRT','SİNOP','SİVAS','ŞANLIURFA','ŞIRNAK','TEKİRDAĞ','TOKAT','TRABZON','TUNCELİ',
+    'UŞAK','VAN','YALOVA','YOZGAT','ZONGULDAK'
+];
+
+function detectCity(text) {
+    // Türkçe normalize: hem büyük hem küçük harf uyumu
+    const normalize = (s) => s.toUpperCase()
+        .replace(/İ/g, 'I').replace(/Ş/g, 'S').replace(/Ç/g, 'C')
+        .replace(/Ü/g, 'U').replace(/Ö/g, 'O').replace(/Ğ/g, 'G')
+        .replace(/[''ʼ`']/g, '');
+
+    const textNorm = normalize(text);
+
+    // Şehirleri uzundan kısaya sırala (KAHRAMANMARAŞ > KARS gibi çakışmaları önle)
+    const sortedCities = [...TURKISH_CITIES].sort((a, b) => b.length - a.length);
+
+    for (const city of sortedCities) {
+        const cityNorm = normalize(city);
+        // "ERZINCAN" kelimesinin text içinde bulunması (DA/DE eki olabilir)
+        if (textNorm.includes(cityNorm)) {
+            // Orijinal şehir adını döndür (proper case: Erzincan, İstanbul, vb.)
+            return city.charAt(0) + city.slice(1).toLowerCase();
+        }
+    }
+    return null;
+}
+
+// ═══ İL BAZLI MODEL SORGUSU DOĞRUDAN SQL ÜRETİCİ ═══
+// Groq UNSUPPORTED döndüğünde, il + "en çok satan model" kalıbı varsa SQL üret
+function buildCityModelSql(question) {
+    const city = detectCity(question);
+    if (!city) return null;
+
+    // Soru model/marka/satış ile ilgiliyse
+    const q = question.toLowerCase();
+    if (!/model|marka|traktör|traktor|satış|satis|satan|lider|en çok|en cok|sıral|siral|kaç|kac/i.test(q)) return null;
+
+    let limit = 10;
+    const limitMatch = q.match(/(\d+)\s*(traktör|traktor|marka|model)/);
+    if (limitMatch) limit = parseInt(limitMatch[1]);
+
+    // Yıl filtresi
+    let yearFilter = '';
+    const yearMatch = q.match(/(20\d{2})/);
+    if (yearMatch) yearFilter = `AND tv.tescil_yil = ${yearMatch[1]}`;
+
+    console.log(`🏗️ Doğrudan SQL: ${city}, limit=${limit}, yıl=${yearMatch ? yearMatch[1] : 'tümü'}`);
+
+    return `SELECT tv.marka, COALESCE(tk.model, tv.tuik_model_adi) as model, SUM(tv.satis_adet) as toplam
+FROM tuik_veri tv
+LEFT JOIN teknik_veri tk ON UPPER(tv.marka) = UPPER(tk.marka) AND UPPER(tv.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+WHERE tv.sehir_adi ILIKE '%${city}%' ${yearFilter}
+GROUP BY tv.marka, COALESCE(tk.model, tv.tuik_model_adi)
+ORDER BY toplam DESC
+LIMIT ${limit}`;
+}
+
+function expandShortQuery(question, history) {
+    if (!history || history.length === 0) return question;
+
+    const words = question.trim().split(/\s+/);
+    // Kısa sorgu mu? (≤5 kelime)
+    if (words.length > 5) return question;
+
+    // Soruda şehir adı var mı?
+    const city = detectCity(question);
+    if (!city) return question;
+
+    // Geçmişteki son user mesajlarından bir kalıp bul (en az 6 kelimelik, şehir içeren)
+    for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].role !== 'user') continue;
+        const prevQ = history[i].content;
+        if (prevQ.trim().split(/\s+/).length < 5) continue; // Çok kısa mesajları atla
+
+        // Önceki soruda şehir adı var mı?
+        const prevCity = detectCity(prevQ);
+        if (prevCity) {
+            // Şehri değiştirerek yeni sorgu oluştur
+            // Önceki soruda şehir adını bul ve yenisiyle değiştir
+            const cityRegex = new RegExp(prevCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['ʼ`'']*(da|de|DA|DE|'da|'de)?", 'gi');
+            const expanded = prevQ.replace(cityRegex, city + "'da");
+            console.log(`🔄 Sorgu genişletme: "${question}" → "${expanded}" (kalıp: "${prevQ}")`);
+            return expanded;
+        }
+
+        // Şehirsiz ama traktör/satış ile ilgili bir kalıp varsa şehir ekle
+        if (/traktör|satış|sat[ıi]lan|marka|model|lider|en çok/i.test(prevQ)) {
+            const expanded = `${city}'da ${prevQ}`;
+            console.log(`🔄 Sorgu genişletme (şehir ekleme): "${question}" → "${expanded}"`);
+            return expanded;
+        }
+    }
+
+    // Kalıp bulunamadı → varsayılan genişletme
+    const defaultExpanded = `${city}'da en çok satan 10 traktör marka ve modelini sırayla yaz`;
+    console.log(`🔄 Sorgu genişletme (varsayılan): "${question}" → "${defaultExpanded}"`);
+    return defaultExpanded;
+}
+
 // ═══ CİRO ÖZEL MOTORU ═══
 // Groq'un kartezyen çarpım hatasını önlemek için ciro SQL'ini biz üretiyoruz
 function buildCiroSql(question, history, latestPeriod) {
@@ -898,6 +1007,15 @@ async function resolveAssistantQuestion(question, phoneNumber) {
 
     // Konuşma bağlamını al
     const history = phoneNumber ? getConversationHistory(phoneNumber) : [];
+
+    // ═══ KISA SORGU GENİŞLETME ═══
+    // "erzincan", "trabzon'da" gibi kısa şehir sorgularını önceki kalıpla genişlet
+    const originalQuestion = question;
+    question = expandShortQuery(question, history);
+    if (question !== originalQuestion) {
+        console.log(`📍 Sorgu genişletildi: "${originalQuestion}" → "${question}"`);
+    }
+
     const conversationCtx = buildConversationContext(history);
 
     // ═══ CİRO SORGULARI İÇİN ÖZEL MOTOR ═══
@@ -982,10 +1100,17 @@ async function resolveAssistantQuestion(question, phoneNumber) {
             sql = await textToSql(question, '');
         }
         if (!sql) {
-            return {
-                ok: false, intent: 'unsupported',
-                answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak neler sorabileceğinizi görebilirsiniz.'
-            };
+            // Son şans: İl + model sorgusu ise doğrudan SQL üret (Groq UNSUPPORTED döndüyse)
+            const cityModelSql = buildCityModelSql(question);
+            if (cityModelSql) {
+                console.log(`🏗️ Groq başarısız, doğrudan il-model SQL: ${cityModelSql.substring(0, 150)}`);
+                sql = cityModelSql;
+            } else {
+                return {
+                    ok: false, intent: 'unsupported',
+                    answer: 'Bu soruyu anlayamadım. Traktör satış verileri hakkında soru sorabilirsiniz.\n\n"yardım" yazarak neler sorabileceğinizi görebilirsiniz.'
+                };
+            }
         }
     }
 
@@ -1031,14 +1156,20 @@ async function resolveAssistantQuestion(question, phoneNumber) {
         };
     }
 
-    // AI yorumlama başarısız olursa ham veriyi formatla
+    // AI yorumlama başarısız olursa ham veriyi WhatsApp-dostu formatla
+    const fieldLabels = { marka: 'Marka', model: 'Model', toplam: 'Adet', adet: 'Adet', name: 'İsim', satis_adet: 'Satış', yil: 'Yıl', sehir_adi: 'İl', hp_range: 'HP', category: 'Kategori' };
     const fields = result.fields || Object.keys(result.rows[0] || {});
-    let plainAnswer = `📊 *Sorgu Sonucu* (${result.rowCount} satır)\n\n`;
+    let plainAnswer = `📊 *Sorgu Sonucu* (${result.rowCount} kayıt)\n\n`;
     result.rows.slice(0, 10).forEach((row, i) => {
-        const vals = fields.map(f => `${f}: ${row[f] != null ? row[f] : '-'}`).join(' | ');
+        const vals = fields.map(f => {
+            const label = fieldLabels[f] || f;
+            const val = row[f] != null ? (typeof row[f] === 'number' ? Number(row[f]).toLocaleString('tr-TR') : row[f]) : '-';
+            return `${label}: ${val}`;
+        }).join(' | ');
         plainAnswer += `${i + 1}. ${vals}\n`;
     });
-    if (result.rowCount > 10) plainAnswer += `\n... ve ${result.rowCount - 10} satır daha`;
+    if (result.rowCount > 10) plainAnswer += `\n... ve ${result.rowCount - 10} kayıt daha`;
+    plainAnswer += `\n\n💡 Daha detaylı analiz için sorunuzu genişletebilirsiniz.`;
 
     return {
         ok: true, intent: 'text_to_sql',
