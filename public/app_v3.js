@@ -2150,11 +2150,15 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
         const provinceSales = {};
         (salesData || []).forEach(s => {
             const name = s.province_name;
-            if (!provinceSales[name]) provinceSales[name] = { total: 0, brands: {} };
+            if (!provinceSales[name]) provinceSales[name] = { total: 0, brands: {}, models: {} };
             provinceSales[name].total += parseInt(s.total_sales);
             if (s.brand_name) {
                 if (!provinceSales[name].brands[s.brand_name]) provinceSales[name].brands[s.brand_name] = 0;
                 provinceSales[name].brands[s.brand_name] += parseInt(s.total_sales);
+            }
+            if (s.model_name) {
+                if (!provinceSales[name].models[s.model_name]) provinceSales[name].models[s.model_name] = 0;
+                provinceSales[name].models[s.model_name] += parseInt(s.total_sales);
             }
         });
 
@@ -2211,7 +2215,12 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                 const prov = allProvinces.find(p => p.name === dbName);
 
                 // Tooltip
-                const topBrands = data ? Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,3) : [];
+                const isBrandSelected = !!document.getElementById('mapBrandFilter')?.value;
+                const topItems = data ? (isBrandSelected && Object.keys(data.models).length > 0
+                    ? Object.entries(data.models).sort((a,b) => b[1]-a[1]).slice(0,5)
+                    : Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,3)) : [];
+                
+                const titleStr = isBrandSelected ? "En Çok Satan Modeller:" : "En Çok Satan Markalar:";
                 layer.bindTooltip(`
                     <div style="font-size:13px;min-width:180px">
                         <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
@@ -2219,10 +2228,10 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
-                        ${topBrands.length > 0 ? `
+                        ${topItems.length > 0 ? `
                             <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
-                            <div style="font-size:11px;color:#94a3b8">En Çok Satan Markalar:</div>
-                            ${topBrands.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])}</span></div>`).join('')}
+                            <div style="font-size:11px;color:#94a3b8">${titleStr}</div>
+                            ${topItems.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])}</span></div>`).join('')}
                         ` : ''}
                     </div>
                 `, { sticky: true, className: 'map-tooltip' });

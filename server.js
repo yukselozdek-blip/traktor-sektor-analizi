@@ -3908,10 +3908,12 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
         let query = `
             SELECT p.name as province_name, p.plate_code, p.latitude, p.longitude, p.region,
                    b.name as brand_name, b.slug as brand_slug, b.primary_color,
+                   ${userBrandId ? "COALESCE(tm.model_name, 'Diğer/Belli Değil') as model_name," : "'' as model_name,"}
                    SUM(s.quantity) as total_sales
             FROM sales_view s
             JOIN provinces p ON s.province_id = p.id
             JOIN brands b ON s.brand_id = b.id
+            ${userBrandId ? "LEFT JOIN tractor_models tm ON s.model_id = tm.id" : ""}
             WHERE 1=1
         `;
         const params = [];
@@ -3924,7 +3926,7 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
         if (drive_type) { params.push(drive_type); query += ` AND s.drive_type = $${params.length}`; }
         if (hp_range) { params.push(hp_range); query += ` AND s.hp_range = $${params.length}`; }
         if (gear_config) { params.push(gear_config); query += ` AND s.gear_config = $${params.length}`; }
-        query += ' GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region, b.id, b.name, b.slug, b.primary_color ORDER BY total_sales DESC';
+        query += ' GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region, b.id, b.name, b.slug, b.primary_color' + (userBrandId ? ', tm.model_name' : '') + ' ORDER BY total_sales DESC';
         const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (err) {
