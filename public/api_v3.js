@@ -70,6 +70,8 @@ const API = {
     // Data endpoints
     async getDashboard(year) { return this.get(`/api/dashboard?year=${year || ''}`); },
     async getBrands() { return this.get('/api/brands'); },
+    async getGearConfigs() { return this.get('/api/gear-configs'); },
+    async getMapFilterOptions(year, filters) { const f = filters || {}; return this.get(`/api/map-filter-options?year=${year || ''}&brand_id=${f.brand_id || ''}&cabin_type=${f.cabin_type || ''}&drive_type=${f.drive_type || ''}&hp_range=${f.hp_range || ''}&gear_config=${f.gear_config || ''}`); },
     async getProvinces(region) { return this.get(`/api/provinces${region ? `?region=${region}` : ''}`); },
     async getSalesHistorical(brandId) { return this.get(`/api/sales/historical?brand_id=${brandId || ''}`); },
     async getSalesSummary(year) { return this.get(`/api/sales/summary?year=${year || ''}`); },

@@ -1276,6 +1276,172 @@ function buildCiroSql(question, history, latestPeriod) {
     GROUP BY b.name`;
 }
 
+// ═══ LOKAL YORUMLAMA MOTORU (Groq olmadan çalışır) ═══
+// SQL sonuçlarını sorunun türüne göre WhatsApp-dostu narratif metne çevirir
+function buildLocalInterpretation(question, result, latestPeriod) {
+    if (!result.rows || result.rows.length === 0) return null;
+
+    const rows = result.rows;
+    const firstRow = rows[0];
+    const keys = Object.keys(firstRow);
+    const q = question.toLowerCase();
+    const fmt = (n) => Number(n).toLocaleString('tr-TR');
+
+    // Dönem bilgisi
+    let period = '';
+    if (firstRow.min_yil && firstRow.max_yil) {
+        period = firstRow.min_yil === firstRow.max_yil
+            ? `${firstRow.min_yil} yılı` : `${firstRow.min_yil}-${firstRow.max_yil} yılları toplamı`;
+    } else if (firstRow.yil) {
+        const years = [...new Set(rows.map(r => r.yil))].sort();
+        period = years.length === 1 ? `${years[0]} yılı` : `${years[0]}-${years[years.length - 1]} yılları`;
+    } else {
+        period = `mevcut tüm veriler`;
+    }
+
+    // ── Tek satır, tek toplam (kaç adet satıldı?) ──
+    if (rows.length === 1 && keys.includes('toplam') && !keys.includes('marka') && !keys.includes('model')) {
+        const total = fmt(firstRow.toplam);
+        const city = detectCity(question);
+        const cityName = city ? cityProperCase(city) : null;
+        const brands = detectBrands(question);
+        let context = '';
+        if (cityName) context += `*${cityName}*'da `;
+        if (brands.length > 0) context += `*${brands.join(', ')}* markasında `;
+        return `📊 ${context}${period} içinde toplam *${total} adet* traktör satışı gerçekleşmiştir.\n\n💡 Marka bazlı dağılımı veya model detaylarını sorabilirsiniz.`;
+    }
+
+    // ── Yıl bazlı satışlar ──
+    if (keys.includes('yil') && keys.includes('toplam') && !keys.includes('marka') && !keys.includes('model')) {
+        let answer = `📊 *Yıllara Göre Traktör Satışları*\n\n`;
+        const maxRow = rows.reduce((a, b) => Number(a.toplam) > Number(b.toplam) ? a : b);
+        rows.forEach(r => {
+            const marker = r.yil == maxRow.yil ? ' 🏆' : '';
+            answer += `📅 *${r.yil}:* ${fmt(r.toplam)} adet${marker}\n`;
+        });
+        answer += `\n🏆 En yüksek satış: *${maxRow.yil}* yılında *${fmt(maxRow.toplam)}* adet`;
+        answer += `\n\n💡 Belirli bir yılın marka dağılımını veya il bazlı analizini sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Marka karşılaştırma (yıl bazlı) ──
+    if (keys.includes('marka') && keys.includes('yil') && keys.includes('toplam') && rows.length > 2) {
+        const brands = [...new Set(rows.map(r => r.marka))];
+        let answer = `📊 *${brands.join(' vs ')} Karşılaştırma*\n\n`;
+        for (const brand of brands) {
+            const brandRows = rows.filter(r => r.marka === brand);
+            const total = brandRows.reduce((s, r) => s + Number(r.toplam), 0);
+            answer += `🚜 *${brand}* (Toplam: ${fmt(total)})\n`;
+            brandRows.forEach(r => {
+                answer += `   ${r.yil}: ${fmt(r.toplam)} adet\n`;
+            });
+            answer += `\n`;
+        }
+        // Toplam karşılaştırma
+        const totals = brands.map(b => ({ brand: b, total: rows.filter(r => r.marka === b).reduce((s, r) => s + Number(r.toplam), 0) }));
+        totals.sort((a, b) => b.total - a.total);
+        answer += `🏆 Lider: *${totals[0].brand}* (${fmt(totals[0].total)} adet)`;
+        answer += `\n\n💡 Bu markaların model detayları veya il bazlı dağılımını sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Marka sıralaması (toplam) ──
+    if (keys.includes('marka') && keys.includes('toplam') && !keys.includes('model') && !keys.includes('yil')) {
+        const city = detectCity(question);
+        const cityName = city ? cityProperCase(city) : null;
+        let answer = `📊 *${cityName ? cityName + " - " : ""}Marka Satış Sıralaması* (${period})\n\n`;
+        rows.forEach((r, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+            answer += `${medal} *${r.marka}:* ${fmt(r.toplam)} adet\n`;
+        });
+        answer += `\n💡 Bu markaların model detaylarını veya teknik özelliklerini sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Model sıralaması (marka + model + toplam) ──
+    if (keys.includes('marka') && keys.includes('model') && keys.includes('toplam')) {
+        const city = detectCity(question);
+        const cityName = city ? cityProperCase(city) : null;
+        let answer = `📊 *${cityName ? cityName + " - " : ""}En Çok Satan Modeller* (${period})\n\n`;
+        rows.forEach((r, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+            answer += `${medal} *${r.marka} ${r.model}:* ${fmt(r.toplam)} adet\n`;
+        });
+        const totalSales = rows.reduce((s, r) => s + Number(r.toplam), 0);
+        answer += `\n📈 Toplam: ${fmt(totalSales)} adet (ilk ${rows.length} model)`;
+        answer += `\n\n💡 Bu modellerin teknik özelliklerini veya farklı bir ilin verilerini sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── HP/Segment sıralaması ──
+    if (keys.includes('hp_range') && keys.includes('toplam')) {
+        let answer = `📊 *HP Segment Dağılımı* (${period})\n\n`;
+        const totalAll = rows.reduce((s, r) => s + Number(r.toplam), 0);
+        rows.forEach(r => {
+            const pct = totalAll > 0 ? (Number(r.toplam) / totalAll * 100).toFixed(1) : 0;
+            answer += `⚙️ *${r.hp_range} HP:* ${fmt(r.toplam)} adet (%${pct})\n`;
+        });
+        answer += `\n💡 Belirli bir HP segmentinin marka dağılımını sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Teknik özellikler ──
+    if (keys.includes('motor_gucu_hp') && keys.includes('marka')) {
+        let answer = `🔧 *Teknik Özellikler*\n\n`;
+        rows.forEach(r => {
+            answer += `🚜 *${r.marka} ${r.model || ''}*\n`;
+            if (r.motor_gucu_hp) answer += `   Motor: ${r.motor_gucu_hp} HP`;
+            if (r.cekis_tipi) answer += ` | ${r.cekis_tipi}`;
+            if (r.koruma) answer += ` | ${r.koruma}`;
+            answer += '\n';
+            if (r.vites_sayisi) answer += `   Vites: ${r.vites_sayisi}`;
+            if (r.fiyat_usd && Number(r.fiyat_usd) > 0) answer += ` | Fiyat: ${fmt(r.fiyat_usd)} $`;
+            if (r.emisyon_seviyesi) answer += ` | ${r.emisyon_seviyesi}`;
+            answer += '\n';
+            if (r.mensei) answer += `   Menşei: ${r.mensei}`;
+            if (r.motor_marka) answer += ` | Motor: ${r.motor_marka}`;
+            answer += '\n\n';
+        });
+        answer += `💡 Bu modellerin satış performansını veya rakiplerini sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Çekiş tipi (4WD/2WD) ──
+    if (keys.includes('cekis') && keys.includes('toplam')) {
+        let answer = `📊 *Çekiş Tipi Dağılımı* (${period})\n\n`;
+        const totalAll = rows.reduce((s, r) => s + Number(r.toplam), 0);
+        rows.forEach(r => {
+            const pct = totalAll > 0 ? (Number(r.toplam) / totalAll * 100).toFixed(1) : 0;
+            answer += `🔧 *${r.cekis}:* ${fmt(r.toplam)} adet (%${pct})\n`;
+        });
+        answer += `\n💡 Belirli çekiş tipinin marka dağılımını sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Kategori (bahçe/tarla) ──
+    if (keys.includes('kategori') && keys.includes('toplam')) {
+        let answer = `📊 *Kategori Dağılımı* (${period})\n\n`;
+        rows.forEach(r => {
+            const icon = r.kategori === 'bahce' ? '🌿' : '🌾';
+            answer += `${icon} *${r.kategori === 'bahce' ? 'Bahçe' : 'Tarla'}${r.marka ? ' - ' + r.marka : ''}:* ${fmt(r.toplam)} adet\n`;
+        });
+        answer += `\n💡 Belirli kategorinin model detaylarını sorabilirsiniz.`;
+        return answer;
+    }
+
+    // ── Bölge dağılımı ──
+    if (keys.includes('bolge') && keys.includes('toplam')) {
+        let answer = `📊 *Bölge Bazlı Satışlar* (${period})\n\n`;
+        rows.forEach((r, i) => {
+            answer += `${i + 1}. *${r.bolge}${r.marka ? ' - ' + r.marka : ''}:* ${fmt(r.toplam)} adet\n`;
+        });
+        answer += `\n💡 Belirli bir bölgenin il detaylarını sorabilirsiniz.`;
+        return answer;
+    }
+
+    return null; // Tanınamayan format → ham tabloya düş
+}
+
 async function resolveAssistantQuestion(question, phoneNumber) {
     const latestPeriod = await getLatestSalesPeriod();
 
@@ -1444,9 +1610,20 @@ async function resolveAssistantQuestion(question, phoneNumber) {
         };
     }
 
-    // AI yorumlama başarısız olursa ham veriyi WhatsApp-dostu formatla
+    // ═══ LOKAL AKILLI YORUMLAMA (Groq olmadan) ═══
+    const localAnswer = buildLocalInterpretation(question, result, latestPeriod);
+    if (localAnswer) {
+        return {
+            ok: true, intent: 'text_to_sql',
+            answer: localAnswer,
+            parser: 'local-interpretation',
+            sql,
+            rowCount: result.rowCount
+        };
+    }
+
+    // Son çare: basit tablo formatı
     const fieldLabels = { marka: 'Marka', model: 'Model', toplam: 'Adet', adet: 'Adet', name: 'İsim', satis_adet: 'Satış', yil: 'Yıl', sehir_adi: 'İl', hp_range: 'HP', category: 'Kategori' };
-    // Görüntülenecek alanlar (min_yil, max_yil gibi meta alanları hariç)
     const hiddenFields = ['min_yil', 'max_yil'];
     const fields = (result.fields || Object.keys(result.rows[0] || {})).filter(f => !hiddenFields.includes(f));
 
@@ -2648,6 +2825,67 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 // ============================================
+// GEAR CONFIGS (Şanzıman Tipleri - teknik_veri'den canlı)
+// ============================================
+app.get('/api/gear-configs', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT DISTINCT vites_sayisi FROM teknik_veri WHERE vites_sayisi IS NOT NULL AND TRIM(vites_sayisi) != '' ORDER BY vites_sayisi`);
+        res.json(result.rows.map(r => r.vites_sayisi));
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// MAP FILTER OPTIONS (Kaskat Filtreler - sales_view'dan canlı)
+// Her filtre, kendisi HARİÇ diğer filtrelere göre mevcut seçenekleri döner
+// ============================================
+app.get('/api/map-filter-options', authMiddleware, async (req, res) => {
+    try {
+        const { year, brand_id, cabin_type, drive_type, hp_range, gear_config } = req.query;
+        const targetYear = year || new Date().getFullYear();
+
+        const filterDefs = [
+            { key: 'cabin_type', col: 's.cabin_type', val: cabin_type },
+            { key: 'drive_type', col: 's.drive_type', val: drive_type },
+            { key: 'hp_range', col: 's.hp_range', val: hp_range },
+            { key: 'gear_config', col: 's.gear_config', val: gear_config }
+        ];
+
+        // Her filtre için: diğer filtreler aktifken o kolonun DISTINCT değerlerini çek
+        const buildQuery = (excludeKey) => {
+            let where = 's.year = $1';
+            const params = [targetYear];
+            if (brand_id) { params.push(brand_id); where += ` AND s.brand_id = $${params.length}`; }
+            for (const f of filterDefs) {
+                if (f.key === excludeKey) continue;
+                if (f.val) { params.push(f.val); where += ` AND ${f.col} = $${params.length}`; }
+            }
+            return { where, params };
+        };
+
+        const queries = filterDefs.map(f => {
+            const { where, params } = buildQuery(f.key);
+            return pool.query(`SELECT DISTINCT ${f.col} as val FROM sales_view s WHERE ${where} AND ${f.col} IS NOT NULL AND ${f.col} != ''`, params);
+        });
+
+        const results = await Promise.all(queries);
+
+        const sortHp = (a, b) => { const na = parseInt(a); const nb = parseInt(b); return (isNaN(na) ? 999 : na) - (isNaN(nb) ? 999 : nb); };
+
+        res.json({
+            cabin_types: results[0].rows.map(r => r.val).sort(),
+            drive_types: results[1].rows.map(r => r.val).sort(),
+            hp_ranges: results[2].rows.map(r => r.val).sort(sortHp),
+            gear_configs: results[3].rows.map(r => r.val).sort()
+        });
+    } catch (err) {
+        console.error('Map filter options error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
 // BRANDS
 // ============================================
 app.get('/api/brands', authMiddleware, async (req, res) => {
@@ -3665,7 +3903,7 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
     try {
         const { year, brand_id, cabin_type, drive_type, hp_range, gear_config } = req.query;
         const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
-        const targetYear = year || new Date().getFullYear();
+        const targetYear = year || 'all';
 
         let query = `
             SELECT p.name as province_name, p.plate_code, p.latitude, p.longitude, p.region,
@@ -3674,9 +3912,13 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
             FROM sales_view s
             JOIN provinces p ON s.province_id = p.id
             JOIN brands b ON s.brand_id = b.id
-            WHERE s.year = $1
+            WHERE 1=1
         `;
-        const params = [targetYear];
+        const params = [];
+        if (targetYear !== 'all') {
+            params.push(targetYear);
+            query += ` AND s.year = $${params.length}`;
+        }
         if (userBrandId) { params.push(userBrandId); query += ` AND s.brand_id = $${params.length}`; }
         if (cabin_type) { params.push(cabin_type); query += ` AND s.cabin_type = $${params.length}`; }
         if (drive_type) { params.push(drive_type); query += ` AND s.drive_type = $${params.length}`; }

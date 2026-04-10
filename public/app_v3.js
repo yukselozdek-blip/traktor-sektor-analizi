@@ -176,7 +176,7 @@ function navigateTo(page) {
     // Yıl seçici: sadece ilgili sayfalarda göster, diğerlerinde gizle
     const yearFilterEl = document.getElementById('yearFilter');
     if (yearFilterEl) {
-        const yearActivePages = ['dashboard', 'prov-top-brand', 'map', 'map-full', 'sales', 'competitors', 'province', 'regional-index', 'tarmakbir', 'tarmakbir2'];
+        const yearActivePages = ['dashboard', 'prov-top-brand', 'map-full', 'sales', 'competitors', 'province', 'regional-index', 'tarmakbir', 'tarmakbir2'];
         if (yearActivePages.includes(page)) {
             yearFilterEl.style.display = '';
             yearFilterEl.disabled = false;
@@ -1205,34 +1205,25 @@ let mapFullInstance = null;
 let mapFullGeoJson = null;
 
 async function loadMapFullPage() {
-    const hpSegments = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
-    const gearConfigs = ['8+2', '8+8', '12+12', '16+16', '32+32', 'CVT'];
-
     const brandOpts = allBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
-    const hpOpts = hpSegments.map(h => `<option value="${h}">${h} HP</option>`).join('');
-    const gearOpts = gearConfigs.map(g => `<option value="${g}">${g}</option>`).join('');
 
     document.getElementById('pageContent').innerHTML = `
         <div class="mf-container">
             <div class="mf-filters">
-                <select id="mfBrand" onchange="updateMapFull()">
+                <select id="mfBrand" onchange="onMapFilterChange()">
                     <option value="">Tüm Markalar</option>${brandOpts}
                 </select>
-                <select id="mfCabin" onchange="updateMapFull()">
+                <select id="mfCabin" onchange="onMapFilterChange()">
                     <option value="">Tüm Kabin</option>
-                    <option value="kabinli">Kabinli</option>
-                    <option value="rollbar">Rollbar</option>
                 </select>
-                <select id="mfDrive" onchange="updateMapFull()">
+                <select id="mfDrive" onchange="onMapFilterChange()">
                     <option value="">Tüm Çekiş</option>
-                    <option value="2WD">2WD</option>
-                    <option value="4WD">4WD</option>
                 </select>
-                <select id="mfGear" onchange="updateMapFull()">
-                    <option value="">Tüm Şanzıman</option>${gearOpts}
+                <select id="mfGear" onchange="onMapFilterChange()">
+                    <option value="">Tüm Şanzıman</option>
                 </select>
-                <select id="mfHp" onchange="updateMapFull()">
-                    <option value="">Tüm HP</option>${hpOpts}
+                <select id="mfHp" onchange="onMapFilterChange()">
+                    <option value="">Tüm HP</option>
                 </select>
             </div>
             <div class="mf-map-wrap">
@@ -1263,19 +1254,49 @@ async function loadMapFullPage() {
     }).addTo(mapFullInstance);
 
     // İlk yükleme
-    await updateMapFull();
+    await onMapFilterChange();
 }
 
-async function updateMapFull() {
-    const brandId = document.getElementById('mfBrand')?.value || '';
-    const filters = {
+function getMapFilters() {
+    return {
+        brand_id: document.getElementById('mfBrand')?.value || '',
         cabin_type: document.getElementById('mfCabin')?.value || '',
         drive_type: document.getElementById('mfDrive')?.value || '',
         hp_range: document.getElementById('mfHp')?.value || '',
         gear_config: document.getElementById('mfGear')?.value || ''
     };
+}
 
-    const salesData = await API.getSalesByProvince(selectedYear, brandId, filters);
+function updateSelectOptions(selectId, options, defaultLabel, labelFn) {
+    const el = document.getElementById(selectId);
+    if (!el) return;
+    const current = el.value;
+    const fmt = labelFn || (v => v);
+    el.innerHTML = `<option value="">${defaultLabel}</option>` + options.map(v => `<option value="${v}"${v === current ? ' selected' : ''}>${fmt(v)}</option>`).join('');
+}
+
+const mfCabinLabels = { kabinli: 'Kabinli', rollbar: 'Rollbar' };
+
+async function onMapFilterChange() {
+    const filters = getMapFilters();
+
+    const [options, salesData] = await Promise.all([
+        API.getMapFilterOptions(selectedYear, filters),
+        API.getSalesByProvince(selectedYear, filters.brand_id, {
+            cabin_type: filters.cabin_type,
+            drive_type: filters.drive_type,
+            hp_range: filters.hp_range,
+            gear_config: filters.gear_config
+        })
+    ]);
+
+    if (options) {
+        updateSelectOptions('mfCabin', options.cabin_types || [], 'Tüm Kabin', v => mfCabinLabels[v] || v);
+        updateSelectOptions('mfDrive', options.drive_types || [], 'Tüm Çekiş');
+        updateSelectOptions('mfGear', options.gear_configs || [], 'Tüm Şanzıman');
+        updateSelectOptions('mfHp', options.hp_ranges || [], 'Tüm HP', v => v + ' HP');
+    }
+
     await renderMapFullGeoJSON(salesData);
 }
 
@@ -2036,7 +2057,8 @@ let mapSalesData = null;
 
 async function loadMapPage() {
     try {
-        mapSalesData = await API.getSalesByProvince(selectedYear, currentUser?.brand_id);
+        let defaultYear = document.getElementById('mapYearFilter')?.value || 'all';
+        mapSalesData = await API.getSalesByProvince(defaultYear, currentUser?.brand_id);
         const content = document.getElementById('pageContent');
 
         content.innerHTML = `
@@ -2055,15 +2077,25 @@ async function loadMapPage() {
                     <option value="Doğu Anadolu">Doğu Anadolu</option>
                     <option value="Güneydoğu Anadolu">Güneydoğu Anadolu</option>
                 </select>
+                <select id="mapYearFilter" onchange="updateMap()">
+                    <option value="all">Tüm Tarihler</option>
+                    <option value="2025" selected>2025</option>
+                    <option value="2024">2024</option>
+                    <option value="2023">2023</option>
+                    <option value="2022">2022</option>
+                    <option value="2021">2021</option>
+                    <option value="2020">2020</option>
+                    <option value="2026">2026</option>
+                </select>
             </div>
 
-            <div class="card">
-                <div class="card-header"><h3><i class="fas fa-map-marked-alt"></i> Türkiye Satış Haritası</h3></div>
-                <div class="card-body">
-                    <div class="turkey-map-container">
+            <div class="card" style="height: calc(100vh - 160px); display: flex; flex-direction: column;">
+                <div class="card-header" style="flex-shrink: 0;"><h3><i class="fas fa-map-marked-alt"></i> Türkiye Satış Haritası</h3></div>
+                <div class="card-body" style="flex-grow: 1; padding: 0;">
+                    <div class="turkey-map-container" style="height: 100%; border-radius: 0;">
                         <div id="turkeyMap"></div>
                     </div>
-                    <div style="display:flex;justify-content:center;gap:24px;margin-top:16px;font-size:12px;color:var(--text-muted)">
+                    <div style="display:flex;justify-content:center;gap:24px;margin-top:16px;margin-bottom:16px;font-size:12px;color:var(--text-muted)">
                         <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#1e40af;margin-right:4px"></span>Yüksek</span>
                         <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#3b82f6;margin-right:4px"></span>Orta-Yüksek</span>
                         <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#60a5fa;margin-right:4px"></span>Orta</span>
@@ -2073,41 +2105,29 @@ async function loadMapPage() {
                 </div>
             </div>
 
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>İl Bazlı Satış Tablosu</h3></div>
-                    <div class="card-body" style="max-height:400px;overflow-y:auto">
-                        <table class="data-table" id="provinceTable">
-                            <thead><tr><th>#</th><th>İl</th><th>Bölge</th><th>Satış</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>Bölge Dağılımı</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="regionChart"></canvas></div></div>
-                </div>
-            </div>
+            <!-- Tablolar Tam Ekran map için gizlendi, sadece harita var. (İsteğe göre eklenebilir) -->
         `;
 
-        initLeafletMap(mapSalesData);
-        renderProvinceTable(mapSalesData);
-        renderRegionChart(mapSalesData);
+        initLeafletMap(mapSalesData, 'all');
 
     } catch (err) {
         showError(err);
     }
 }
 
-function initLeafletMap(salesData) {
+function initLeafletMap(salesData, selectedRegion = 'all') {
     if (leafletMap) { leafletMap.remove(); leafletMap = null; }
 
     leafletMap = L.map('turkeyMap', {
         center: [39.0, 35.5],
         zoom: 6,
-        minZoom: 5,
-        maxZoom: 10,
-        zoomControl: true,
+        zoomControl: false,
+        dragging: false,
+        touchZoom: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false,
         attributionControl: false
     });
 
@@ -2120,7 +2140,7 @@ function initLeafletMap(salesData) {
     loadTurkeyGeoJSON(salesData);
 }
 
-async function loadTurkeyGeoJSON(salesData) {
+async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
     try {
         // Fetch Turkey provinces GeoJSON
         const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
@@ -2163,6 +2183,14 @@ async function loadTurkeyGeoJSON(salesData) {
         if (geoJsonLayer) leafletMap.removeLayer(geoJsonLayer);
 
         geoJsonLayer = L.geoJSON(geoData, {
+            filter: function(feature) {
+                if (!selectedRegion || selectedRegion === 'all') return true;
+                const name = feature.properties.name || feature.properties.Name;
+                const dbName = nameMap[name] || name;
+                const prov = allProvinces.find(p => p.name === dbName);
+                if (prov && prov.region !== selectedRegion) return false;
+                return true;
+            },
             style: function(feature) {
                 const name = feature.properties.name || feature.properties.Name;
                 const dbName = nameMap[name] || name;
@@ -2300,11 +2328,15 @@ function renderRegionChart(salesData) {
 
 async function updateMap() {
     const brandId = document.getElementById('mapBrandFilter')?.value;
-    mapSalesData = await API.getSalesByProvince(selectedYear, brandId);
+    const regionVal = document.getElementById('mapRegionFilter')?.value;
+    const yearVal = document.getElementById('mapYearFilter')?.value || 'all';
+    
+    // Yıl değiştiyse backend'den veriyi tekrar çekelim.
+    mapSalesData = await API.getSalesByProvince(yearVal, brandId);
+    
     if (leafletMap) {
-        loadTurkeyGeoJSON(mapSalesData);
+        loadTurkeyGeoJSON(mapSalesData, regionVal);
     }
-    renderProvinceTable(mapSalesData);
 }
 
 // ============================================
