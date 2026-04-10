@@ -2156,9 +2156,10 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                 if (!provinceSales[name].brands[s.brand_name]) provinceSales[name].brands[s.brand_name] = 0;
                 provinceSales[name].brands[s.brand_name] += parseInt(s.total_sales);
             }
-            if (s.model_name) {
-                if (!provinceSales[name].models[s.model_name]) provinceSales[name].models[s.model_name] = 0;
-                provinceSales[name].models[s.model_name] += parseInt(s.total_sales);
+            if (s.model_display || s.model_name) {
+                const mKey = s.model_display || s.model_name;
+                if (!provinceSales[name].models[mKey]) provinceSales[name].models[mKey] = 0;
+                provinceSales[name].models[mKey] += parseInt(s.total_sales);
             }
         });
 

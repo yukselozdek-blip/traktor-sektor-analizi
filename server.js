@@ -3908,12 +3908,11 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
         let query = `
             SELECT p.name as province_name, p.plate_code, p.latitude, p.longitude, p.region,
                    b.name as brand_name, b.slug as brand_slug, b.primary_color,
-                   ${userBrandId ? "COALESCE(tm.model_name, 'Diğer/Belli Değil') as model_name," : "'' as model_name,"}
+                   ${userBrandId ? "s.hp_range, s.category," : ""}
                    SUM(s.quantity) as total_sales
             FROM sales_view s
             JOIN provinces p ON s.province_id = p.id
             JOIN brands b ON s.brand_id = b.id
-            ${userBrandId ? "LEFT JOIN tractor_models tm ON s.model_id = tm.id" : ""}
             WHERE 1=1
         `;
         const params = [];
@@ -3926,8 +3925,35 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
         if (drive_type) { params.push(drive_type); query += ` AND s.drive_type = $${params.length}`; }
         if (hp_range) { params.push(hp_range); query += ` AND s.hp_range = $${params.length}`; }
         if (gear_config) { params.push(gear_config); query += ` AND s.gear_config = $${params.length}`; }
-        query += ' GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region, b.id, b.name, b.slug, b.primary_color' + (userBrandId ? ', tm.model_name' : '') + ' ORDER BY total_sales DESC';
+        query += ' GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region, b.id, b.name, b.slug, b.primary_color' + (userBrandId ? ', s.hp_range, s.category' : '') + ' ORDER BY total_sales DESC';
+        
         const result = await pool.query(query, params);
+        
+        if (userBrandId) {
+            const modelsRes = await pool.query(`SELECT model_name, hp_range, category, horsepower, price_usd FROM tractor_models WHERE brand_id = $1 AND is_current_model = true`, [userBrandId]);
+            const models = modelsRes.rows;
+            result.rows.forEach(r => {
+                const match = models.find(m => m.hp_range === r.hp_range && m.category === r.category);
+                let priceStr = '';
+                let hpStr = '';
+                if (match) {
+                    r.model_name = match.model_name;
+                    if (match.horsepower) hpStr = `${match.horsepower} HP`;
+                    if (match.price_usd && parseInt(match.price_usd) > 0) {
+                        const p = parseInt(match.price_usd);
+                        priceStr = p >= 1000 ? Math.round(p/1000) + ' B $' : p + ' $';
+                    }
+                } else {
+                    r.model_name = `${r.hp_range || '?'} HP Segment`;
+                }
+                const parts = [];
+                if (hpStr || r.hp_range) parts.push(hpStr || `${r.hp_range} HP`);
+                if (r.category) parts.push(r.category);
+                if (priceStr) parts.push(priceStr);
+                
+                r.model_display = `${r.model_name} <span style="font-size:10px;opacity:0.7">(${parts.join(' · ')})</span>`;
+            });
+        }
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
