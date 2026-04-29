@@ -1,0 +1,4 @@
+interface:
+  display_name: "Traktor Veri Sozlugu"
+  short_description: "Map TUIK and technical tractor data correctly"
+  default_prompt: "Use $traktor-veri-sozlugu to work with TeknikVeri, TuikVeri, field mappings, and data-source rules in this project."

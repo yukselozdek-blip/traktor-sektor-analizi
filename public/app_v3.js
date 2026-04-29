@@ -8,6 +8,17 @@ let selectedYear = 2025; // Varsayılan: veri bulunan en son yıl
 let charts = {};
 let allBrands = [];
 let allProvinces = [];
+let deployStatusPoll = null;
+let sidebarHoverLock = false;
+let brandHubState = { brand_id: '' };
+let activeBrandContext = null;
+let aiInsightsState = { brand_id: '', rival_id: '', tab: 'briefing' };
+let weatherCommandState = { province_id: '', sales_cache: [] };
+let provinceIntelState = { province_id: '', sales_cache: [] };
+let provTopBrandState = { province_id: '', brand_id: '' };
+let regionalIndexState = { province_id: '', metrics: [], sales_cache: [] };
+let mediaWatchState = { brand_id: '', channel: '', type: '', sentiment: '', search: '', limit: 80, window_days: 14 };
+let modelIntelState = { brand_id: '', q: '', source_url: '', selected_model: null, active_request: null, active_data: null, gallery_index: 0, gallery_syncing: false };
 
 // Simple markdown to HTML
 function mdToHtml(md) {
@@ -24,6 +35,475 @@ function mdToHtml(md) {
         .replace(/\n\n/g, '</p><p>')
         .replace(/\n/g, '<br>')
         .replace(/^/, '<p>').replace(/$/, '</p>');
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[ch]));
+}
+
+const TURKISH_COPY_REPLACEMENTS = [
+    [/\bMarka merkezli premium acilis deneyimi\b/g, 'Marka merkezli premium açılış deneyimi'],
+    [/\bTarla \/ Bahce\b/g, 'Tarla / Bahçe'],
+    [/\bBahce vs tarla\b/g, 'Bahçe vs tarla'],
+    [/\bPazara gore\b/g, 'Pazara göre'],
+    [/\bpazara gore\b/g, 'pazara göre'],
+    [/\bPazar payi\b/g, 'Pazar payı'],
+    [/\bpazar payi\b/g, 'pazar payı'],
+    [/\bSegment payi\b/g, 'Segment payı'],
+    [/\bsegment payi\b/g, 'segment payı'],
+    [/\bPortfoy payi\b/g, 'Portföy payı'],
+    [/\bportfoy payi\b/g, 'portföy payı'],
+    [/\bportfoyunu\b/g, 'portföyünü'],
+    [/\bportfoyundeki\b/g, 'portföyündeki'],
+    [/\bPortfoy\b/g, 'Portföy'],
+    [/\bportfoy\b/g, 'portföy'],
+    [/\bDagilim\b/g, 'Dağılım'],
+    [/\bdagilim\b/g, 'dağılım'],
+    [/\bdagilimi\b/g, 'dağılımı'],
+    [/\bdagitim\b/g, 'dağıtım'],
+    [/\bSiralama\b/g, 'Sıralama'],
+    [/\bsiralama\b/g, 'sıralama'],
+    [/\bSira\b/g, 'Sıra'],
+    [/\bsira\b/g, 'sıra'],
+    [/\bSektor\b/g, 'Sektör'],
+    [/\bsektor\b/g, 'sektör'],
+    [/\bBolgesel\b/g, 'Bölgesel'],
+    [/\bbolgesel\b/g, 'bölgesel'],
+    [/\bBolge\b/g, 'Bölge'],
+    [/\bbolge\b/g, 'bölge'],
+    [/\bGuncel\b/g, 'Güncel'],
+    [/\bguncel\b/g, 'güncel'],
+    [/\bGecmis\b/g, 'Geçmiş'],
+    [/\bgecmis\b/g, 'geçmiş'],
+    [/\bGecen\b/g, 'Geçen'],
+    [/\bgecen\b/g, 'geçen'],
+    [/\bGecis\b/g, 'Geçiş'],
+    [/\bgecis\b/g, 'geçiş'],
+    [/\bKarsilastirma\b/g, 'Karşılaştırma'],
+    [/\bkarsilastirma\b/g, 'karşılaştırma'],
+    [/\bKarsilastir\b/g, 'Karşılaştır'],
+    [/\bkarsilastir\b/g, 'karşılaştır'],
+    [/\bkiyasi\b/g, 'kıyası'],
+    [/\bkiyas\b/g, 'kıyas'],
+    [/\bKiyas\b/g, 'Kıyas'],
+    [/\bCanli\b/g, 'Canlı'],
+    [/\bcanli\b/g, 'canlı'],
+    [/\bakislarini\b/g, 'akışlarını'],
+    [/\bakislar\b/g, 'akışlar'],
+    [/\bakisi\b/g, 'akışı'],
+    [/\bAkisi\b/g, 'Akışı'],
+    [/\bbaglantilari\b/g, 'bağlantıları'],
+    [/\bBaglantilari\b/g, 'Bağlantıları'],
+    [/\bbaglantilar\b/g, 'bağlantılar'],
+    [/\bBaglantilar\b/g, 'Bağlantılar'],
+    [/\bbaglantisi\b/g, 'bağlantısı'],
+    [/\bBaglantisi\b/g, 'Bağlantısı'],
+    [/\bbaglanti\b/g, 'bağlantı'],
+    [/\bBaglanti\b/g, 'Bağlantı'],
+    [/\bbaglanir\b/g, 'bağlanır'],
+    [/\bbaglam\b/g, 'bağlam'],
+    [/\bbagli\b/g, 'bağlı'],
+    [/\bBagli\b/g, 'Bağlı'],
+    [/\bbirlesimi\b/g, 'birleşimi'],
+    [/\bbirlestirildi\b/g, 'birleştirildi'],
+    [/\bbirlestiren\b/g, 'birleştiren'],
+    [/\bbirlestirir\b/g, 'birleştirir'],
+    [/\bbirlestir\b/g, 'birleştir'],
+    [/\bbulusturan\b/g, 'buluşturan'],
+    [/\bbulusturur\b/g, 'buluşturur'],
+    [/\bbulusur\b/g, 'buluşur'],
+    [/\bzenginlestirilir\b/g, 'zenginleştirilir'],
+    [/\bGoreli\b/g, 'Göreli'],
+    [/\bgoreli\b/g, 'göreli'],
+    [/\bgore\b/g, 'göre'],
+    [/\bGore\b/g, 'Göre'],
+    [/\bsaglam\b/g, 'sağlam'],
+    [/\bSaglam\b/g, 'Sağlam'],
+    [/\bkaldi\b/g, 'kaldı'],
+    [/\bKaldi\b/g, 'Kaldı'],
+    [/\bayni\b/g, 'aynı'],
+    [/\bAyni\b/g, 'Aynı'],
+    [/\bdonemde\b/g, 'dönemde'],
+    [/\bdoneme\b/g, 'döneme'],
+    [/\bdonemi\b/g, 'dönemi'],
+    [/\bdonem\b/g, 'dönem'],
+    [/\bDonem\b/g, 'Dönem'],
+    [/\bDonemde\b/g, 'Dönemde'],
+    [/\bDoneme\b/g, 'Döneme'],
+    [/\byukari\b/g, 'yukarı'],
+    [/\bYukari\b/g, 'Yukarı'],
+    [/\bdondu\b/g, 'döndü'],
+    [/\bDondu\b/g, 'Döndü'],
+    [/\bgucu\b/g, 'gücü'],
+    [/\bGucu\b/g, 'Gücü'],
+    [/\bguc\b/g, 'güç'],
+    [/\bGuc\b/g, 'Güç'],
+    [/\bguclu\b/g, 'güçlü'],
+    [/\bGuclu\b/g, 'Güçlü'],
+    [/\bguven\b/g, 'güven'],
+    [/\bGuven\b/g, 'Güven'],
+    [/\bBahce\b/g, 'Bahçe'],
+    [/\bbahce\b/g, 'bahçe'],
+    [/\bAyagi\b/g, 'Ayağı'],
+    [/\bayagi\b/g, 'ayağı'],
+    [/\bolusturuyor\b/g, 'oluşturuyor'],
+    [/\bolusturur\b/g, 'oluşturur'],
+    [/\bolusturan\b/g, 'oluşturan'],
+    [/\bolusturdugu\b/g, 'oluşturduğu'],
+    [/\bolusmadi\b/g, 'oluşmadı'],
+    [/\bOlusmadi\b/g, 'Oluşmadı'],
+    [/\bsikismayan\b/g, 'sıkışmayan'],
+    [/\bSikismayan\b/g, 'Sıkışmayan'],
+    [/\byaygin\b/g, 'yaygın'],
+    [/\bYaygin\b/g, 'Yaygın'],
+    [/\byayginligi\b/g, 'yaygınlığı'],
+    [/\bmarkanin\b/g, 'markanın'],
+    [/\bMarkanin\b/g, 'Markanın'],
+    [/\bis birligi\b/g, 'iş birliği'],
+    [/\bIs birligi\b/g, 'İş birliği'],
+    [/\baksini\b/g, 'aksını'],
+    [/\bAralik\b/g, 'Aralık'],
+    [/\buretiyor\b/g, 'üretiyor'],
+    [/\bUretiyor\b/g, 'Üretiyor'],
+    [/\buretir\b/g, 'üretir'],
+    [/\buretildi\b/g, 'üretildi'],
+    [/\buretilir\b/g, 'üretilir'],
+    [/\buretim\b/g, 'üretim'],
+    [/\bUretim\b/g, 'Üretim'],
+    [/\burunleri\b/g, 'ürünleri'],
+    [/\bUrunleri\b/g, 'Ürünleri'],
+    [/\burunler\b/g, 'ürünler'],
+    [/\burunle\b/g, 'ürünle'],
+    [/\burun\b/g, 'ürün'],
+    [/\bUrun\b/g, 'Ürün'],
+    [/\bone cikiyor\b/g, 'öne çıkıyor'],
+    [/\bone cikar\b/g, 'öne çıkar'],
+    [/\bone cikarir\b/g, 'öne çıkarır'],
+    [/\bon plana\b/g, 'ön plana'],
+    [/\bOn plana\b/g, 'Ön plana'],
+    [/\bozel\b/g, 'özel'],
+    [/\bOzel\b/g, 'Özel'],
+    [/\boncelik\b/g, 'öncelik'],
+    [/\bOncelik\b/g, 'Öncelik'],
+    [/\boneri\b/g, 'öneri'],
+    [/\bOneri\b/g, 'Öneri'],
+    [/\bonumuzdeki\b/g, 'önümüzdeki'],
+    [/\bOnumuzdeki\b/g, 'Önümüzdeki'],
+    [/\bzayif\b/g, 'zayıf'],
+    [/\bZayif\b/g, 'Zayıf'],
+    [/\bIc Anadolu\b/g, 'İç Anadolu'],
+    [/\bic Anadolu\b/g, 'iç Anadolu'],
+    [/\bicin\b/g, 'için'],
+    [/\bIcin\b/g, 'İçin'],
+    [/\bOnceki\b/g, 'Önceki'],
+    [/\bonceki\b/g, 'önceki'],
+    [/\boncesi\b/g, 'öncesi'],
+    [/\bsonrasi\b/g, 'sonrası'],
+    [/\bGiris\b/g, 'Giriş'],
+    [/\bgiris\b/g, 'giriş'],
+    [/\bveritabani\b/g, 'veritabanı'],
+    [/\bVeritabani\b/g, 'Veritabanı'],
+    [/\bkaynaklari\b/g, 'kaynakları'],
+    [/\bKaynaklari\b/g, 'Kaynakları'],
+    [/\bkaydi\b/g, 'kaydı'],
+    [/\bKaydi\b/g, 'Kaydı'],
+    [/\bkayit\b/g, 'kayıt'],
+    [/\bKayit\b/g, 'Kayıt'],
+    [/\bguncellemeleri\b/g, 'güncellemeleri'],
+    [/\bguncelleme\b/g, 'güncelleme'],
+    [/\bGuncelleme\b/g, 'Güncelleme'],
+    [/\bkatmanlari\b/g, 'katmanları'],
+    [/\bkatmani\b/g, 'katmanı'],
+    [/\bKatmani\b/g, 'Katmanı'],
+    [/\btarafindaki\b/g, 'tarafındaki'],
+    [/\btarafinda\b/g, 'tarafında'],
+    [/\bsecilerek\b/g, 'seçilerek'],
+    [/\bsecili\b/g, 'seçili'],
+    [/\bSecili\b/g, 'Seçili'],
+    [/\bsecim\b/g, 'seçim'],
+    [/\bSecim\b/g, 'Seçim'],
+    [/\bsecimi\b/g, 'seçimi'],
+    [/\bcekis\b/g, 'çekiş'],
+    [/\bCekis\b/g, 'Çekiş'],
+    [/\bcikis\b/g, 'çıkış'],
+    [/\bcikiyor\b/g, 'çıkıyor'],
+    [/\bcikar\b/g, 'çıkar'],
+    [/\bCikar\b/g, 'Çıkar'],
+    [/\bbuyuyor\b/g, 'büyüyor'],
+    [/\bbuyume\b/g, 'büyüme'],
+    [/\bBuyume\b/g, 'Büyüme'],
+    [/\bdaralirken\b/g, 'daralırken'],
+    [/\bdegisti\b/g, 'değişti'],
+    [/\bdegisim\b/g, 'değişim'],
+    [/\bDegisim\b/g, 'Değişim'],
+    [/\bdonusum\b/g, 'dönüşüm'],
+    [/\bdonusen\b/g, 'dönüşen'],
+    [/\bgorunuyor\b/g, 'görünüyor'],
+    [/\bgorunur\b/g, 'görünür'],
+    [/\bgorunum\b/g, 'görünüm'],
+    [/\bgozukmuyor\b/g, 'gözükmüyor'],
+    [/\bYonetici\b/g, 'Yönetici'],
+    [/\byonetici\b/g, 'yönetici'],
+    [/\bYonetim\b/g, 'Yönetim'],
+    [/\byonetim\b/g, 'yönetim'],
+    [/\byonetilmeli\b/g, 'yönetilmeli'],
+    [/\byonetir\b/g, 'yönetir'],
+    [/\bKirmizi\b/g, 'Kırmızı'],
+    [/\bkirmizi\b/g, 'kırmızı'],
+    [/\bFirsat\b/g, 'Fırsat'],
+    [/\bfirsat\b/g, 'fırsat'],
+    [/\bKisa\b/g, 'Kısa'],
+    [/\bkisa\b/g, 'kısa'],
+    [/\bSicaklik\b/g, 'Sıcaklık'],
+    [/\bsicaklik\b/g, 'sıcaklık'],
+    [/\byagis\b/g, 'yağış'],
+    [/\bYagis\b/g, 'Yağış'],
+    [/\bIklim\b/g, 'İklim'],
+    [/\biklim\b/g, 'iklim'],
+    [/\btarim\b/g, 'tarım'],
+    [/\bTarim\b/g, 'Tarım'],
+    [/\bIlk\b/g, 'İlk'],
+    [/\bIl\b/g, 'İl'],
+    [/\bDistribitor\b/g, 'Distribütör'],
+    [/\bDistributor\b/g, 'Distribütör'],
+    [/\bacilis\b/g, 'açılış'],
+    [/\bAcilis\b/g, 'Açılış'],
+    [/\bSubat\b/g, 'Şubat'],
+    [/\bMayis\b/g, 'Mayıs'],
+    [/\bAgustos\b/g, 'Ağustos'],
+    [/\bKasim\b/g, 'Kasım'],
+    [/\byillik\b/g, 'yıllık'],
+    [/\bYillik\b/g, 'Yıllık'],
+    [/\byillari\b/g, 'yılları'],
+    [/\byillar\b/g, 'yıllar'],
+    [/\byilina\b/g, 'yılına'],
+    [/\byili\b/g, 'yılı'],
+    [/\byil\b/g, 'yıl'],
+    [/\bYil\b/g, 'Yıl'],
+    [/\baylik\b/g, 'aylık'],
+    [/\bAylik\b/g, 'Aylık'],
+    [/\bagirlik\b/g, 'ağırlık'],
+    [/\bagirligi\b/g, 'ağırlığı'],
+    [/\bagirlikli\b/g, 'ağırlıklı'],
+    [/\bAgirlikli\b/g, 'Ağırlıklı'],
+    [/\balani\b/g, 'alanı'],
+    [/\bAlani\b/g, 'Alanı'],
+    [/\bplani\b/g, 'planı'],
+    [/\bPlani\b/g, 'Planı'],
+    [/\bbandi\b/g, 'bandı'],
+    [/\bBandi\b/g, 'Bandı'],
+    [/\bbazli\b/g, 'bazlı'],
+    [/\bBazli\b/g, 'Bazlı'],
+    [/\bsiniflari\b/g, 'sınıfları'],
+    [/\btoplanmis\b/g, 'toplanmış'],
+    [/\bbasligi\b/g, 'başlığı'],
+    [/\bBasligi\b/g, 'Başlığı'],
+    [/\bbaslamali\b/g, 'başlamalı'],
+    [/\bbaskisi\b/g, 'baskısı'],
+    [/\bbaski\b/g, 'baskı'],
+    [/\bBaski\b/g, 'Baskı'],
+    [/\bbosluk\b/g, 'boşluk'],
+    [/\bbos\b/g, 'boş'],
+    [/\bBos\b/g, 'Boş'],
+    [/\byakin\b/g, 'yakın'],
+    [/\bYakin\b/g, 'Yakın'],
+    [/\bdogrudan\b/g, 'doğrudan'],
+    [/\bdogru\b/g, 'doğru'],
+    [/\bDogru\b/g, 'Doğru'],
+    [/\bgenis\b/g, 'geniş'],
+    [/\bgenisletilebilir\b/g, 'genişletilebilir'],
+    [/\bGenis\b/g, 'Geniş'],
+    [/\bodakli\b/g, 'odaklı'],
+    [/\bOdakli\b/g, 'Odaklı']
+];
+
+function localizeTurkishCopy(value = '') {
+    let text = String(value ?? '');
+    TURKISH_COPY_REPLACEMENTS.forEach(([pattern, replacement]) => {
+        text = text.replace(pattern, replacement);
+    });
+    return text;
+}
+
+function localizeTurkishTextNodes(root = document.body) {
+    if (!root) return;
+    const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA', 'INPUT']);
+    const isSkipped = node => {
+        let el = node.parentElement;
+        while (el) {
+            if (skipTags.has(el.tagName) || el.dataset?.trCopyRaw === 'true') return true;
+            el = el.parentElement;
+        }
+        return false;
+    };
+
+    const localizeNode = node => {
+        if (!node || node.nodeType !== Node.TEXT_NODE || isSkipped(node)) return;
+        const nextValue = localizeTurkishCopy(node.nodeValue);
+        if (nextValue !== node.nodeValue) node.nodeValue = nextValue;
+    };
+
+    if (root.nodeType === Node.TEXT_NODE) {
+        localizeNode(root);
+        return;
+    }
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+        localizeNode(node);
+        node = walker.nextNode();
+    }
+}
+
+function initTurkishCopyGuard() {
+    if (window.__turkishCopyGuardReady) return;
+    window.__turkishCopyGuardReady = true;
+
+    let pending = false;
+    const schedule = () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => {
+            pending = false;
+            localizeTurkishTextNodes(document.body);
+        });
+    };
+
+    localizeTurkishTextNodes(document.body);
+    const observer = new MutationObserver(schedule);
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
+}
+
+function isLocalAppHost() {
+    return ['localhost', '127.0.0.1'].includes(window.location.hostname);
+}
+
+function isDesktopSidebarMode() {
+    return window.innerWidth >= 768;
+}
+
+function clearDeployStatusPoll() {
+    if (deployStatusPoll) {
+        clearTimeout(deployStatusPoll);
+        deployStatusPoll = null;
+    }
+}
+
+function getBrandThemeProfile(brand = {}) {
+    if (window.BrandExperience?.getTheme) {
+        return window.BrandExperience.getTheme(brand || {});
+    }
+    return brand || {};
+}
+
+function findBrandById(brandId) {
+    return (allBrands || []).find(item => String(item.id) === String(brandId || '')) || null;
+}
+
+function findBrandBySlug(brandSlug = '') {
+    if (!brandSlug) return null;
+    if (window.BrandExperience?.matchBrand) {
+        return window.BrandExperience.matchBrand(allBrands || [], brandSlug);
+    }
+    return (allBrands || []).find(item => String(item.slug || '') === String(brandSlug || '')) || null;
+}
+
+function syncReportBrandStates(brandId, options = {}) {
+    const normalizedBrandId = String(brandId || '');
+    const numericBrandId = parseInt(normalizedBrandId, 10) || null;
+    const { resetDependents = true } = options;
+
+    brandHubState.brand_id = normalizedBrandId;
+    historicalSelectedBrandId = numericBrandId;
+    window._hpCommandBrandId = numericBrandId || normalizedBrandId || '';
+    window._brandHpSelectedBrand = normalizedBrandId;
+    tmSelectedBrandId = numericBrandId;
+    aiInsightsState.brand_id = normalizedBrandId;
+    provTopBrandState.brand_id = normalizedBrandId;
+    modelRegionState.brand_id = normalizedBrandId;
+    mediaWatchState.brand_id = normalizedBrandId;
+    modelIntelState.brand_id = normalizedBrandId;
+
+    if (resetDependents) {
+        aiInsightsState.rival_id = '';
+        modelRegionState.model_key = '';
+    }
+
+    if (dashboardState) {
+        dashboardState.brand_id = normalizedBrandId;
+    }
+
+    window._bc_brand1 = numericBrandId;
+    if (String(window._bc_brand2 || '') === normalizedBrandId) {
+        window._bc_brand2 = allBrands.find(item => String(item.id) !== normalizedBrandId)?.id || window._bc_brand2;
+    }
+}
+
+function setActiveBrandContext(brand, options = {}) {
+    if (!brand) return activeBrandContext;
+    const { persist = true } = options;
+    const previousBrandId = String(activeBrandContext?.id || '');
+    const theme = getBrandThemeProfile(brand);
+    activeBrandContext = { ...brand, ...theme };
+    const nextBrandId = String(activeBrandContext.id || '');
+    syncReportBrandStates(nextBrandId, { resetDependents: previousBrandId !== nextBrandId });
+    if (persist && activeBrandContext.slug) {
+        localStorage.setItem('last_brand_slug', activeBrandContext.slug);
+    }
+    applyBrandTheme(activeBrandContext);
+    return activeBrandContext;
+}
+
+function resolveInitialActiveBrand() {
+    if (currentUser?.role !== 'admin') {
+        return findBrandById(currentUser?.brand_id) || currentUser?.brand || null;
+    }
+
+    const storedSlug = localStorage.getItem('last_brand_slug');
+    return findBrandBySlug(storedSlug) || allBrands?.[0] || null;
+}
+
+function getSelectedBrandId(options = {}) {
+    const { fallbackToFirst = false, allowBlankForAdmin = false } = options;
+
+    if (currentUser?.role !== 'admin') {
+        return String(currentUser?.brand_id || '');
+    }
+
+    const activeId = String(activeBrandContext?.id || '');
+    if (activeId) return activeId;
+    if (allowBlankForAdmin) return '';
+    if (fallbackToFirst) return String(allBrands?.[0]?.id || '');
+    return '';
+}
+
+function syncActiveBrandContextById(brandId, options = {}) {
+    const normalizedBrandId = String(brandId || '');
+    if (!normalizedBrandId || currentUser?.role !== 'admin') return null;
+
+    const brand = findBrandById(normalizedBrandId);
+    if (brand) {
+        setActiveBrandContext(brand, { persist: options.persist !== false });
+    }
+    return brand;
+}
+
+function getInitialPage() {
+    if (activeBrandContext?.id || activeBrandContext?.slug) {
+        return 'brand-hub';
+    }
+    return currentUser?.role === 'admin' ? 'dashboard' : 'brand-hub';
 }
 
 async function requestAiAnalysis(type, context, panelId) {
@@ -48,7 +528,7 @@ async function requestAiAnalysis(type, context, panelId) {
 // ============================================
 async function init() {
     const token = localStorage.getItem('auth_token');
-    if (!token) { window.location.href = '/login.html'; return; }
+    if (!token) { window.location.href = API.getLoginDestination(); return; }
 
     try {
         currentUser = await API.me();
@@ -59,10 +539,6 @@ async function init() {
     }
 
     if (!currentUser) { API.logout(); return; }
-
-    localStorage.setItem('user_data', JSON.stringify(currentUser));
-    applyBrandTheme(currentUser.brand);
-    updateUserUI();
 
     try {
         // Pre-load common data
@@ -76,25 +552,74 @@ async function init() {
         allProvinces = allProvinces || [];
     }
 
-    navigateTo('dashboard');
+    localStorage.setItem('user_data', JSON.stringify(currentUser));
+    if (currentUser?.brand?.slug) {
+        localStorage.setItem('last_brand_slug', currentUser.brand.slug);
+    }
+
+    const preferredBrand = resolveInitialActiveBrand();
+    if (preferredBrand) {
+        setActiveBrandContext(preferredBrand, { persist: true });
+    } else if (currentUser?.brand) {
+        applyBrandTheme(currentUser.brand);
+    } else {
+        applyBrandTheme(getBrandThemeProfile({}));
+    }
+
+    updateUserUI();
+    navigateTo(getInitialPage());
+
+    bindSidebarInteractions();
+    bindModelIntelInteractions();
+
+    const pageContent = document.getElementById('pageContent');
+    if (pageContent && pageContent.dataset.sidebarAutoHideBound !== 'true') {
+        pageContent.dataset.sidebarAutoHideBound = 'true';
+        pageContent.addEventListener('click', event => {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar?.classList.contains('open')) return;
+            if (event.target.closest('#sidebar') || event.target.closest('[data-sidebar-toggle]')) return;
+            closeSidebar();
+        });
+    }
 }
 
 // ============================================
 // BRAND THEMING
 // ============================================
 function applyBrandTheme(brand) {
-    if (!brand) return;
-    const root = document.documentElement;
-    root.style.setProperty('--brand-primary', brand.primary_color);
-    root.style.setProperty('--brand-secondary', brand.secondary_color);
-    root.style.setProperty('--brand-accent', brand.accent_color || brand.primary_color);
-    root.style.setProperty('--brand-text', brand.text_color || '#ffffff');
+    const theme = window.BrandExperience?.applyTheme
+        ? window.BrandExperience.applyTheme(document.documentElement, brand || {}, 'brand')
+        : getBrandThemeProfile(brand || {});
 
-    document.getElementById('brandTitle').textContent = brand.name;
+    if (!theme) return;
+
+    const titleEl = document.getElementById('brandTitle');
+    const subtitleEl = document.getElementById('brandSubtitle');
+    const logoEl = document.getElementById('brandLogo');
+    const showcaseEyebrowEl = document.getElementById('brandShowcaseEyebrow');
+    const showcaseTitleEl = document.getElementById('brandShowcaseTitle');
+    const hasActiveBrand = Boolean(activeBrandContext?.id || activeBrandContext?.slug);
+
+    document.body.dataset.brandSlug = theme.slug || 'generic';
+    document.title = `${theme.name || 'Traktör Sektör'} - Traktör Sektör Analizi`;
+
+    if (titleEl) titleEl.textContent = theme.name || 'Traktör Sektör';
     document.getElementById('brandSubtitle').textContent = 'Sektör Analizi';
 
-    if (brand.logo_url) {
-        document.getElementById('brandLogo').innerHTML = `<img src="${brand.logo_url}" alt="${brand.name}">`;
+    if (subtitleEl) subtitleEl.textContent = hasActiveBrand ? 'Marka Analiz Merkezi' : 'Analiz Platformu';
+    if (showcaseEyebrowEl) showcaseEyebrowEl.textContent = theme.motif_label || 'Executive Portal';
+    if (showcaseTitleEl) {
+        const showcaseLine = [theme.name, ...(theme.signature || []).slice(0, 2)].filter(Boolean).join(' / ');
+        showcaseTitleEl.textContent = showcaseLine || 'Marka merkezli premium açılış deneyimi';
+    }
+
+    if (logoEl && !theme.logo_url) {
+        logoEl.textContent = theme.symbol || theme.monogram || 'TS';
+    }
+
+    if (logoEl && theme.logo_url) {
+        logoEl.innerHTML = `<img src="${theme.logo_url}" alt="${theme.name}">`;
     }
 }
 
@@ -103,15 +628,63 @@ function updateUserUI() {
     document.getElementById('userName').textContent = currentUser.full_name;
     document.getElementById('userRole').textContent = currentUser.role === 'admin' ? 'Yönetici' : currentUser.company_name || 'Marka Kullanıcısı';
     document.getElementById('userAvatar').textContent = currentUser.full_name?.charAt(0) || 'U';
+    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
+        el.style.display = currentUser.role === 'admin' ? '' : 'none';
+    });
+}
+
+function normalizeReportPage(page) {
+    return window.ReportRegistry?.normalize ? window.ReportRegistry.normalize(page) : page;
+}
+
+function getReportMeta(page) {
+    return window.ReportRegistry?.getMeta ? window.ReportRegistry.getMeta(page) : null;
+}
+
+function getReportLoaders() {
+    return {
+        'brand-hub': loadBrandHubPage,
+        dashboard: loadDashboard,
+        historical: loadHistoricalPage,
+        'total-market': loadTotalMarketPage,
+        'brand-summary': loadBrandEcosystemPage,
+        'hp-segment': loadHpCommandCenterPage,
+        'prov-top-brand': loadProvTopBrandPage,
+        'brand-compare': loadBrandComparePage,
+        'regional-index': loadRegionalIndexPage,
+        'model-region': loadModelRegionPage,
+        'map-full': loadMapFullPage,
+        map: loadMapPage,
+        sales: loadSalesPage,
+        competitors: loadCompetitorsPage,
+        models: loadModelsPage,
+        'model-intel': loadModelIntelPage,
+        'model-images-admin': loadModelImagesAdminPage,
+        province: loadProvincePage,
+        weather: loadWeatherPage,
+        'media-watch': loadMediaWatchPage,
+        'ai-insights': loadAIInsightsPage,
+        subscription: loadSubscriptionPage,
+        tarmakbir: loadTarmakBirPage,
+        settings: loadSettingsPage
+    };
 }
 
 // ============================================
 // NAVIGATION
 // ============================================
 function navigateTo(page) {
+    page = normalizeReportPage(page);
+    const previousPage = currentPage;
+    if (previousPage === 'map' && page !== 'map') teardownTurkeyMapWorkspace();
     currentPage = page;
+    clearDeployStatusPoll();
+    closeSidebar({ lockHover: true });
     document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
     document.querySelector(`.menu-item[data-page="${page}"]`)?.classList.add('active');
+
+    // Marka Merkezi'nde global top-bar gizlensin (banner kendi başına header rolü oynar)
+    document.body.classList.toggle('is-brand-hub', page === 'brand-hub');
 
     const pageContent = document.getElementById('pageContent');
     pageContent.innerHTML = '<div class="loading-screen"><div class="spinner"></div><p>Yükleniyor...</p></div>';
@@ -123,13 +696,16 @@ function navigateTo(page) {
     if (mapFullInstance) { mapFullInstance.remove(); mapFullInstance = null; mapFullGeoJson = null; }
     if (riMapInstance) { riMapInstance.remove(); riMapInstance = null; }
     if (_bmMap) { _bmMap.remove(); _bmMap = null; }
+    if (typeof _mrxMap !== 'undefined' && _mrxMap) { _mrxMap.remove(); _mrxMap = null; }
+    if (typeof stopMwxAutoRefresh === 'function') stopMwxAutoRefresh();
 
     const titles = {
+        'brand-hub': ['Marka Merkezi', 'Markaya Özel Komuta Merkezi'],
         dashboard: ['Dashboard', 'Genel Bakış'],
         historical: ['Tarihsel Gelişim', 'Traktör Pazarı Yıllık Analiz'],
         'total-market': ['Toplam Pazar', 'Yıllık Aylık Karşılaştırma'],
-        'brand-summary': ['Marka', 'Tüm Markalar Özet Tablosu'],
-        'distributor': ['Distribütör', 'Distribütör Bazlı Pazar Analizi'],
+        'brand-summary': ['Marka & Distribütör', 'Marka, kanal ve distribütör ekosistemi'],
+        'distributor': ['Marka & Distribütör', 'Birleşik marka ve distribütör ekosistemi'],
         'hp-segment': ['HP Segment', 'Beygir Gücü Segment Dağılımı'],
         'hp-top': ['Top 10 HP&Marka', 'HP Segmentlerinde En Çok Satan Markalar'],
         'hp-top-il': ['Top 10 HP&İl', 'HP Segmentlerinde En Çok Satıldığı İller'],
@@ -138,31 +714,58 @@ function navigateTo(page) {
         'obt-hp': ['OBT HP', 'Bahçe/Tarla HP Segment Analizi'],
         'brand-hp': ['Marka HP Detay', 'Marka Bazlı HP Segment Analizi'],
         'hp-brand-matrix': ['HP Marka Matris', 'HP Segment Bazlı Marka Dağılımı'],
-        'prov-top-brand': ['Top 10 İl&Marka', 'İl Bazında En Çok Satan Markalar'],
-        'brand-compare': ['Marka Karşılaştırma', 'Dinamik Marka Kıyaslama Paneli'],
-        'benchmark': ['Teknik Kıyaslama', '4 Katmanlı Profesyonel Benchmarking Analizi'],
-        'regional-index': ['Bölgesel Mekanizasyon', 'İl Bazlı Mekanizasyon İndeksi ve Isı Haritası'],
+        'prov-top-brand': ['İl Liderlik Merkezi', 'İl > Marka > Model derinliğini tekrarsız bir karar ekranında toplar'],
+        'brand-compare': ['Marka Karşılaştırma Merkezi', 'İki markanın pazar, saha, portföy ve fiyat derinliğini tek panelde birleştirir'],
+        'benchmark': ['Marka Karşılaştırma Merkezi', 'Benchmark katmanları artık tek karşılaştırma merkezi içinde sunulur'],
+        'regional-index': ['Bölgesel Mekanizasyon Komuta Merkezi', 'Türkiye haritasından seçilen il için strateji dosyası üretir'],
         'model-region': ['Model-Bölge Analizi', 'Model-Bölge Uyumluluk ve Derinlik Raporu'],
         'map-full': ['Harita 1', 'İl Bazlı Filtreleme'],
         map: ['Türkiye Haritası', 'İl Bazlı Satış Dağılımı'],
         sales: ['Satış Analizi', 'Detaylı Satış Verileri'],
         competitors: ['Rakip Analizi', 'Çok Boyutlu Karşılaştırma'],
         models: ['Model Karşılaştırma', 'Teknik Özellik Analizi'],
+        'model-intel': ['Model Röntgeni', 'Görsel, teknik, fiyat ve kaynak zekası'],
+        'model-images-admin': ['Model Görsel Yönetimi', 'Marka ve model fotoğraflarının doğrulama merkezi'],
         province: ['İl Analizi', 'Toprak, İklim ve Ekin Verileri'],
         weather: ['Hava & İklim', 'Hava Durumu ve 10 Yıllık İklim Analizi'],
-        'ai-insights': ['AI Öngörüler', 'Yapay Zeka Destekli Analizler'],
+        'ai-insights': ['AI Öngörüler', 'Yönetici savaş odası, rakip baskısı ve gelecek sinyalleri'],
         subscription: ['Abonelik', 'Plan ve Ödeme Yönetimi'],
         tarmakbir: ['TarmakBir', 'Model Yılı Bazlı Aylık Satış Analizi'],
         tarmakbir2: ['Bütün Model Yılları', 'Marka Bazlı Aylık Satış Raporu'],
         settings: ['Ayarlar', 'Hesap Ayarları']
     };
 
+    titles['hp-segment'] = ['HP Segment Merkezi', 'HP, marka, model ve il zekâsını tek ekranda birleştirir'];
+    titles['hp-top'] = titles['hp-segment'];
+    titles['hp-top-il'] = titles['hp-segment'];
+    titles['hp-top-model'] = titles['hp-segment'];
+    titles['hp-top-il-cat'] = titles['hp-segment'];
+    titles['obt-hp'] = titles['hp-segment'];
+    titles['brand-hp'] = titles['hp-segment'];
+    titles['hp-brand-matrix'] = titles['hp-segment'];
+    titles['tarmakbir'] = ['TarmakBir Komuta Merkezi', 'N+N1 ritmi ile bütün madde baskısını tek aksiyon ekranında birleştirir'];
+    titles['tarmakbir2'] = titles['tarmakbir'];
+    titles['weather'] = ['İklim Komuta Merkezi', 'Saha ritmi, ürün deseni ve iklim baskısını tek ekranda yönetir'];
+    titles['province'] = ['İl Agro Intelligence', 'Toprak, iklim, ürün, ekipman ve tercih edilen traktoru tek katmanda okur'];
+
+    titles['media-watch'] = ['Medya Takip', 'Marka gündemi, şikayet, lansman ve resmî karar istihbaratı'];
+
     const [title, subtitle] = titles[page] || ['', ''];
     document.getElementById('pageTitle').textContent = title;
     document.getElementById('pageSubtitle').textContent = subtitle;
 
+    // Global marka banner: her sekmede sayfa adını üstte gösterir
+    document.body.classList.add('is-brand-banner');
+    renderGlobalBrandBanner(title || page, page);
+
+    const meta = getReportMeta(page) || null;
+    if (meta) {
+        document.getElementById('pageTitle').textContent = meta.title || title;
+        document.getElementById('pageSubtitle').textContent = meta.subtitle || subtitle;
+    }
+
     // Model yılı bilgi notu - analitik sayfalarda göster
-    const noNotePages = ['settings', 'subscription', 'ai-insights', 'weather', 'models'];
+    const noNotePages = ['brand-hub', 'settings', 'subscription', 'media-watch', 'ai-insights', 'weather', 'province', 'models', 'model-intel', 'model-images-admin', 'hp-segment', 'tarmakbir', 'tarmakbir2'];
     const noteEl = document.getElementById('modelYearNote');
     if (noteEl) {
         if (noNotePages.includes(page)) {
@@ -171,26 +774,34 @@ function navigateTo(page) {
             noteEl.style.display = 'inline';
             noteEl.innerHTML = '<i class="fas fa-info-circle"></i> Veriler model yılı bazında son 2 yılı (N ve N-1) kapsamaktadır';
         }
+        if (meta) {
+            noteEl.style.display = meta.model_year_note === false ? 'none' : 'inline';
+        }
     }
 
     // Yıl seçici: sadece ilgili sayfalarda göster, diğerlerinde gizle
     const yearFilterEl = document.getElementById('yearFilter');
     if (yearFilterEl) {
-        const yearActivePages = ['dashboard', 'prov-top-brand', 'map-full', 'sales', 'competitors', 'province', 'regional-index', 'tarmakbir', 'tarmakbir2'];
+        const yearActivePages = ['prov-top-brand', 'map-full', 'sales', 'competitors', 'province', 'regional-index', 'tarmakbir', 'tarmakbir2'];
         if (yearActivePages.includes(page)) {
             yearFilterEl.style.display = '';
             yearFilterEl.disabled = false;
         } else {
             yearFilterEl.style.display = 'none';
         }
+        if (meta) {
+            yearFilterEl.style.display = meta.year_filter ? '' : 'none';
+            yearFilterEl.disabled = !meta.year_filter;
+        }
     }
 
     const loaders = {
+        'brand-hub': loadBrandHubPage,
         dashboard: loadDashboard,
         historical: loadHistoricalPage,
         'total-market': loadTotalMarketPage,
-        'brand-summary': loadBrandSummaryPage,
-        'distributor': loadDistributorPage,
+        'brand-summary': loadBrandEcosystemPage,
+        'distributor': loadBrandEcosystemPage,
         'hp-segment': loadHpSegmentPage,
         'hp-top': loadHpTopPage,
         'hp-top-il': loadHpTopIlPage,
@@ -201,7 +812,7 @@ function navigateTo(page) {
         'hp-brand-matrix': loadHpBrandMatrixPage,
         'prov-top-brand': loadProvTopBrandPage,
         'brand-compare': loadBrandComparePage,
-        'benchmark': loadBenchmarkPage,
+        'benchmark': loadBrandComparePage,
         'regional-index': loadRegionalIndexPage,
         'model-region': loadModelRegionPage,
         'map-full': loadMapFullPage,
@@ -209,25 +820,125 @@ function navigateTo(page) {
         sales: loadSalesPage,
         competitors: loadCompetitorsPage,
         models: loadModelsPage,
+        'model-intel': loadModelIntelPage,
+        'model-images-admin': loadModelImagesAdminPage,
         province: loadProvincePage,
         weather: loadWeatherPage,
+        'media-watch': loadMediaWatchPage,
         'ai-insights': loadAIInsightsPage,
         subscription: loadSubscriptionPage,
         tarmakbir: loadTarmakBirPage,
-        tarmakbir2: loadTarmakBir2Page,
+        tarmakbir2: loadTarmakBirPage,
         settings: loadSettingsPage
     };
+    loaders['hp-segment'] = loadHpCommandCenterPage;
+    loaders['hp-top'] = loadHpCommandCenterPage;
+    loaders['hp-top-il'] = loadHpCommandCenterPage;
+    loaders['hp-top-model'] = loadHpCommandCenterPage;
+    loaders['hp-top-il-cat'] = loadHpCommandCenterPage;
+    loaders['obt-hp'] = loadHpCommandCenterPage;
+    loaders['brand-hp'] = loadHpCommandCenterPage;
+    loaders['hp-brand-matrix'] = loadHpCommandCenterPage;
+    const registryLoaders = getReportLoaders();
+    const loader = registryLoaders[page] || loaders[page] || (() => {});
 
-    (loaders[page] || (() => {}))();
-    if (window.innerWidth < 768) document.getElementById('sidebar').classList.remove('open');
+    // ======= ABONELİK FEATURE GATE =======
+    // Çoklu key = OR mantığı (biri varsa geçer). ai_insights_limited Growth'ta, ai_insights Enterprise'da.
+    const PAGE_FEATURE_GATES = {
+        'competitors': ['competitor_analysis'],
+        'brand-compare': ['brand_compare'],
+        'benchmark': ['brand_compare'],
+        'models': ['model_compare'],
+        'media-watch': ['media_watch'],
+        'prov-top-brand': ['province_top_brand'],
+        'model-region': ['model_region_analysis'],
+        'weather': ['weather_data'],
+        'ai-insights': ['ai_insights', 'ai_insights_limited']
+    };
+    const requiredKeys = PAGE_FEATURE_GATES[page];
+    if (requiredKeys && requiredKeys.length > 0) {
+        ensureFeatureAccess(requiredKeys, page).then(check => {
+            if (!check.allowed) {
+                const pageLabel = (titles[page] && titles[page][0]) || page;
+                pageContent.innerHTML = renderPaywallOverlay(requiredKeys, pageLabel);
+                return;
+            }
+            loader();
+        }).catch(() => loader());
+    } else {
+        loader();
+    }
+    if (window.innerWidth < 768) closeSidebar();
 }
 
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
+function bindSidebarInteractions() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar || sidebar.dataset.interactionsBound === 'true') return;
+
+    sidebar.dataset.interactionsBound = 'true';
+    document.body.classList.toggle('sidebar-rail-layout', isDesktopSidebarMode());
+
+    sidebar.addEventListener('mouseenter', () => {
+        if (!isDesktopSidebarMode() || sidebarHoverLock) return;
+        sidebar.classList.add('is-peeking');
+    });
+
+    sidebar.addEventListener('mouseleave', () => {
+        sidebar.classList.remove('is-peeking');
+        sidebarHoverLock = false;
+    });
+
+    window.addEventListener('resize', () => {
+        document.body.classList.toggle('sidebar-rail-layout', isDesktopSidebarMode());
+        if (!isDesktopSidebarMode()) {
+            sidebar.classList.remove('is-peeking');
+            sidebarHoverLock = false;
+        } else {
+            sidebar.classList.remove('open');
+        }
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeSidebar({ lockHover: true });
+    });
+}
+
+function closeSidebar(options = {}) {
+    const { lockHover = false } = options;
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+
+    if (sidebar.contains(document.activeElement) && typeof document.activeElement?.blur === 'function') {
+        document.activeElement.blur();
+    }
+
+    sidebar.classList.remove('open');
+    sidebar.classList.remove('is-peeking');
+    sidebarHoverLock = !!(lockHover && isDesktopSidebarMode());
+}
+
+function toggleSidebar(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+
+    if (isDesktopSidebarMode()) {
+        const willOpen = !sidebar.classList.contains('open');
+        sidebar.classList.toggle('open', willOpen);
+        sidebar.classList.remove('is-peeking');
+        sidebarHoverLock = false;
+        return;
+    }
+
+    sidebar.classList.toggle('open');
 }
 
 function onYearChange() {
     selectedYear = parseInt(document.getElementById('yearFilter').value);
+    if (['tarmakbir', 'tarmakbir2'].includes(currentPage)) {
+        tarmakCommandState.year = selectedYear;
+    }
     navigateTo(currentPage);
 }
 
@@ -236,20 +947,118 @@ function refreshData() {
     navigateTo(currentPage);
 }
 
+function getDeployStateMeta(state) {
+    if (!state) return { label: 'Bilinmiyor', color: '#64748b' };
+    if (state.running) return { label: 'Deploy çalışıyor', color: '#f59e0b' };
+    if (state.lastExitCode === 0) return { label: 'Son deploy başarılı', color: '#22c55e' };
+    if (state.lastFinishedAt) return { label: 'Son deploy hatalı', color: '#ef4444' };
+    return { label: 'Hazır', color: '#64748b' };
+}
+
+function setDeployMessage(message = '', tone = 'muted') {
+    const el = document.getElementById('deployActionMessage');
+    if (!el) return;
+    const colors = {
+        muted: 'var(--text-muted)',
+        success: '#22c55e',
+        danger: '#ef4444',
+        warning: '#f59e0b'
+    };
+    el.style.color = colors[tone] || colors.muted;
+    el.textContent = message;
+}
+
+function renderDeployStatus(state) {
+    const badge = document.getElementById('deployStatusBadge');
+    const details = document.getElementById('deployStatusDetails');
+    const output = document.getElementById('deployStatusOutput');
+    const button = document.getElementById('deployRailwayBtn');
+    if (!badge || !details || !output || !button) return;
+
+    const meta = getDeployStateMeta(state);
+    badge.textContent = meta.label;
+    badge.style.background = `${meta.color}22`;
+    badge.style.color = meta.color;
+    badge.style.border = `1px solid ${meta.color}55`;
+
+    const lines = [];
+    if (state?.lastStartedAt) lines.push(`Başlama: ${new Date(state.lastStartedAt).toLocaleString('tr-TR')}`);
+    if (state?.lastFinishedAt) lines.push(`Bitiş: ${new Date(state.lastFinishedAt).toLocaleString('tr-TR')}`);
+    if (state?.productionUrl) lines.push(`Canlı URL: ${state.productionUrl}`);
+    details.innerHTML = lines.length > 0 ? lines.join('<br>') : 'Henüz deploy çalıştırılmadı.';
+
+    output.textContent = state?.lastOutput?.trim() || 'Henüz deploy logu yok.';
+    button.disabled = !!state?.running;
+    button.innerHTML = state?.running
+        ? '<i class="fas fa-spinner fa-spin"></i> Deploy Sürüyor'
+        : '<i class="fas fa-rocket"></i> Railway\'e Güncelle';
+}
+
+function scheduleDeployStatusPoll() {
+    clearDeployStatusPoll();
+    deployStatusPoll = setTimeout(() => {
+        if (currentPage === 'settings') {
+            refreshDeployStatus(true);
+        }
+    }, 3000);
+}
+
+async function refreshDeployStatus(silent = false) {
+    const statusCard = document.getElementById('deployStatusCard');
+    if (!statusCard) return;
+
+    try {
+        const state = await API.getRailwayDeployStatus();
+        renderDeployStatus(state);
+        if (state?.running) {
+            setDeployMessage('Railway deploy arka planda devam ediyor.', 'warning');
+            scheduleDeployStatusPoll();
+        } else if (!silent && state?.lastExitCode === 0) {
+            setDeployMessage('Son deploy başarılı.', 'success');
+        } else if (!silent && state?.lastFinishedAt && state?.lastExitCode !== 0) {
+            setDeployMessage('Son deploy hata ile tamamlandı.', 'danger');
+        }
+    } catch (err) {
+        renderDeployStatus(null);
+        setDeployMessage('Deploy bridge erişilemiyor. Hostta `npm run deploy-bridge` çalışıyor olmalı.', 'danger');
+        const details = document.getElementById('deployStatusDetails');
+        const output = document.getElementById('deployStatusOutput');
+        if (details) details.textContent = 'Lokal deploy bridge kapalı veya erişilemiyor.';
+        if (output) output.textContent = err.message;
+    }
+}
+
+async function triggerRailwayDeploy() {
+    if (!confirm('Bu işlem mevcut çalışma klasörünü Railway production ortamına deploy eder. Devam edilsin mi?')) {
+        return;
+    }
+
+    try {
+        setDeployMessage('Railway deploy başlatılıyor...', 'warning');
+        const state = await API.triggerRailwayDeploy();
+        renderDeployStatus(state);
+        setDeployMessage('Deploy başlatıldı. Durum birkaç saniye içinde güncellenecek.', 'success');
+        scheduleDeployStatusPoll();
+    } catch (err) {
+        setDeployMessage(err.message, 'danger');
+        await refreshDeployStatus(true);
+    }
+}
+
 // ============================================
 // HISTORICAL PAGE - Tarihsel Gelişim
 // ============================================
 async function loadHistoricalPage() {
     try {
         // Admin ise seçilen markayı kullan, değilse kendi markası
-        const brandId = historicalSelectedBrandId || currentUser?.brand_id;
+        const brandId = historicalSelectedBrandId || getSelectedBrandId({ fallbackToFirst: true });
         const historical = await API.getSalesHistorical(brandId);
         const { data, max_year, max_month, compare_months, pct_diff_market, pct_diff_brand } = historical;
 
         const fullYears = data.filter(d => !d.is_partial);
         const partials = data.filter(d => d.is_partial).sort((a, b) => a.year - b.year);
         // Marka adını allBrands listesinden bul
-        const selectedBrand = allBrands.find(b => b.id === brandId);
+        const selectedBrand = allBrands.find(b => String(b.id) === String(brandId || ''));
         const brandName = selectedBrand?.name || currentUser?.brand?.name || 'Seçili Marka';
         const brandColor = getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim();
 
@@ -258,6 +1067,12 @@ async function loadHistoricalPage() {
         const allMarket = [...fullYears.map(d => d.total_market), ...partials.map(d => d.total_market)];
         const allBrand = [...fullYears.map(d => d.brand_sales), ...partials.map(d => d.brand_sales)];
         const allShare = [...fullYears.map(d => d.brand_share_pct), ...partials.map(d => d.brand_share_pct)];
+
+        if (leafletMap) {
+            leafletMap.remove();
+            leafletMap = null;
+        }
+        geoJsonLayer = null;
 
         const content = document.getElementById('pageContent');
 
@@ -275,11 +1090,6 @@ async function loadHistoricalPage() {
                     <h3 style="margin:0;font-size:16px">Traktör Pazarı Tarihsel Gelişimi</h3>
                     <span style="font-size:12px;color:var(--text-muted)">Son 12 yıl + dönemsel karşılaştırma</span>
                 </div>
-                ${currentUser?.role === 'admin' ? `
-                    <select id="histBrandFilter" onchange="reloadHistorical()" style="min-width:200px">
-                        ${allBrands.map(b => `<option value="${b.id}" ${b.id === brandId ? 'selected' : ''}>${b.name}</option>`).join('')}
-                    </select>
-                ` : ''}
             </div>
 
             <!-- Özet Kartları -->
@@ -480,6 +1290,7 @@ let historicalSelectedBrandId = null;
 
 async function reloadHistorical() {
     historicalSelectedBrandId = parseInt(document.getElementById('histBrandFilter')?.value) || null;
+    syncActiveBrandContextById(historicalSelectedBrandId);
     API.clearCache();
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
@@ -576,6 +1387,851 @@ async function loadBrandSummaryPage() {
             </div>
         `;
 
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function loadBrandEcosystemPage() {
+    try {
+        const summary = await API.getBrandEcosystemSummary();
+        if (!summary) return;
+
+        const distributors = summary.distributors || [];
+        const brands = summary.brands || [];
+        const totals = summary.totals || {};
+        const concentration = summary.concentration || {};
+        const years = summary.years || [];
+        const maxYear = summary.max_year;
+        const maxMonth = summary.max_month;
+        const prevYear = summary.prev_year;
+        const periodLabel = `${maxYear} / ilk ${maxMonth} ay`;
+        const palette = ['#2563eb', '#0ea5e9', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#22c55e', '#f97316', '#06b6d4', '#eab308'];
+
+        const pctText = value => value === null || value === undefined ? '-' : `%${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+        const yoyClass = value => value === null || value === undefined ? '' : (value >= 0 ? 'tm-delta-pos' : 'tm-delta-neg');
+        const yoyText = value => value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}%${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+
+        const topDistributor = distributors[0] || null;
+        const secondDistributor = distributors[1] || null;
+        const topBrand = brands[0] || null;
+        const fastestDistributor = distributors.find(item => item.name === concentration.fastest_distributor_name) || null;
+        const fastestBrand = brands.find(item => item.name === concentration.fastest_brand_name) || null;
+
+        const insightItems = [
+            topDistributor ? {
+                icon: 'fas fa-building',
+                title: `${topDistributor.name} kanal lideri`,
+                text: `${formatNumber(topDistributor.curr_partial)} adet ile ${pctText(topDistributor.share_pct)} pay alıyor.${secondDistributor ? ` En yakın kanal ${secondDistributor.name} ile aradaki fark ${formatNumber(topDistributor.curr_partial - secondDistributor.curr_partial)} adet.` : ''}`
+            } : null,
+            topBrand ? {
+                icon: 'fas fa-tractor',
+                title: `${topBrand.name} en güçlü marka`,
+                text: `${topBrand.distributor_name} içinde ${pctText(topBrand.distributor_share_pct)} ağırlık, toplam pazarda ${pctText(topBrand.market_share_pct)} pay üretiyor.`
+            } : null,
+            fastestDistributor ? {
+                icon: 'fas fa-arrow-trend-up',
+                title: `${fastestDistributor.name} ivme üretiyor`,
+                text: `${prevYear} aynı döneme göre ${yoyText(fastestDistributor.yoy_pct)} değişim ile en hızlı kanal olarak ayrışıyor.`
+            } : null,
+            {
+                icon: 'fas fa-layer-group',
+                title: 'Konsantrasyon seviyesi',
+                text: `İlk 3 kanal toplam pazarın ${pctText(concentration.top3_distributor_share_pct)} kısmını, ilk 5 marka ise ${pctText(concentration.top5_brand_share_pct)} kısmını taşıyor.`
+            }
+        ].filter(Boolean);
+
+        const distributorRows = distributors.slice(0, 12).map(distributor => {
+            const memberTags = distributor.brands.slice(0, 4).map(brand => `<span class="be-chip">${brand.name}</span>`).join('');
+            const hiddenCount = distributor.brands.length - Math.min(distributor.brands.length, 4);
+            const extraTag = hiddenCount > 0 ? `<span class="be-chip be-chip-muted">+${hiddenCount}</span>` : '';
+            return `
+                <tr>
+                    <td class="be-rank">${distributor.rank}</td>
+                    <td>
+                        <div class="be-entity">${distributor.name}</div>
+                        <div class="be-meta">${distributor.type === 'multi-brand' ? 'Çok markalı kanal' : 'Tek markalı kanal'}</div>
+                    </td>
+                    <td>
+                        <div class="be-chip-row">${memberTags}${extraTag}</div>
+                    </td>
+                    <td>${distributor.brand_count}</td>
+                    <td>${formatNumber(distributor.prev_partial)}</td>
+                    <td class="be-strong">${formatNumber(distributor.curr_partial)}</td>
+                    <td class="be-strong">${pctText(distributor.share_pct)}</td>
+                    <td class="${yoyClass(distributor.yoy_pct)}">${yoyText(distributor.yoy_pct)}</td>
+                    <td>${distributor.top_brand_name}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const brandRows = brands.slice(0, 18).map(brand => `
+            <tr>
+                <td class="be-rank">${brand.rank}</td>
+                <td>
+                    <div class="be-entity">${brand.name}</div>
+                    <div class="be-meta">${brand.distributor_name}</div>
+                </td>
+                <td>${formatNumber(brand.prev_partial)}</td>
+                <td class="be-strong">${formatNumber(brand.curr_partial)}</td>
+                <td class="${yoyClass(brand.yoy_pct)}">${yoyText(brand.yoy_pct)}</td>
+                <td>${pctText(brand.market_share_pct)}</td>
+                <td>${pctText(brand.distributor_share_pct)}</td>
+            </tr>
+        `).join('');
+
+        const pulseCards = distributors.slice(0, 4).map(distributor => `
+            <div class="be-mini-card">
+                <div class="be-mini-kicker">Kanal ${distributor.rank}</div>
+                <div class="be-mini-title">${distributor.name}</div>
+                <div class="be-mini-metric">${formatNumber(distributor.curr_partial)} adet</div>
+                <div class="be-mini-foot ${yoyClass(distributor.yoy_pct)}">${pctText(distributor.share_pct)} pay · ${yoyText(distributor.yoy_pct)}</div>
+            </div>
+        `).join('');
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="be-page">
+                <section class="be-hero">
+                    <div>
+                        <div class="be-eyebrow">Kanal zekâsı</div>
+                        <h2>Marka ve Distribütör Ekosistemi</h2>
+                        <p>${periodLabel} döneminde marka performansı ile distribütör yapısını tek bakışta birleştiren yönetim katmanı.</p>
+                    </div>
+                    <div class="be-period-pill"><i class="fas fa-calendar-alt"></i><span>${periodLabel}</span></div>
+                </section>
+
+                <section class="be-kpi-grid">
+                    <article class="be-kpi-card">
+                        <span class="be-kpi-label">YTD toplam pazar</span>
+                        <strong class="be-kpi-value">${formatNumber(totals.curr_partial || 0)}</strong>
+                        <span class="be-kpi-note ${yoyClass(totals.yoy_pct)}">${prevYear} aynı döneme göre ${yoyText(totals.yoy_pct)}</span>
+                    </article>
+                    <article class="be-kpi-card">
+                        <span class="be-kpi-label">Aktif ekosistem</span>
+                        <strong class="be-kpi-value">${formatNumber(concentration.active_distributors || 0)} kanal</strong>
+                        <span class="be-kpi-note">${formatNumber(concentration.active_brands || 0)} aktif marka · ${formatNumber(concentration.single_brand_channels || 0)} tek markalı kanal</span>
+                    </article>
+                    <article class="be-kpi-card">
+                        <span class="be-kpi-label">Lider distribütör</span>
+                        <strong class="be-kpi-value be-kpi-text">${topDistributor?.name || '-'}</strong>
+                        <span class="be-kpi-note">${pctText(topDistributor?.share_pct)} pay · ${formatNumber(topDistributor?.curr_partial || 0)} adet</span>
+                    </article>
+                    <article class="be-kpi-card">
+                        <span class="be-kpi-label">Konsantrasyon</span>
+                        <strong class="be-kpi-value">${pctText(concentration.top3_distributor_share_pct)}</strong>
+                        <span class="be-kpi-note">İlk 3 kanal · İlk 5 marka ${pctText(concentration.top5_brand_share_pct)}</span>
+                    </article>
+                </section>
+
+                <section class="be-layout">
+                    <div class="chart-card be-panel be-span-7">
+                        <div class="be-panel-head">
+                            <div>
+                                <h3>Distribütör güç haritası</h3>
+                                <p>YTD hacim bazında kanal liderliği</p>
+                            </div>
+                        </div>
+                        <div class="be-chart-wrap"><canvas id="beDistributorChart"></canvas></div>
+                    </div>
+                    <div class="chart-card be-panel be-span-5">
+                        <div class="be-panel-head">
+                            <div>
+                                <h3>Yönetici notları</h3>
+                                <p>Yönetim seviyesinde ilk okunacak sinyaller</p>
+                            </div>
+                        </div>
+                        <div class="be-story-list">
+                            ${insightItems.map(item => `
+                                <div class="be-story-item">
+                                    <div class="be-story-icon"><i class="${item.icon}"></i></div>
+                                    <div>
+                                        <div class="be-story-title">${item.title}</div>
+                                        <div class="be-story-text">${item.text}</div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="be-mini-grid">${pulseCards}</div>
+                    </div>
+                </section>
+
+                <section class="be-layout">
+                    <div class="chart-card be-panel be-span-6">
+                        <div class="be-panel-head">
+                            <div>
+                                <h3>Top kanalların yıllık izi</h3>
+                                <p>Tam yıl verilerinde grup davranışı</p>
+                            </div>
+                        </div>
+                        <div class="be-chart-wrap"><canvas id="beTrendChart"></canvas></div>
+                    </div>
+                    <div class="chart-card be-panel be-span-6">
+                        <div class="be-panel-head">
+                            <div>
+                                <h3>En güçlü markalar</h3>
+                                <p>Distribütör bağlamında marka sıralaması</p>
+                            </div>
+                        </div>
+                        <div class="be-chart-wrap"><canvas id="beBrandChart"></canvas></div>
+                    </div>
+                </section>
+
+                <section class="be-layout">
+                    <div class="chart-card be-panel be-span-7">
+                        <div class="be-panel-head">
+                            <div>
+                                <h3>Distribütör mimarisi</h3>
+                                <p>Kanal büyüklüğü, üye markalar ve liderlik ilişkisi</p>
+                            </div>
+                        </div>
+                        <div class="be-table-wrap">
+                            <table class="be-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Distribütör</th>
+                                        <th>Markalar</th>
+                                        <th>Adet</th>
+                                        <th>${prevYear}</th>
+                                        <th>${maxYear}</th>
+                                        <th>Pay</th>
+                                        <th>YoY</th>
+                                        <th>Lider marka</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${distributorRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="chart-card be-panel be-span-5">
+                        <div class="be-panel-head">
+                            <div>
+                                <h3>Marka akışı</h3>
+                                <p>YTD performans ve kanal içindeki ağırlık</p>
+                            </div>
+                        </div>
+                        <div class="be-table-wrap">
+                            <table class="be-table be-table-compact">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Marka</th>
+                                        <th>${prevYear}</th>
+                                        <th>${maxYear}</th>
+                                        <th>YoY</th>
+                                        <th>Pazar payı</th>
+                                        <th>Kanal içi pay</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${brandRows}</tbody>
+                            </table>
+                        </div>
+                        ${fastestBrand ? `
+                            <div class="be-callout">
+                                <div class="be-callout-title">En hızlı marka</div>
+                                <div class="be-callout-body">${fastestBrand.name} · ${fastestBrand.distributor_name} içinde ${pctText(fastestBrand.distributor_share_pct)} ağırlık ile ${yoyText(fastestBrand.yoy_pct)} ivme yakalıyor.</div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </section>
+            </div>
+        `;
+
+        const topDistributorSlice = distributors.slice(0, 8);
+        if (topDistributorSlice.length) {
+            charts.brandEcoDist = new Chart(document.getElementById('beDistributorChart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: topDistributorSlice.map(item => item.name),
+                    datasets: [{
+                        label: `${maxYear} ilk ${maxMonth} ay`,
+                        data: topDistributorSlice.map(item => item.curr_partial),
+                        backgroundColor: topDistributorSlice.map((item, index) => palette[index % palette.length] + 'cc'),
+                        borderColor: topDistributorSlice.map((item, index) => palette[index % palette.length]),
+                        borderWidth: 1,
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: {
+                            labels: { color: '#cbd5e1' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${formatNumber(ctx.raw)} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8', callback: value => formatNumber(value) },
+                            grid: { color: 'rgba(148,163,184,0.08)' }
+                        },
+                        y: {
+                            ticks: { color: '#e2e8f0' },
+                            grid: { display: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        const trendSlice = distributors.slice(0, Math.min(4, distributors.length));
+        if (trendSlice.length && years.length) {
+            charts.brandEcoTrend = new Chart(document.getElementById('beTrendChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: years,
+                    datasets: trendSlice.map((item, index) => ({
+                        label: item.name,
+                        data: years.map(year => item.yearly[year] || 0),
+                        borderColor: palette[index % palette.length],
+                        backgroundColor: palette[index % palette.length] + '22',
+                        fill: false,
+                        tension: 0.35,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: '#cbd5e1', usePointStyle: true, padding: 16 }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: 'rgba(148,163,184,0.08)' }
+                        },
+                        y: {
+                            ticks: { color: '#94a3b8', callback: value => formatNumber(value) },
+                            grid: { color: 'rgba(148,163,184,0.08)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        const topBrandSlice = brands.slice(0, 10);
+        if (topBrandSlice.length) {
+            charts.brandEcoBrands = new Chart(document.getElementById('beBrandChart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: topBrandSlice.map(item => item.name),
+                    datasets: [{
+                        label: 'Pazar payi %',
+                        data: topBrandSlice.map(item => item.market_share_pct || 0),
+                        backgroundColor: topBrandSlice.map((item, index) => palette[index % palette.length] + 'bb'),
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#cbd5e1' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${pctText(ctx.raw)} · ${formatNumber(topBrandSlice[ctx.dataIndex]?.curr_partial || 0)} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#cbd5e1', maxRotation: 30, minRotation: 30 },
+                            grid: { display: false }
+                        },
+                        y: {
+                            ticks: { color: '#94a3b8', callback: value => `%${value}` },
+                            grid: { color: 'rgba(148,163,184,0.08)' }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function reloadHpCommandCenter() {
+    const nextBrandId = parseInt(document.getElementById('hpCommandBrandSelect')?.value, 10) || '';
+    window._hpCommandBrandId = nextBrandId;
+    syncActiveBrandContextById(nextBrandId);
+    API.clearCache();
+    Object.values(charts).forEach(c => c.destroy?.());
+    charts = {};
+    loadHpCommandCenterPage();
+}
+
+async function loadHpCommandCenterPage() {
+    try {
+        const requestedBrandId = window._hpCommandBrandId || getSelectedBrandId({ fallbackToFirst: true });
+        const data = await API.getHpCommandCenter(requestedBrandId);
+        if (!data) return;
+
+        const monthNames = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik'];
+        const fmtPct = (value, digits = 1) => value === null || value === undefined ? '-' : `%${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+        const fmtSignedPct = (value, digits = 1) => value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}%${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+        const fmtSignedPoints = (value, digits = 1) => value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits })} puan`;
+        const trendColor = ['#2563eb', '#38bdf8', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6'];
+
+        window._hpCommandBrandId = data.selected_brand_id || requestedBrandId || '';
+
+        const segments = (data.segments || []).filter(segment => segment.curr_partial > 0);
+        const orderedSegments = data.hp_order
+            .map(hp => segments.find(segment => segment.hp_range === hp))
+            .filter(Boolean);
+        const rankedSegments = [...orderedSegments].sort((a, b) => b.curr_partial - a.curr_partial);
+        const spotlight = data.brand_spotlight || {};
+        const spotlightRows = (spotlight.segments || []).filter(segment => segment.market_current > 0);
+        const matrix = data.matrix || { brands: [], segments: [] };
+        const periodLabel = `${monthNames[(data.max_month || 1) - 1]} ${data.max_year} / ilk ${data.max_month} ay`;
+        const topSegmentCards = rankedSegments.slice(0, 6);
+        const brandOptions = (data.brand_options || [])
+            .map(item => `<option value="${item.id}" ${item.id === data.selected_brand_id ? 'selected' : ''}>${item.name} (${formatNumber(item.total)})</option>`)
+            .join('');
+
+        const insightItems = [
+            {
+                icon: 'fas fa-wave-square',
+                title: `${data.concentration?.dominant_segment || '-'} lider segment`,
+                text: `${fmtPct(data.concentration?.dominant_share_pct)} pay ile HP hacminin merkezini tasiyor.`
+            },
+            {
+                icon: 'fas fa-arrow-trend-up',
+                title: `${data.concentration?.fastest_segment || '-'} ivmeli buyuyor`,
+                text: `${fmtSignedPct(data.concentration?.fastest_segment_yoy_pct)} ile onceki döneme gore en hızlı hareket eden segment.`
+            },
+            {
+                icon: 'fas fa-seedling',
+                title: 'Kategori dengesi',
+                text: `Tarla ${fmtPct(data.concentration?.tarla_share_pct)} / Bahce ${fmtPct(data.concentration?.bahce_share_pct)}.`
+            },
+            {
+                icon: 'fas fa-crosshairs',
+                title: `${spotlight.brand_name || 'Seçili marka'} odak noktasi`,
+                text: `${spotlight.dominant_segment || '-'} segmentinde portföy agirligi ${fmtPct(spotlight.dominant_segment_weight_pct)} seviyesinde.`
+            }
+        ];
+
+        const leaderRows = orderedSegments.map(segment => `
+            <tr>
+                <td class="hpx-hp">${segment.hp_range}</td>
+                <td class="hpx-strong">${formatNumber(segment.curr_partial)}</td>
+                <td>${fmtPct(segment.share_pct)}</td>
+                <td class="${segment.yoy_pct !== null && segment.yoy_pct < 0 ? 'tm-delta-neg' : 'tm-delta-pos'}">${fmtSignedPct(segment.yoy_pct)}</td>
+                <td>${segment.top_brand ? `${segment.top_brand.brand} <span class="hpx-inline-sub">${formatNumber(segment.top_brand.sales)}</span>` : '-'}</td>
+                <td>${segment.top_province ? `${segment.top_province.province} <span class="hpx-inline-sub">${formatNumber(segment.top_province.sales)}</span>` : '-'}</td>
+                <td>${segment.top_model ? `${segment.top_model.model} <span class="hpx-inline-sub">${formatNumber(segment.top_model.sales)}</span>` : '-'}</td>
+                <td>${fmtPct(segment.category_split?.tarla_share_pct)} / ${fmtPct(segment.category_split?.bahce_share_pct)}</td>
+            </tr>
+        `).join('');
+
+        const spotlightTableRows = spotlightRows.map(segment => `
+            <tr>
+                <td class="hpx-hp">${segment.hp_range}</td>
+                <td>${formatNumber(segment.brand_current)}</td>
+                <td>${fmtPct(segment.portfolio_weight_pct)}</td>
+                <td>${fmtPct(segment.market_share_current_pct)}</td>
+                <td>${fmtSignedPoints(segment.share_delta_pp)}</td>
+                <td class="${segment.brand_yoy_pct !== null && segment.brand_yoy_pct < 0 ? 'tm-delta-neg' : 'tm-delta-pos'}">${fmtSignedPct(segment.brand_yoy_pct)}</td>
+            </tr>
+        `).join('');
+
+        const matrixHeader = matrix.brands.map(brand => `<th>${brand.name}</th>`).join('');
+        const matrixRows = (matrix.segments || []).filter(segment => segment.total > 0).map(segment => `
+            <tr>
+                <td class="hpx-hp">${segment.hp_range}</td>
+                <td class="hpx-strong">${formatNumber(segment.total)}</td>
+                ${segment.cells.map(cell => `
+                    <td>
+                        <div class="hpx-matrix-cell">
+                            <span class="hpx-matrix-val">${cell.qty ? formatNumber(cell.qty) : '-'}</span>
+                            <span class="hpx-matrix-sub">${cell.qty ? fmtPct(cell.segment_share_pct) : ''}</span>
+                        </div>
+                    </td>
+                `).join('')}
+            </tr>
+        `).join('');
+
+        const renderCategoryPanel = (catKey, title) => {
+            const panel = data.categories?.[catKey];
+            const topRows = (panel?.segments || []).filter(segment => segment.total > 0).sort((a, b) => b.total - a.total).slice(0, 6);
+            return `
+                <div class="chart-card hpx-panel hpx-span-6">
+                    <div class="hpx-panel-head">
+                        <div>
+                            <h3>${title}</h3>
+                            <p>${fmtPct(panel?.share_pct)} pay · ${formatNumber(panel?.total || 0)} adet</p>
+                        </div>
+                    </div>
+                    <div class="hpx-stack-list">
+                        ${topRows.map(row => `
+                            <div class="hpx-stack-item">
+                                <div class="hpx-stack-top">
+                                    <span class="hpx-hp">${row.hp_range}</span>
+                                    <strong>${formatNumber(row.total)}</strong>
+                                </div>
+                                <div class="hpx-stack-meta">
+                                    <span>Top il: ${row.top_provinces?.[0] ? `${row.top_provinces[0].province} (${formatNumber(row.top_provinces[0].sales)})` : '-'}</span>
+                                    <span>Top model: ${row.top_models?.[0] ? `${row.top_models[0].model} (${formatNumber(row.top_models[0].sales)})` : '-'}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        };
+
+        const segmentCards = topSegmentCards.map(segment => `
+            <div class="hpx-seg-card">
+                <div class="hpx-seg-head">
+                    <span class="hpx-hp">${segment.hp_range}</span>
+                    <span class="${segment.yoy_pct !== null && segment.yoy_pct < 0 ? 'tm-delta-neg' : 'tm-delta-pos'}">${fmtSignedPct(segment.yoy_pct)}</span>
+                </div>
+                <div class="hpx-seg-value">${formatNumber(segment.curr_partial)}</div>
+                <div class="hpx-seg-share">${fmtPct(segment.share_pct)} pazar payi</div>
+                <div class="hpx-seg-meta">Marka: ${segment.top_brand ? `${segment.top_brand.brand} (${formatNumber(segment.top_brand.sales)})` : '-'}</div>
+                <div class="hpx-seg-meta">İl: ${segment.top_province ? `${segment.top_province.province} (${formatNumber(segment.top_province.sales)})` : '-'}</div>
+                <div class="hpx-seg-meta">Model: ${segment.top_model ? `${segment.top_model.model} (${formatNumber(segment.top_model.sales)})` : '-'}</div>
+            </div>
+        `).join('');
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="hpx-page">
+                <section class="hpx-hero">
+                    <div>
+                        <div class="hpx-eyebrow">HP Intelligence</div>
+                        <h2>HP Segment Merkezi</h2>
+                        <p>HP Segment, Top 10 HP&Marka, Top 10 HP&İl, Top 10 HP&Model, OBT, marka spotlight ve HP marka matrisi artık tek karar ekraninda birlesiyor.</p>
+                    </div>
+                    <div class="hpx-hero-tools">
+                        <div class="hpx-period-pill"><i class="fas fa-calendar-alt"></i><span>${periodLabel}</span></div>
+                        <div class="hpx-brand-picker">
+                            <label>Marka spotlight</label>
+                            <select id="hpCommandBrandSelect" class="year-select hpx-select" onchange="reloadHpCommandCenter()">
+                                ${brandOptions}
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="hpx-kpi-grid">
+                    <article class="hpx-kpi-card">
+                        <span class="hpx-kpi-label">YTD HP pazarı</span>
+                        <strong class="hpx-kpi-value">${formatNumber(data.totals?.curr_partial || 0)}</strong>
+                        <span class="hpx-kpi-note ${data.totals?.yoy_pct !== null && data.totals?.yoy_pct < 0 ? 'tm-delta-neg' : 'tm-delta-pos'}">${fmtSignedPct(data.totals?.yoy_pct)} vs ${data.prev_year}</span>
+                    </article>
+                    <article class="hpx-kpi-card">
+                        <span class="hpx-kpi-label">Aktif segment</span>
+                        <strong class="hpx-kpi-value">${formatNumber(data.concentration?.active_segments || 0)}</strong>
+                        <span class="hpx-kpi-note">Dominant: ${data.concentration?.dominant_segment || '-'} · ${fmtPct(data.concentration?.dominant_share_pct)}</span>
+                    </article>
+                    <article class="hpx-kpi-card">
+                        <span class="hpx-kpi-label">Seçili marka</span>
+                        <strong class="hpx-kpi-value hpx-kpi-text">${spotlight.brand_name || '-'}</strong>
+                        <span class="hpx-kpi-note">${formatNumber(spotlight.current_total || 0)} adet · ${fmtPct(spotlight.market_share_pct)} pay</span>
+                    </article>
+                    <article class="hpx-kpi-card">
+                        <span class="hpx-kpi-label">Kategori dengesi</span>
+                        <strong class="hpx-kpi-value">${fmtPct(data.concentration?.tarla_share_pct)}</strong>
+                        <span class="hpx-kpi-note">Tarla · Bahce ${fmtPct(data.concentration?.bahce_share_pct)}</span>
+                    </article>
+                </section>
+
+                <section class="hpx-layout">
+                    <div class="chart-card hpx-panel hpx-span-7">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>Segment hacmi ve pazar payi</h3>
+                                <p>Her HP araliginda mevcut adet ve toplam icindeki agirlik</p>
+                            </div>
+                        </div>
+                        <div class="hpx-chart-wrap"><canvas id="hpxSegmentChart"></canvas></div>
+                    </div>
+                    <div class="chart-card hpx-panel hpx-span-5">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>Yonetici notlari</h3>
+                                <p>Tek ekranda okunacak ana sinyaller</p>
+                            </div>
+                        </div>
+                        <div class="hpx-story-list">
+                            ${insightItems.map(item => `
+                                <div class="hpx-story-item">
+                                    <div class="hpx-story-icon"><i class="${item.icon}"></i></div>
+                                    <div>
+                                        <div class="hpx-story-title">${item.title}</div>
+                                        <div class="hpx-story-text">${item.text}</div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </section>
+
+                <section class="hpx-layout">
+                    <div class="chart-card hpx-panel hpx-span-6">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>Bahce vs tarla dengesi</h3>
+                                <p>Segment bazinda kategori yoğunlaşması</p>
+                            </div>
+                        </div>
+                        <div class="hpx-chart-wrap"><canvas id="hpxCategoryChart"></canvas></div>
+                    </div>
+                    <div class="chart-card hpx-panel hpx-span-6">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>${spotlight.brand_name || 'Marka'} spotlight</h3>
+                                <p>Segment bazinda adet ve pazar payi izi</p>
+                            </div>
+                        </div>
+                        <div class="hpx-chart-wrap"><canvas id="hpxSpotlightChart"></canvas></div>
+                    </div>
+                </section>
+
+                <section class="hpx-layout">
+                    <div class="chart-card hpx-panel hpx-span-7">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>Segment liderleri</h3>
+                                <p>Marka, il, model ve kategori dengesini tek tabloda okuyun</p>
+                            </div>
+                        </div>
+                        <div class="hpx-table-wrap">
+                            <table class="hpx-table">
+                                <thead>
+                                    <tr>
+                                        <th>HP</th>
+                                        <th>Adet</th>
+                                        <th>Pay</th>
+                                        <th>YoY</th>
+                                        <th>Lider marka</th>
+                                        <th>Lider il</th>
+                                        <th>Lider model</th>
+                                        <th>Tarla / Bahce</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${leaderRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="chart-card hpx-panel hpx-span-5">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>En kritik segmentler</h3>
+                                <p>Hacim bazinda en yüksek 6 segment</p>
+                            </div>
+                        </div>
+                        <div class="hpx-seg-grid">${segmentCards}</div>
+                    </div>
+                </section>
+
+                <section class="hpx-layout">
+                    <div class="chart-card hpx-panel hpx-span-6">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>${spotlight.brand_name || 'Marka'} derinligi</h3>
+                                <p>Segment icindeki agirlik, pay ve ivme</p>
+                            </div>
+                        </div>
+                        <div class="hpx-table-wrap">
+                            <table class="hpx-table">
+                                <thead>
+                                    <tr>
+                                        <th>HP</th>
+                                        <th>Marka adet</th>
+                                        <th>Portfoy payi</th>
+                                        <th>Pazar payi</th>
+                                        <th>Pay delta</th>
+                                        <th>YoY</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${spotlightTableRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="chart-card hpx-panel hpx-span-6">
+                        <div class="hpx-panel-head">
+                            <div>
+                                <h3>HP marka matrisi</h3>
+                                <p>İlk ${matrix.brands.length} marka için segment liderligi</p>
+                            </div>
+                        </div>
+                        <div class="hpx-table-wrap">
+                            <table class="hpx-table hpx-matrix-table">
+                                <thead>
+                                    <tr>
+                                        <th>HP</th>
+                                        <th>Toplam</th>
+                                        ${matrixHeader}
+                                    </tr>
+                                </thead>
+                                <tbody>${matrixRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="hpx-layout">
+                    ${renderCategoryPanel('bahce', 'Bahce segment akışı')}
+                    ${renderCategoryPanel('tarla', 'Tarla segment akışı')}
+                </section>
+            </div>
+        `;
+
+        if (orderedSegments.length) {
+            charts.hpxSegment = new Chart(document.getElementById('hpxSegmentChart').getContext('2d'), {
+                data: {
+                    labels: orderedSegments.map(segment => segment.hp_range),
+                    datasets: [
+                        {
+                            type: 'bar',
+                            label: `${data.max_year} adet`,
+                            data: orderedSegments.map(segment => segment.curr_partial),
+                            backgroundColor: '#2563ebcc',
+                            borderColor: '#2563eb',
+                            borderRadius: 8,
+                            yAxisID: 'y'
+                        },
+                        {
+                            type: 'line',
+                            label: 'Pazar payi %',
+                            data: orderedSegments.map(segment => segment.share_pct || 0),
+                            borderColor: '#f59e0b',
+                            backgroundColor: '#f59e0b33',
+                            fill: false,
+                            tension: 0.35,
+                            pointRadius: 4,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1', usePointStyle: true } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.yAxisID === 'y1'
+                                    ? `${ctx.dataset.label}: ${fmtPct(ctx.raw)}`
+                                    : `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#cbd5e1' }, grid: { display: false } },
+                        y: { ticks: { color: '#94a3b8', callback: value => formatNumber(value) }, grid: { color: 'rgba(148,163,184,0.08)' } },
+                        y1: { position: 'right', ticks: { color: '#fbbf24', callback: value => `%${value}` }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+
+            charts.hpxCategory = new Chart(document.getElementById('hpxCategoryChart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: orderedSegments.map(segment => segment.hp_range),
+                    datasets: [
+                        {
+                            label: 'Tarla',
+                            data: orderedSegments.map(segment => segment.category_split?.tarla || 0),
+                            backgroundColor: '#2563ebcc',
+                            borderRadius: 8,
+                            stack: 'cat'
+                        },
+                        {
+                            label: 'Bahce',
+                            data: orderedSegments.map(segment => segment.category_split?.bahce || 0),
+                            backgroundColor: '#ef4444cc',
+                            borderRadius: 8,
+                            stack: 'cat'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1', usePointStyle: true } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { stacked: true, ticks: { color: '#cbd5e1' }, grid: { display: false } },
+                        y: { stacked: true, ticks: { color: '#94a3b8', callback: value => formatNumber(value) }, grid: { color: 'rgba(148,163,184,0.08)' } }
+                    }
+                }
+            });
+        }
+
+        if (spotlightRows.length) {
+            charts.hpxSpotlight = new Chart(document.getElementById('hpxSpotlightChart').getContext('2d'), {
+                data: {
+                    labels: spotlightRows.map(segment => segment.hp_range),
+                    datasets: [
+                        {
+                            type: 'bar',
+                            label: `${spotlight.brand_name} adet`,
+                            data: spotlightRows.map(segment => segment.brand_current),
+                            backgroundColor: trendColor.map((color, index) => trendColor[index % trendColor.length] + 'cc'),
+                            borderRadius: 8,
+                            yAxisID: 'y'
+                        },
+                        {
+                            type: 'line',
+                            label: 'Pazar payi %',
+                            data: spotlightRows.map(segment => segment.market_share_current_pct || 0),
+                            borderColor: '#22c55e',
+                            backgroundColor: '#22c55e22',
+                            fill: false,
+                            tension: 0.35,
+                            pointRadius: 4,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1', usePointStyle: true } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.yAxisID === 'y1'
+                                    ? `${ctx.dataset.label}: ${fmtPct(ctx.raw)}`
+                                    : `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#cbd5e1' }, grid: { display: false } },
+                        y: { ticks: { color: '#94a3b8', callback: value => formatNumber(value) }, grid: { color: 'rgba(148,163,184,0.08)' } },
+                        y1: { position: 'right', ticks: { color: '#4ade80', callback: value => `%${value}` }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        }
     } catch (err) {
         showError(err);
     }
@@ -799,7 +2455,7 @@ async function loadObtHpPage() {
 async function loadBrandHpPage() {
     try {
         const brands = await API.getBrands();
-        const brandId = window._brandHpSelectedBrand || (brands && brands[0] ? brands[0].id : '');
+        const brandId = window._brandHpSelectedBrand || getSelectedBrandId({ fallbackToFirst: true }) || (brands && brands[0] ? brands[0].id : '');
         window._brandHpSelectedBrand = brandId;
         const data = await API.getBrandHpDetail(brandId);
         if (!data) return;
@@ -809,7 +2465,7 @@ async function loadBrandHpPage() {
 
         let brandOpts = '';
         if (brands) brands.forEach(b => {
-            brandOpts += `<option value="${b.id}" ${b.id === brandId ? 'selected' : ''}>${b.name}</option>`;
+            brandOpts += `<option value="${b.id}" ${String(b.id) === String(brandId || '') ? 'selected' : ''}>${b.name}</option>`;
         });
 
         const totalMarket = segments[0]; // Toplam Pazar
@@ -888,11 +2544,6 @@ async function loadBrandHpPage() {
                         <h2>Marka HP Segment Analizi</h2>
                         <p>${years[0]} - ${max_year} · İlk ${max_month} ay karşılaştırması</p>
                     </div>
-                    <div>
-                        <select class="tm-brand-select" onchange="window._brandHpSelectedBrand=this.value; loadBrandHpPage();">
-                            ${brandOpts}
-                        </select>
-                    </div>
                 </div>
                 <div class="chart-card" style="padding:16px;overflow-x:auto;">
                     <table class="bhp-table">
@@ -906,6 +2557,12 @@ async function loadBrandHpPage() {
     } catch (err) {
         showError(err);
     }
+}
+
+function onBrandHpDetailBrandChange() {
+    window._brandHpSelectedBrand = document.querySelector('.tm-brand-select')?.value || '';
+    syncActiveBrandContextById(window._brandHpSelectedBrand);
+    loadBrandHpPage();
 }
 
 // ============================================
@@ -1014,7 +2671,273 @@ async function loadHpBrandMatrixPage() {
 // ============================================
 // TOP 10 İL & MARKA PAGE
 // ============================================
-async function loadProvTopBrandPage() {
+function getProvTopBrandTone(value = 0) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 'is-neutral';
+    if (numeric >= 8) return 'is-up';
+    if (numeric > 0) return 'is-opportunity';
+    if (numeric <= -8) return 'is-down';
+    if (numeric < 0) return 'is-warning';
+    return 'is-neutral';
+}
+
+function buildProvTopBrandMemo(report = {}) {
+    const province = report.selected_province;
+    const brand = report.selected_brand;
+    const networkRow = (report.brand_network || []).find(item => item.brand_id === brand?.brand_id) || null;
+
+    if (!province || !brand) return [];
+
+    const concentration = Number(province.concentration_top3_pct || 0);
+    const brandRank = Number(brand.province_rank || brand.rank || 1);
+    const leaderGap = Number(brand.leader_gap_pct || 0);
+    const heroModel = brand.models?.[0] || null;
+
+    return [
+        {
+            eyebrow: 'İl ritmi',
+            title: concentration >= 67 ? 'Hacim az oyuncuda toplanıyor' : 'Hacim geniş oyuncu tabanına yayılıyor',
+            body: `${escapeHtml(province.province_name)} ilinde ilk 3 marka toplam hacmin ${fmtPct(concentration, 1)} seviyesini kontrol ediyor. Bu seviye ${concentration >= 67 ? 'savunulması gereken liderlik bariyerine' : 'atak yapmaya açık dağınık bir pazara'} işaret ediyor.`,
+            tone: getProvTopBrandTone(province.yoy_pct)
+        },
+        {
+            eyebrow: 'Marka pozisyonu',
+            title: brandRank === 1 ? `${escapeHtml(brand.brand_name)} il liderliğini tutuyor` : `${escapeHtml(brand.brand_name)} il içinde ${brandRank}. sırada`,
+            body: brandRank === 1
+                ? `Marka ${fmtPct(brand.share_pct, 1)} pay ile ilin lideri. En yakın takipçiye karşı ${fmtPct(leaderGap, 1)} fark üretiyor.`
+                : `Marka ${fmtPct(brand.share_pct, 1)} pay ile lideri ${fmtPct(leaderGap, 1)} geriden izliyor. İl içi portföy ve bayi aksiyonu birlikte okunmalı.`,
+            tone: brandRank === 1 ? 'is-up' : getProvTopBrandTone(-leaderGap)
+        },
+        {
+            eyebrow: 'Model omurgası',
+            title: heroModel?.model_name ? `${escapeHtml(heroModel.model_name)} portföy ekseninde öne çıkıyor` : 'Model omurgası yeniden kurulmalı',
+            body: heroModel
+                ? `Seçili markanın il içindeki ana modeli ${fmtNum(heroModel.total_sales)} adet üretiyor. Portföy ortalaması ${brand.weighted_avg_hp != null ? `${brand.weighted_avg_hp} HP` : 'HP verisi sınırlı'} ve fiyat ekseni ${fmtPrice(brand.weighted_avg_price_usd)} seviyesinde.`
+                : `İl içinde seçili markaya ait model derinliği sınırlı. Teknik veri ve saha karması birlikte takviye edilmeli.`,
+            tone: heroModel ? 'is-opportunity' : 'is-warning'
+        },
+        {
+            eyebrow: 'Ülke izi',
+            title: networkRow?.lead_count ? `${escapeHtml(brand.brand_name)} ${fmtNum(networkRow.lead_count)} ilde lider` : 'Lider il sayısı sınırlı',
+            body: networkRow
+                ? `Marka ülke genelinde ${fmtNum(networkRow.province_count)} ilde aktif. En güçlü ili ${escapeHtml(networkRow.dominant_province_name || '-')} ve ülke çapındaki referans modeli ${escapeHtml(networkRow.top_model_name || '-')} olarak okunuyor.`
+                : `Seçili markanın ülke izi bu veri setinde sınırlı. İl bazlı hâkimiyet ve referans model sinyali yakından izlenmeli.`,
+            tone: networkRow?.lead_count ? 'is-up' : 'is-neutral'
+        }
+    ];
+}
+
+function renderProvTopBrandCharts(report = {}) {
+    const province = report.selected_province;
+    const brand = report.selected_brand;
+    const theme = getBrandThemeProfile(activeBrandContext || findBrandById(brand?.brand_id) || currentUser?.brand || {});
+    const primaryColor = theme.primary_color || brand?.primary_color || '#60a5fa';
+    const accentColor = theme.accent_color || '#f59e0b';
+    const primaryRgb = theme.primary_rgb || '96, 165, 250';
+    const accentRgb = theme.accent_rgb || '245, 158, 11';
+
+    const shareChartEl = document.getElementById('provTopBrandShareChart');
+    const networkChartEl = document.getElementById('provTopBrandNetworkChart');
+    const scatterChartEl = document.getElementById('provTopBrandScatterChart');
+
+    charts.provTopBrandShare?.destroy?.();
+    charts.provTopBrandNetwork?.destroy?.();
+    charts.provTopBrandScatter?.destroy?.();
+
+    if (shareChartEl && province?.brands?.length) {
+        const rows = province.brands.slice(0, 8);
+        const baseOptions = chartOptions('Pazar payı (%)');
+        charts.provTopBrandShare = new Chart(shareChartEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => item.brand_name),
+                datasets: [{
+                    label: `${province.province_name} pazar payı`,
+                    data: rows.map(item => item.share_pct || 0),
+                    backgroundColor: rows.map((item, index) => item.brand_id === brand?.brand_id
+                        ? primaryColor
+                        : index % 2 === 0
+                            ? `rgba(${primaryRgb}, 0.56)`
+                            : `rgba(${accentRgb}, 0.44)`),
+                    borderRadius: 8,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                ...baseOptions,
+                indexAxis: 'y',
+                plugins: {
+                    ...baseOptions.plugins,
+                    legend: { display: false },
+                    datalabels: { display: false },
+                    tooltip: {
+                        ...baseOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => {
+                                const row = rows[ctx.dataIndex];
+                                return `${row.brand_name}: ${fmtPct(row.share_pct, 1)} | ${fmtNum(row.total_sales)} adet`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b', callback: value => `${value}%` }
+                    },
+                    y: {
+                        grid: { display: false },
+                        ticks: { color: '#94a3b8' }
+                    }
+                }
+            }
+        });
+    }
+
+    if (networkChartEl && (report.brand_network || []).length) {
+        const rows = (report.brand_network || []).slice(0, 10);
+        charts.provTopBrandNetwork = new Chart(networkChartEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => item.brand_name),
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Toplam satış',
+                        data: rows.map(item => item.total_sales || 0),
+                        backgroundColor: rows.map((item, index) => item.brand_id === brand?.brand_id
+                            ? primaryColor
+                            : index % 2 === 0
+                                ? `rgba(${primaryRgb}, 0.52)`
+                                : `rgba(${accentRgb}, 0.32)`),
+                        borderRadius: 7,
+                        borderSkipped: false,
+                        yAxisID: 'y'
+                    },
+                    {
+                        type: 'line',
+                        label: 'Lider olunan il',
+                        data: rows.map(item => item.lead_count || 0),
+                        borderColor: accentColor,
+                        backgroundColor: `rgba(${accentRgb}, 0.15)`,
+                        pointBackgroundColor: accentColor,
+                        pointRadius: 4,
+                        borderWidth: 3,
+                        tension: 0.28,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#cbd5e1' } },
+                    datalabels: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f8fafc',
+                        bodyColor: '#cbd5e1',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        callbacks: {
+                            afterBody: items => {
+                                const row = rows[items[0]?.dataIndex || 0];
+                                return [
+                                    `Pazar payı: ${fmtPct(row.share_pct, 1)}`,
+                                    `Ülke referans modeli: ${row.top_model_name || '-'}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b', maxRotation: 0, minRotation: 0 }
+                    },
+                    y: {
+                        position: 'left',
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b', callback: value => fmtNum(value) },
+                        title: { display: true, text: 'Adet', color: '#94a3b8' }
+                    },
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#94a3b8' },
+                        title: { display: true, text: 'Lider olunan il', color: '#94a3b8' }
+                    }
+                }
+            }
+        });
+    }
+
+    if (scatterChartEl && brand?.models?.length) {
+        const points = brand.models
+            .filter(item => item.avg_hp != null && item.avg_price_usd != null)
+            .slice(0, 18)
+            .map(item => ({
+                x: Number(item.avg_hp),
+                y: Number(item.avg_price_usd),
+                r: Math.max(6, Math.min(18, Math.round(Math.sqrt(Number(item.total_sales || 0)) * 1.8))),
+                name: item.model_name,
+                sales: item.total_sales || 0,
+                share: item.share_in_brand_pct || 0
+            }));
+
+        if (!points.length) return;
+
+        charts.provTopBrandScatter = new Chart(scatterChartEl, {
+            type: 'bubble',
+            data: {
+                datasets: [{
+                    label: `${brand.brand_name} model evreni`,
+                    data: points,
+                    backgroundColor: `rgba(${primaryRgb}, 0.56)`,
+                    borderColor: primaryColor,
+                    borderWidth: 1.5,
+                    hoverBackgroundColor: `rgba(${accentRgb}, 0.66)`
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#cbd5e1' } },
+                    datalabels: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f8fafc',
+                        bodyColor: '#cbd5e1',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: ctx => {
+                                const point = ctx.raw || {};
+                                return `${point.name || brand.brand_name}: ${point.x} HP | ${fmtPrice(point.y)} | ${fmtNum(point.sales || 0)} adet | ${fmtPct(point.share || 0, 1)} marka içi pay`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'HP', color: '#94a3b8' },
+                        ticks: { color: '#64748b' },
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    },
+                    y: {
+                        title: { display: true, text: 'Liste fiyatı ($)', color: '#94a3b8' },
+                        ticks: { color: '#64748b', callback: value => fmtPrice(value) },
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    }
+                }
+            }
+        });
+    }
+}
+
+async function legacyLoadProvTopBrandPage() {
     try {
         const data = await API.getProvinceTopBrands(selectedYear);
         if (!data) return;
@@ -1070,6 +2993,454 @@ async function loadProvTopBrandPage() {
 // ============================================
 // TOP 10 HP & İL (BAHÇE/TARLA) PAGE
 // ============================================
+async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
+    try {
+        const requestedProvinceId = nextProvinceId !== null
+            ? String(nextProvinceId || '')
+            : String(provTopBrandState.province_id || '');
+        const requestedBrandId = nextBrandId !== null
+            ? String(nextBrandId || '')
+            : String(provTopBrandState.brand_id || getSelectedBrandId({ fallbackToFirst: true }) || '');
+
+        const report = await API.getProvinceTopBrands(selectedYear, requestedProvinceId, requestedBrandId);
+        if (!report) return;
+
+        const safe = escapeHtml;
+        const overview = report.overview || {};
+        const provinces = report.provinces || [];
+        const selectedProvince = report.selected_province || null;
+        const selectedBrand = report.selected_brand || null;
+        const brandNetwork = report.brand_network || [];
+        const heatmap = report.heatmap || { brands: [], rows: [] };
+        const executiveMemo = buildProvTopBrandMemo(report);
+
+        provTopBrandState = {
+            province_id: String(selectedProvince?.province_id || requestedProvinceId || ''),
+            brand_id: String(selectedBrand?.brand_id || requestedBrandId || '')
+        };
+
+        if (nextBrandId !== null) {
+            syncActiveBrandContextById(selectedBrand?.brand_id);
+        }
+
+        if (!selectedProvince || !selectedBrand || !provinces.length) {
+            document.getElementById('pageContent').innerHTML = `
+                <div class="ptx-shell">
+                    <section class="ptx-hero">
+                        <div class="ptx-hero-copy">
+                            <span class="ptx-eyebrow">İl Marka Zekâsı</span>
+                            <h2>İl bazlı marka liderliği için veri bulunamadı</h2>
+                            <p>Bu yılda TÜİK kaynaklı il-marka-model kırılımı oluşmadı. Yıl filtresini değiştirip tekrar deneyin.</p>
+                        </div>
+                    </section>
+                </div>
+            `;
+            return;
+        }
+
+        const provinceOptions = provinces.map(item => `
+            <option value="${item.province_id}" ${String(item.province_id) === provTopBrandState.province_id ? 'selected' : ''}>
+                ${safe(item.province_name)} (${fmtNum(item.total_sales)})
+            </option>
+        `).join('');
+
+        const brandOptions = (selectedProvince.brands || []).map(item => `
+            <option value="${item.brand_id}" ${String(item.brand_id) === provTopBrandState.brand_id ? 'selected' : ''}>
+                ${safe(item.brand_name)} (#${item.rank} / ${fmtPct(item.share_pct, 1)})
+            </option>
+        `).join('');
+
+        const quickProvinceChips = provinces.slice(0, 8).map(item => `
+            <button
+                class="ptx-quick-chip ${item.province_id === selectedProvince.province_id ? 'is-active' : ''}"
+                onclick="loadProvTopBrandPage('${item.province_id}', '')">
+                <strong>${safe(item.province_name)}</strong>
+                <span>${fmtNum(item.total_sales)} adet</span>
+            </button>
+        `).join('');
+
+        const kpis = [
+            {
+                label: 'Ülke hacmi',
+                value: `${fmtNum(overview.total_sales || 0)} adet`,
+                note: `${report.period_label || selectedYear} il bazlı toplam hacim`,
+                tone: getProvTopBrandTone(overview.yoy_pct)
+            },
+            {
+                label: 'Lider il',
+                value: safe(overview.top_province_name || '-'),
+                note: `${fmtNum(overview.top_province_sales || 0)} adet / ${fmtPct(overview.top_province_share_pct || 0, 1)} pay`,
+                tone: 'is-opportunity'
+            },
+            {
+                label: 'Seçili il',
+                value: `${fmtNum(selectedProvince.total_sales || 0)} adet`,
+                note: `${safe(selectedProvince.province_name)} / ${formatSignedPct(selectedProvince.yoy_pct || 0, 1)} yıllık`,
+                tone: getProvTopBrandTone(selectedProvince.yoy_pct)
+            },
+            {
+                label: 'Top 3 konsantrasyon',
+                value: fmtPct(selectedProvince.concentration_top3_pct || 0, 1),
+                note: `${fmtNum(selectedProvince.active_brand_count || 0)} aktif marka / ${fmtNum(selectedProvince.active_model_count || 0)} model`,
+                tone: selectedProvince.concentration_top3_pct >= 67 ? 'is-warning' : 'is-up'
+            },
+            {
+                label: 'İl lideri',
+                value: safe(selectedProvince.top_brand_name || '-'),
+                note: `${fmtPct(selectedProvince.top_brand_share_pct || 0, 1)} pay / ${fmtPct(selectedProvince.competitive_gap_pct || 0, 1)} fark`,
+                tone: 'is-opportunity'
+            },
+            {
+                label: 'Seçili marka',
+                value: `${safe(selectedBrand.brand_name)} #${selectedBrand.province_rank || selectedBrand.rank || 1}`,
+                note: `${fmtNum(selectedBrand.total_sales || 0)} adet / ${fmtPct(selectedBrand.share_pct || 0, 1)} pay`,
+                tone: selectedBrand.province_rank === 1 ? 'is-up' : getProvTopBrandTone(-(selectedBrand.leader_gap_pct || 0))
+            }
+        ];
+
+        const networkRow = brandNetwork.find(item => item.brand_id === selectedBrand.brand_id) || null;
+        const signalCards = [
+            {
+                label: 'Ülke yaygınlığı',
+                value: networkRow ? `${fmtNum(networkRow.province_count || 0)} il` : '-',
+                note: networkRow?.dominant_province_name ? `En güçlü il ${safe(networkRow.dominant_province_name)}` : 'Ülke izi izleniyor'
+            },
+            {
+                label: 'Lider olunan il',
+                value: networkRow ? fmtNum(networkRow.lead_count || 0) : '-',
+                note: networkRow ? `${fmtPct(networkRow.share_pct || 0, 1)} ülke payı` : 'Liderlik sinyali yok'
+            },
+            {
+                label: 'Portföy omurgası',
+                value: safe(selectedBrand.top_model_name || '-'),
+                note: `${fmtNum(selectedBrand.top_model_sales || 0)} adet / ${fmtNum(selectedBrand.model_count || 0)} model`
+            },
+            {
+                label: 'HP ve fiyat ekseni',
+                value: selectedBrand.weighted_avg_hp != null ? `${selectedBrand.weighted_avg_hp} HP` : '-',
+                note: fmtPrice(selectedBrand.weighted_avg_price_usd)
+            }
+        ];
+
+        const provinceRows = provinces.slice(0, 12).map((item, index) => `
+            <tr ${item.province_id === selectedProvince.province_id ? 'class="is-selected"' : ''}>
+                <td><strong>#${index + 1}</strong></td>
+                <td><strong>${safe(item.province_name)}</strong><span>${safe(item.region || '-')}</span></td>
+                <td><strong>${safe(item.top_brand_name || '-')}</strong><span>${safe(item.top_model_name || '-')}</span></td>
+                <td>${fmtNum(item.total_sales || 0)}</td>
+                <td>${fmtPct(item.top_brand_share_pct || 0, 1)}</td>
+                <td>${fmtPct(item.concentration_top3_pct || 0, 1)}</td>
+                <td class="${getProvTopBrandTone(item.yoy_pct)}">${formatSignedPct(item.yoy_pct || 0, 1)}</td>
+            </tr>
+        `).join('');
+
+        const heatmapHead = (heatmap.brands || []).map(item => `<th>${safe(item.brand_name)}</th>`).join('');
+        const heatmapRows = (heatmap.rows || []).map(item => `
+            <tr>
+                <td><strong>${safe(item.province_name)}</strong><span>${fmtNum(item.total_sales || 0)} adet</span></td>
+                ${item.brands.map(brand => `
+                    <td>
+                        <div class="ptx-heat-cell" style="--heat:${Math.min(0.88, 0.12 + ((brand.share_pct || 0) / 100))}">
+                            <strong>${fmtNum(brand.sales || 0)}</strong>
+                            <span>${fmtPct(brand.share_pct || 0, 1)}</span>
+                        </div>
+                    </td>
+                `).join('')}
+            </tr>
+        `).join('');
+
+        const ladderRows = (selectedProvince.brands || []).slice(0, 10).map(item => `
+            <tr ${item.brand_id === selectedBrand.brand_id ? 'class="is-selected"' : ''}>
+                <td><strong>#${item.rank}</strong></td>
+                <td>
+                    <button class="ptx-link-btn" onclick="loadProvTopBrandPage('${selectedProvince.province_id}', '${item.brand_id}')">
+                        ${safe(item.brand_name)}
+                    </button>
+                    <span>${safe(item.top_model_name || '-')}</span>
+                </td>
+                <td>${fmtNum(item.total_sales || 0)}</td>
+                <td>${fmtPct(item.share_pct || 0, 1)}</td>
+                <td>${item.weighted_avg_hp != null ? `${item.weighted_avg_hp} HP` : '-'}</td>
+                <td>${fmtPrice(item.weighted_avg_price_usd)}</td>
+                <td class="${getProvTopBrandTone(item.yoy_pct)}">${formatSignedPct(item.yoy_pct || 0, 1)}</td>
+            </tr>
+        `).join('');
+
+        const modelCards = (selectedBrand.models || []).slice(0, 6).map((item, index) => `
+            <article class="ptx-model-card">
+                <div class="ptx-model-card-top">
+                    <span class="ptx-pill">#${index + 1}</span>
+                    <span class="ptx-pill subtle">${fmtNum(item.total_sales || 0)} adet</span>
+                </div>
+                <h3>${safe(item.model_name || '-')}</h3>
+                <p>${safe(selectedBrand.brand_name)} içinde ${fmtPct(item.share_in_brand_pct || 0, 1)}, il toplamında ${fmtPct(item.share_in_province_pct || 0, 1)} pay üretiyor.</p>
+                <div class="ptx-model-metrics">
+                    <div><span>HP</span><strong>${item.avg_hp != null ? `${item.avg_hp}` : '-'}</strong></div>
+                    <div><span>Fiyat</span><strong>${fmtPrice(item.avg_price_usd)}</strong></div>
+                    <div><span>Çekiş</span><strong>${safe(item.drive_type || '-')}</strong></div>
+                    <div><span>Kabin</span><strong>${safe(translateLabel(item.cabin_type || '-'))}</strong></div>
+                </div>
+                <div class="ptx-model-tags">
+                    <span>${safe(translateLabel(item.category || '-'))}</span>
+                    <span>${safe(item.origin || 'Menşei -')}</span>
+                    <span>${safe(item.engine_brand || 'Motor markası -')}</span>
+                </div>
+            </article>
+        `).join('');
+
+        const modelDepthRows = (selectedBrand.models || []).slice(0, 24).map((item, index) => `
+            <tr>
+                <td><strong>#${index + 1}</strong></td>
+                <td><strong>${safe(item.model_name || '-')}</strong><span>${safe(item.tuik_model_adi || '-')}</span></td>
+                <td>${fmtNum(item.total_sales || 0)}</td>
+                <td>${fmtPct(item.share_in_brand_pct || 0, 1)}</td>
+                <td>${fmtPct(item.share_in_province_pct || 0, 1)}</td>
+                <td>${item.avg_hp != null ? `${item.avg_hp} HP` : '-'}</td>
+                <td>${fmtPrice(item.avg_price_usd)}</td>
+                <td>${safe(translateLabel(item.category || '-'))}</td>
+                <td>${safe(item.drive_type || '-')}</td>
+                <td>${safe(translateLabel(item.cabin_type || '-'))}</td>
+                <td>${safe(item.origin || '-')}</td>
+            </tr>
+        `).join('');
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="ptx-shell">
+                <section class="ptx-hero ptx-hero-compact">
+                    <div class="ptx-hero-copy">
+                        <h2>${safe(selectedProvince.province_name)} – İl Liderlik Merkezi</h2>
+                        <div class="ptx-filter-row">
+                            <label class="ptx-field">
+                                <span>İl seç</span>
+                                <select id="provTopBrandProvinceSelect" onchange="loadProvTopBrandPage(this.value, '')">
+                                    ${provinceOptions}
+                                </select>
+                            </label>
+                            <label class="ptx-field">
+                                <span>Marka seç</span>
+                                <select id="provTopBrandBrandSelect" onchange="loadProvTopBrandPage(document.getElementById('provTopBrandProvinceSelect').value, this.value)">
+                                    ${brandOptions}
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="ptx-quick-row">${quickProvinceChips}</div>
+
+                <section class="ptx-kpi-grid">
+                    ${kpis.map(card => `
+                        <article class="ptx-kpi ${card.tone}">
+                            <span>${safe(card.label)}</span>
+                            <strong>${card.value}</strong>
+                            <small>${safe(card.note)}</small>
+                        </article>
+                    `).join('')}
+                </section>
+
+                <section class="ptx-grid-wide">
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>Yönetici brifi</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-memo-grid">
+                            ${executiveMemo.map(item => `
+                                <article class="ptx-memo ${item.tone}">
+                                    <span>${safe(item.eyebrow)}</span>
+                                    <h4>${item.title}</h4>
+                                    <p>${item.body}</p>
+                                </article>
+                            `).join('')}
+                        </div>
+                    </article>
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>${safe(selectedBrand.brand_name)} odak katmanı</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-signal-grid">
+                            ${signalCards.map(item => `
+                                <article class="ptx-signal-card">
+                                    <span>${safe(item.label)}</span>
+                                    <strong>${item.value}</strong>
+                                    <small>${safe(item.note)}</small>
+                                </article>
+                            `).join('')}
+                        </div>
+                        <div class="ptx-highlight-strip">
+                            <div>
+                                <span>Takipçi</span>
+                                <strong>${safe(selectedProvince.challenger_brand_name || '-')}</strong>
+                            </div>
+                            <div>
+                                <span>Lider farkı</span>
+                                <strong>${fmtPct(selectedBrand.leader_gap_pct || 0, 1)}</strong>
+                            </div>
+                            <div>
+                                <span>Model arena lideri</span>
+                                <strong>${safe(selectedProvince.top_model_name || '-')}</strong>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="ptx-grid">
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>İl liderlik tablosu</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-table-wrap">
+                            <table class="ptx-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>İl</th>
+                                        <th>Lider marka / model</th>
+                                        <th>Hacim</th>
+                                        <th>Lider pay</th>
+                                        <th>Top3 kons.</th>
+                                        <th>Yıllık</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${provinceRows}</tbody>
+                            </table>
+                        </div>
+                    </article>
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>Rekabet ısı haritası</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-table-wrap">
+                            <table class="ptx-table ptx-heatmap-table">
+                                <thead>
+                                    <tr>
+                                        <th>İl</th>
+                                        ${heatmapHead}
+                                    </tr>
+                                </thead>
+                                <tbody>${heatmapRows}</tbody>
+                            </table>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="ptx-grid">
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>${safe(selectedProvince.province_name)} marka basamakları</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-table-wrap">
+                            <table class="ptx-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Marka</th>
+                                        <th>Adet</th>
+                                        <th>Pay</th>
+                                        <th>HP</th>
+                                        <th>Fiyat</th>
+                                        <th>Yıllık</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${ladderRows}</tbody>
+                            </table>
+                        </div>
+                    </article>
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>İl marka pay dağılımı</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-chart-wrap">
+                            <canvas id="provTopBrandShareChart"></canvas>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="ptx-grid">
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>Marka ağı ve liderlik izi</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-chart-wrap">
+                            <canvas id="provTopBrandNetworkChart"></canvas>
+                        </div>
+                    </article>
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>${safe(selectedBrand.brand_name)} model omurgası</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-model-grid">
+                            ${modelCards || '<div class="ptx-empty">Model bazlı detay verisi bulunamadı.</div>'}
+                        </div>
+                    </article>
+                </section>
+
+                <section class="ptx-grid-wide">
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>HP × fiyat × hacim evreni</h3>
+                            </div>
+                        </div>
+                        ${(selectedBrand.models || []).some(item => item.avg_hp != null && item.avg_price_usd != null)
+                            ? `<div class="ptx-chart-wrap"><canvas id="provTopBrandScatterChart"></canvas></div>`
+                            : '<div class="ptx-empty">HP ve fiyat birlikte bulunan model seti sınırlı olduğu için balon grafik oluşturulamadı.</div>'}
+                    </article>
+                </section>
+
+                <section class="ptx-grid-wide">
+                    <article class="ptx-panel">
+                        <div class="ptx-section-head">
+                            <div>
+                                <h3>${safe(selectedProvince.province_name)} – ${safe(selectedBrand.brand_name)} tam model masası</h3>
+                            </div>
+                        </div>
+                        <div class="ptx-table-wrap">
+                            <table class="ptx-table ptx-table-wide">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Model</th>
+                                        <th>Adet</th>
+                                        <th>Marka içi pay</th>
+                                        <th>İl içi pay</th>
+                                        <th>HP</th>
+                                        <th>Fiyat</th>
+                                        <th>Kullanım</th>
+                                        <th>Çekiş</th>
+                                        <th>Kabin</th>
+                                        <th>Menşei</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${modelDepthRows}</tbody>
+                            </table>
+                        </div>
+                    </article>
+                </section>
+            </div>
+        `;
+
+        renderProvTopBrandCharts(report);
+    } catch (err) {
+        showError(err);
+    }
+}
+
 async function loadHpTopIlCatPage() {
     try {
         const data = await API.getHpTopProvincesCat();
@@ -1205,7 +3576,8 @@ let mapFullInstance = null;
 let mapFullGeoJson = null;
 
 async function loadMapFullPage() {
-    const brandOpts = allBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+    const selectedBrandId = getSelectedBrandId({ fallbackToFirst: true, allowBlankForAdmin: true });
+    const brandOpts = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${b.name}</option>`).join('');
 
     document.getElementById('pageContent').innerHTML = `
         <div class="mf-container">
@@ -1277,8 +3649,27 @@ function updateSelectOptions(selectId, options, defaultLabel, labelFn) {
 
 const mfCabinLabels = { kabinli: 'Kabinli', rollbar: 'Rollbar' };
 
+function getTurkeyMapFilters() {
+    return {
+        brand_id: document.getElementById('mapBrandFilter')?.value || '',
+        cabin_type: document.getElementById('mapCabinFilter')?.value || '',
+        drive_type: document.getElementById('mapDriveFilter')?.value || '',
+        hp_range: document.getElementById('mapHpFilter')?.value || '',
+        gear_config: document.getElementById('mapGearFilter')?.value || ''
+    };
+}
+
+function updateTurkeyMapFilterOptions(options) {
+    if (!options) return;
+    updateSelectOptions('mapCabinFilter', options.cabin_types || [], 'Tüm Kabin', v => mfCabinLabels[v] || v);
+    updateSelectOptions('mapDriveFilter', options.drive_types || [], 'Tüm Çekiş');
+    updateSelectOptions('mapGearFilter', options.gear_configs || [], 'Tüm Şanzıman');
+    updateSelectOptions('mapHpFilter', options.hp_ranges || [], 'Tüm HP', v => v + ' HP');
+}
+
 async function onMapFilterChange() {
     const filters = getMapFilters();
+    syncActiveBrandContextById(filters.brand_id);
 
     const [options, salesData] = await Promise.all([
         API.getMapFilterOptions(selectedYear, filters),
@@ -1308,8 +3699,10 @@ async function renderMapFullGeoJSON(salesData) {
         const provinceSales = {};
         (salesData || []).forEach(s => {
             const name = s.province_name;
-            if (!provinceSales[name]) provinceSales[name] = { total: 0, brands: {} };
+            const provinceTotal = parseInt(s.province_total_sales, 10) || 0;
+            if (!provinceSales[name]) provinceSales[name] = { total: 0, provinceTotal: 0, brands: {} };
             provinceSales[name].total += parseInt(s.total_sales);
+            provinceSales[name].provinceTotal = Math.max(provinceSales[name].provinceTotal || 0, provinceTotal);
             if (s.brand_name) {
                 if (!provinceSales[name].brands[s.brand_name]) provinceSales[name].brands[s.brand_name] = 0;
                 provinceSales[name].brands[s.brand_name] += parseInt(s.total_sales);
@@ -1349,22 +3742,42 @@ async function renderMapFullGeoJSON(salesData) {
                 const dbName = nameMap[name] || name;
                 const data = provinceSales[dbName];
                 const sales = data?.total || 0;
+                const provinceTotal = data?.provinceTotal || sales;
                 const prov = allProvinces.find(p => p.name === dbName);
 
                 const topBrands = data ? Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,5) : [];
+                const shareLabel = (value) => provinceTotal > 0 ? `%${((value / provinceTotal) * 100).toFixed(1)}` : '%0.0';
                 layer.bindTooltip(`
                     <div style="font-size:13px;min-width:200px">
                         <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
                         <span style="color:#94a3b8">${prov?.region || ''}</span>
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
+                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>Ä°l ToplamÄ±:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
+                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>Ä°l PayÄ±:</span><span>${shareLabel(sales)}</span></div>` : ''}
                         ${topBrands.length > 0 ? `
                             <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                             <div style="font-size:11px;color:#94a3b8">En Çok Satan:</div>
-                            ${topBrands.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])}</span></div>`).join('')}
+                            ${topBrands.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px;gap:12px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])} (${shareLabel(b[1])})</span></div>`).join('')}
                         ` : ''}
                     </div>
                 `, { sticky: true, className: 'map-tooltip' });
+                const cleanTooltipHtml = `
+                    <div style="font-size:13px;min-width:200px">
+                        <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
+                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                        <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
+                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>\u0130l Toplam\u0131:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
+                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>\u0130l Pay\u0131:</span><span>${shareLabel(sales)}</span></div>` : ''}
+                        ${topBrands.length > 0 ? `
+                            <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                            <div style="font-size:11px;color:#94a3b8">En Çok Satan:</div>
+                            ${topBrands.map((b, i) => `<div style="display:flex;justify-content:space-between;font-size:11px;gap:12px"><span>${i + 1}. ${b[0]}</span><span>${formatNumber(b[1])} (${shareLabel(b[1])})</span></div>`).join('')}
+                        ` : ''}
+                    </div>
+                `;
+                layer.setTooltipContent(cleanTooltipHtml);
 
                 layer.on('mouseover', function() { this.setStyle({ weight: 3, color: '#60a5fa', fillOpacity: 1 }); this.bringToFront(); });
                 layer.on('mouseout', function() { mapFullGeoJson.resetStyle(this); });
@@ -1552,6 +3965,7 @@ async function loadHpSegmentPage() {
 // ============================================
 async function loadDistributorPage() {
     try {
+        return loadBrandEcosystemPage();
         const summary = await API.getDistributorSummary();
         if (!summary) return;
 
@@ -1657,6 +4071,7 @@ let tmSelectedBrandId = null;
 
 async function reloadTotalMarket() {
     tmSelectedBrandId = parseInt(document.getElementById('tmBrandFilter')?.value) || null;
+    syncActiveBrandContextById(tmSelectedBrandId);
     API.clearCache();
     Object.values(charts).forEach(c => c.destroy?.());
     charts = {};
@@ -1665,6 +4080,9 @@ async function reloadTotalMarket() {
 
 async function loadTotalMarketPage() {
     try {
+        if (!tmSelectedBrandId) {
+            tmSelectedBrandId = parseInt(getSelectedBrandId({ fallbackToFirst: true }), 10) || null;
+        }
         const [brands, data] = await Promise.all([
             API.getBrands(),
             API.getTotalMarket(tmSelectedBrandId)
@@ -2048,24 +4466,2223 @@ async function loadDashboard() {
     }
 }
 
+let dashboardFiltersCollapsed = false;
+let dashboardState = null;
+
+function dashboardSafe(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatDashboardPercent(value, digits = 1) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+    return `%${Number(value).toLocaleString('tr-TR', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
+    })}`;
+}
+
+function formatDashboardDelta(value, digits = 1) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Veri yok';
+    const num = Number(value);
+    const sign = num >= 0 ? '+' : '-';
+    return `${sign}${formatDashboardPercent(Math.abs(num), digits)}`;
+}
+
+function getDashboardDefaultBrandId() {
+    if (currentUser?.role === 'admin') {
+        return String(activeBrandContext?.id || '');
+    }
+    return String(currentUser?.brand_id || '');
+}
+
+function ensureDashboardState() {
+    if (!dashboardState) {
+        dashboardState = {
+            brand_id: getDashboardDefaultBrandId(),
+            year: String(selectedYear || new Date().getFullYear()),
+            cabin_type: '',
+            drive_type: '',
+            hp_range: '',
+            gear_config: ''
+        };
+    }
+
+    if (currentUser?.role !== 'admin') {
+        dashboardState.brand_id = String(currentUser?.brand_id || '');
+    }
+
+    return dashboardState;
+}
+
+function getDashboardFilters() {
+    const state = ensureDashboardState();
+    return {
+        brand_id: state.brand_id || '',
+        year: state.year || 'all',
+        cabin_type: state.cabin_type || '',
+        drive_type: state.drive_type || '',
+        hp_range: state.hp_range || '',
+        gear_config: state.gear_config || ''
+    };
+}
+
+function syncDashboardStateFromDom() {
+    const state = ensureDashboardState();
+    const read = (id, fallback = '') => document.getElementById(id)?.value || fallback;
+
+    // Marka banner'dan gelir; sayfa içi selectör kaldırıldı
+    state.brand_id = String(activeBrandContext?.id || currentUser?.brand_id || '');
+    state.year = read('dbYearFilter', state.year || 'all');
+    state.cabin_type = read('dbCabinFilter', '');
+    state.drive_type = read('dbDriveFilter', '');
+    state.hp_range = read('dbHpFilter', '');
+    state.gear_config = read('dbGearFilter', '');
+
+    if (state.year && state.year !== 'all' && Number.isFinite(parseInt(state.year, 10))) {
+        selectedYear = parseInt(state.year, 10);
+    }
+
+    if (currentUser?.role === 'admin' && state.brand_id) {
+        const selectedBrand = findBrandById(state.brand_id);
+        if (selectedBrand) setActiveBrandContext(selectedBrand, { persist: true });
+    }
+
+    return state;
+}
+
+function resetDashboardFilters() {
+    dashboardState = {
+        brand_id: getDashboardDefaultBrandId(),
+        year: String(selectedYear || new Date().getFullYear()),
+        cabin_type: '',
+        drive_type: '',
+        hp_range: '',
+        gear_config: ''
+    };
+    loadDashboard();
+}
+
+function onDashboardFilterChange() {
+    syncDashboardStateFromDom();
+    loadDashboard();
+}
+
+function toggleDashboardFilters(force) {
+    dashboardFiltersCollapsed = typeof force === 'boolean' ? force : !dashboardFiltersCollapsed;
+    syncDashboardFilterPanel();
+}
+
+function syncDashboardFilterPanel(summaryText = '') {
+    const panel = document.getElementById('dashboardFilterPanel');
+    const summary = document.getElementById('dashboardFilterSummary');
+    const toggleBtn = document.querySelector('[data-dashboard-collapse]');
+
+    if (panel) panel.classList.toggle('is-collapsed', dashboardFiltersCollapsed);
+    if (summaryText && summary) summary.textContent = summaryText;
+    if (toggleBtn) {
+        toggleBtn.innerHTML = dashboardFiltersCollapsed
+            ? '<i class="fas fa-sliders-h"></i><span>Filtreleri Goster</span>'
+            : '<i class="fas fa-eye-slash"></i><span>Filtreleri Gizle</span>';
+    }
+}
+
+function buildDashboardFilterSummary(data) {
+    const parts = [];
+    if (data?.selected_brand?.brand_name) parts.push(data.selected_brand.brand_name);
+    parts.push(data?.period?.label || 'Guncel görünüm');
+    if (data?.highlights?.top_category?.label) parts.push(data.highlights.top_category.label);
+    if (data?.highlights?.top_drive?.label) parts.push(data.highlights.top_drive.label);
+    return parts.join(' • ');
+}
+
+function renderDashboardMixPills(title, items, accentClass) {
+    return `
+        <div class="dbx-pill-group">
+            <span class="dbx-pill-title">${dashboardSafe(title)}</span>
+            <div class="dbx-pill-list">
+                ${(items || []).length
+                    ? items.map(item => `
+                        <span class="dbx-pill ${accentClass}">
+                            <strong>${dashboardSafe(item.label)}</strong>
+                            <small>${formatDashboardPercent(item.share_pct, 1)}</small>
+                        </span>
+                    `).join('')
+                    : '<span class="dbx-pill dbx-pill-muted"><strong>Veri yok</strong></span>'}
+            </div>
+        </div>
+    `;
+}
+
+function renderDashboardTrendChart(data) {
+    const el = document.getElementById('dbTrendChart');
+    if (!el) return;
+
+    const rootStyles = getComputedStyle(document.documentElement);
+    const brandColor = data?.selected_brand?.primary_color || rootStyles.getPropertyValue('--brand-primary').trim() || '#3b82f6';
+    const trend = data?.monthly_trend || [];
+    const labels = trend.map(item => item.label);
+    const baseOptions = chartOptions('Satış Adedi');
+    const datasets = [];
+
+    if (data?.trend_mode === 'focus-brand' && data?.selected_brand) {
+        datasets.push({
+            label: 'Toplam Pazar',
+            data: trend.map(item => item.market_sales),
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56,189,248,0.10)',
+            fill: false,
+            tension: 0.35,
+            borderWidth: 2,
+            pointRadius: 3
+        });
+        datasets.push({
+            label: data.selected_brand.brand_name,
+            data: trend.map(item => item.context_sales),
+            borderColor: brandColor,
+            backgroundColor: `${brandColor}22`,
+            fill: true,
+            tension: 0.35,
+            borderWidth: 3,
+            pointRadius: 4
+        });
+        if (data.period?.target_year) {
+            datasets.push({
+                label: `${data.period.target_year - 1} Ayni Donem`,
+                data: trend.map(item => item.prev_context_sales),
+                borderColor: '#94a3b8',
+                backgroundColor: 'transparent',
+                fill: false,
+                tension: 0.28,
+                borderWidth: 2,
+                pointRadius: 2,
+                borderDash: [8, 6]
+            });
+        }
+    } else {
+        datasets.push({
+            label: data?.period?.target_year ? `${data.period.target_year} Pazar` : 'Filtrelenmis Toplam',
+            data: trend.map(item => item.market_sales),
+            borderColor: brandColor,
+            backgroundColor: `${brandColor}22`,
+            fill: true,
+            tension: 0.35,
+            borderWidth: 3,
+            pointRadius: 4
+        });
+        if (data?.period?.target_year) {
+            datasets.push({
+                label: `${data.period.target_year - 1} Pazar`,
+                data: trend.map(item => item.prev_market_sales),
+                borderColor: '#94a3b8',
+                backgroundColor: 'transparent',
+                fill: false,
+                tension: 0.28,
+                borderWidth: 2,
+                pointRadius: 2,
+                borderDash: [8, 6]
+            });
+        }
+    }
+
+    charts.dashboardTrend = new Chart(el, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            ...baseOptions,
+            plugins: {
+                ...baseOptions.plugins,
+                tooltip: {
+                    ...baseOptions.plugins.tooltip,
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderDashboardShareChart(data) {
+    const el = document.getElementById('dbMarketShareChart');
+    if (!el) return;
+
+    const items = (data?.market_share || []).slice(0, 8);
+    charts.dashboardShare = new Chart(el, {
+        type: 'doughnut',
+        data: {
+            labels: items.map(item => item.brand_name),
+            datasets: [{
+                data: items.map(item => Number(item.market_share_pct || 0)),
+                backgroundColor: items.map(item => item.primary_color || '#3b82f6'),
+                borderColor: '#0f172a',
+                borderWidth: 3,
+                hoverOffset: 10
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '64%',
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#94a3b8', padding: 14, font: { size: 11 } }
+                },
+                tooltip: {
+                    backgroundColor: '#111827',
+                    titleColor: '#f8fafc',
+                    bodyColor: '#cbd5e1',
+                    borderColor: 'rgba(148,163,184,0.2)',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: ctx => `${ctx.label}: ${formatDashboardPercent(ctx.raw, 1)}`
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderDashboardProvinceChart(data) {
+    const el = document.getElementById('dbProvinceChart');
+    if (!el) return;
+    const provinces = data?.top_provinces || [];
+    const baseOptions = chartOptions('Satış Adedi');
+    charts.dashboardProvince = new Chart(el, {
+        type: 'bar',
+        data: {
+            labels: provinces.map(item => item.province_name),
+            datasets: [{
+                label: 'Satış',
+                data: provinces.map(item => item.total_sales),
+                backgroundColor: 'rgba(34,197,94,0.78)',
+                borderColor: '#22c55e',
+                borderRadius: 10,
+                borderWidth: 1
+            }]
+        },
+        options: {
+            ...baseOptions,
+            indexAxis: 'y',
+            plugins: {
+                ...baseOptions.plugins,
+                legend: { display: false },
+                tooltip: {
+                    ...baseOptions.plugins.tooltip,
+                    callbacks: {
+                        label: ctx => `${formatNumber(ctx.raw)} adet`
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderDashboardHpChart(data) {
+    const el = document.getElementById('dbHpChart');
+    if (!el) return;
+    const hpMix = data?.hp_mix || [];
+    const baseOptions = chartOptions('Adet');
+    charts.dashboardHp = new Chart(el, {
+        type: 'bar',
+        data: {
+            labels: hpMix.map(item => item.label),
+            datasets: [{
+                label: 'Segment Hacmi',
+                data: hpMix.map(item => item.total_sales),
+                backgroundColor: hpMix.map((_, index) => ['#2563eb', '#1d4ed8', '#0f766e', '#059669', '#f59e0b', '#f97316', '#8b5cf6', '#ec4899'][index % 8]),
+                borderRadius: 10,
+                borderSkipped: false
+            }]
+        },
+        options: {
+            ...baseOptions,
+            plugins: {
+                ...baseOptions.plugins,
+                legend: { display: false },
+                tooltip: {
+                    ...baseOptions.plugins.tooltip,
+                    callbacks: {
+                        label: ctx => `${formatNumber(ctx.raw)} adet`
+                    }
+                }
+            }
+        }
+    });
+}
+
+function ensureBrandHubState() {
+    if (currentUser?.role === 'admin') {
+        if (!brandHubState.brand_id) {
+            brandHubState.brand_id = String(activeBrandContext?.id || allBrands?.[0]?.id || '');
+        }
+    } else {
+        brandHubState.brand_id = String(currentUser?.brand_id || '');
+    }
+    return brandHubState;
+}
+
+function onBrandHubBrandChange() {
+    if (currentUser?.role !== 'admin') return;
+    const newBrandId = document.getElementById('brandHubBrandFilter')?.value || '';
+    brandHubState.brand_id = newBrandId;
+    const selectedBrand = findBrandById(newBrandId);
+    if (selectedBrand) setActiveBrandContext(selectedBrand, { persist: true });
+    // Hangi sayfada olursak olalım, marka değiştiğinde aktif sekmeyi yeniden yükle
+    if (typeof currentPage === 'string' && currentPage) {
+        navigateTo(currentPage);
+    } else {
+        loadBrandHubPage();
+    }
+}
+
+function renderBrandHubTrendChart(data) {
+    const el = document.getElementById('brandHubTrendChart');
+    if (!el) return;
+    const monthlyTrend = data?.sales?.monthly_trend || [];
+    const monthLabels = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const baseOptions = chartOptions('Adet');
+    charts.brandHubTrend?.destroy?.();
+
+    charts.brandHubTrend = new Chart(el, {
+        type: 'line',
+        data: {
+            labels: monthlyTrend.map(item => monthLabels[(item.month || 1) - 1] || String(item.month || '')),
+            datasets: [{
+                label: 'Aylik satış',
+                data: monthlyTrend.map(item => item.total_sales),
+                borderColor: activeBrandContext?.primary_color || currentUser?.brand?.primary_color || 'rgba(59,130,246,1)',
+                backgroundColor: `rgba(${getBrandThemeProfile(activeBrandContext || currentUser?.brand || {}).primary_rgb || '59, 130, 246'}, 0.14)`,
+                tension: 0.35,
+                fill: true,
+                pointRadius: 4,
+                pointHoverRadius: 5
+            }]
+        },
+        options: {
+            ...baseOptions,
+            plugins: {
+                ...baseOptions.plugins,
+                legend: { display: false }
+            }
+        }
+    });
+}
+
+function renderBrandHubMixChart(data) {
+    const el = document.getElementById('brandHubMixChart');
+    if (!el) return;
+    const categoryMix = data?.sales?.category_mix || [];
+    const baseOptions = chartOptions('Adet');
+
+    charts.brandHubMix?.destroy?.();
+
+    charts.brandHubMix = new Chart(el, {
+        type: 'doughnut',
+        data: {
+            labels: categoryMix.map(item => item.label || '-'),
+            datasets: [{
+                data: categoryMix.map(item => item.total_sales || 0),
+                backgroundColor: ['#2563eb', '#0f766e', '#f59e0b', '#7c3aed', '#ef4444']
+            }]
+        },
+        options: {
+            ...baseOptions,
+            cutout: '66%',
+            plugins: {
+                ...baseOptions.plugins,
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#94a3b8',
+                        usePointStyle: true
+                    }
+                }
+            }
+        }
+    });
+}
+
+function formatSignedPct(value, digits = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '-';
+    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(digits).replace(/\.0$/, '')}%`;
+}
+
+function formatSignedPoints(value, digits = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '-';
+    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(digits).replace(/\.0$/, '')} puan`;
+}
+
+function formatUsdValue(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return '-';
+    return `${numeric.toLocaleString('tr-TR')} $`;
+}
+
+function formatUsdBand(minPrice, maxPrice) {
+    const min = Number(minPrice || 0);
+    const max = Number(maxPrice || 0);
+    if (!min && !max) return '-';
+    if (min && max && min !== max) return `${formatUsdValue(min)} - ${formatUsdValue(max)}`;
+    return formatUsdValue(max || min);
+}
+
+function renderBrandHubExecutiveTrendChart(report, brandName = 'Marka') {
+    const el = document.getElementById('brandHubTrendChart');
+    if (!el) return;
+
+    const rows = report?.sales?.monthly_trend || [];
+    const baseOptions = chartOptions('Adet');
+    const theme = getBrandThemeProfile(activeBrandContext || currentUser?.brand || {});
+    charts.brandHubTrend?.destroy?.();
+
+    charts.brandHubTrend = new Chart(el, {
+        type: 'line',
+        data: {
+            labels: rows.map(item => item.label || '-'),
+            datasets: [
+                {
+                    label: `${report?.latest_period?.year || ''} ${brandName}`,
+                    data: rows.map(item => item.current_sales || 0),
+                    borderColor: theme.primary_color || '#60a5fa',
+                    backgroundColor: `rgba(${theme.primary_rgb || '96, 165, 250'}, 0.12)`,
+                    tension: 0.34,
+                    fill: true,
+                    borderWidth: 3,
+                    pointRadius: 3
+                },
+                {
+                    label: `${(report?.latest_period?.year || 0) - 1} ${brandName}`,
+                    data: rows.map(item => item.previous_sales || 0),
+                    borderColor: theme.accent_color || '#f59e0b',
+                    backgroundColor: `rgba(${theme.accent_rgb || '245, 158, 11'}, 0.06)`,
+                    tension: 0.3,
+                    fill: false,
+                    borderWidth: 2,
+                    borderDash: [6, 4],
+                    pointRadius: 2
+                }
+            ]
+        },
+        options: baseOptions
+    });
+}
+
+function renderBrandHubExecutiveYearlyChart(report, brandName = 'Marka') {
+    const el = document.getElementById('brandHubYearlyChart');
+    if (!el) return;
+
+    const rows = report?.sales?.yearly_history || [];
+    const baseOptions = chartOptions('Adet');
+    const theme = getBrandThemeProfile(activeBrandContext || currentUser?.brand || {});
+    charts.brandHubYearly?.destroy?.();
+
+    charts.brandHubYearly = new Chart(el, {
+        data: {
+            labels: rows.map(item => item.is_partial ? `${item.year}*` : String(item.year)),
+            datasets: [
+                {
+                    type: 'bar',
+                    label: `${brandName} tescil`,
+                    data: rows.map(item => item.brand_sales || 0),
+                    backgroundColor: `rgba(${theme.primary_rgb || '96, 165, 250'}, 0.68)`,
+                    borderRadius: 12,
+                    borderSkipped: false,
+                    yAxisID: 'y'
+                },
+                {
+                    type: 'line',
+                    label: 'Pazar payi',
+                    data: rows.map(item => item.market_share_pct || 0),
+                    borderColor: theme.accent_color || '#f472b6',
+                    backgroundColor: `rgba(${theme.accent_rgb || '244, 114, 182'}, 0.15)`,
+                    tension: 0.35,
+                    borderWidth: 3,
+                    pointRadius: 3,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            ...baseOptions,
+            scales: {
+                ...baseOptions.scales,
+                y: {
+                    ...baseOptions.scales.y,
+                    title: { display: true, text: 'Adet', color: '#64748b' }
+                },
+                y1: {
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: {
+                        color: '#64748b',
+                        callback: value => `${value}%`
+                    },
+                    title: { display: true, text: 'Pazar payi', color: '#64748b' }
+                }
+            }
+        }
+    });
+}
+
+function renderBrandHubProvinceChart(report) {
+    const el = document.getElementById('brandHubProvinceChart');
+    if (!el) return;
+
+    const rows = (report?.sales?.top_provinces || []).slice(0, 8).reverse();
+    const baseOptions = chartOptions('Adet');
+    const theme = getBrandThemeProfile(activeBrandContext || currentUser?.brand || {});
+    charts.brandHubProvince?.destroy?.();
+
+    charts.brandHubProvince = new Chart(el, {
+        type: 'bar',
+        data: {
+            labels: rows.map(item => item.province_name || '-'),
+            datasets: [{
+                label: 'Tescil',
+                data: rows.map(item => item.total_sales || 0),
+                backgroundColor: rows.map((_, index) => index % 2 === 0
+                    ? `rgba(${theme.accent_rgb || '244, 114, 182'}, 0.75)`
+                    : `rgba(${theme.primary_rgb || '96, 165, 250'}, 0.75)`),
+                borderRadius: 10,
+                borderSkipped: false
+            }]
+        },
+        options: {
+            ...baseOptions,
+            indexAxis: 'y',
+            plugins: {
+                ...baseOptions.plugins,
+                legend: { display: false }
+            }
+        }
+    });
+}
+
+function buildBrandStageHtml(brand, options = {}) {
+    // In-page çağrılar (sayfa render fonksiyonlarındaki ${stageHtml}) artık boş döner;
+    // banner global olarak #brandBannerHost'a renderGlobalBrandBanner ile basılır.
+    if (!options.global) return '';
+
+    const theme = getBrandThemeProfile(brand || activeBrandContext || currentUser?.brand || {});
+    const brandName = brand?.name || theme.name || 'Marka';
+    const brandWebsite = brand?.website || theme.website || '';
+    const brandLogoUrl = brand?.logo_url || theme.logo_url || '';
+    const profile = options.profile || {};
+    const periodLabel = options.periodLabel || '';
+    const brandOptions = options.brandOptions || '';
+    const pageLabel = options.pageLabel || 'Marka Merkezi';
+
+    // Logo kaynak öncelik: DB logo_url → Google s2 favicon → monogram fallback
+    let logoSrc = '';
+    try {
+        if (brandLogoUrl) {
+            logoSrc = brandLogoUrl;
+        } else if (brandWebsite) {
+            const host = new URL(brandWebsite).hostname.replace(/^www\./, '');
+            logoSrc = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
+        }
+    } catch { logoSrc = ''; }
+
+    const monogram = dashboardSafe(theme.symbol || theme.monogram || (brandName.slice(0, 2).toUpperCase()));
+    const logoHtml = logoSrc
+        ? `<img src="${dashboardSafe(logoSrc)}" alt="${dashboardSafe(brandName)} logo" class="bh-mc-logo" onerror="this.outerHTML='<span class=&quot;bh-mc-monogram&quot;>${monogram}</span>'">`
+        : `<span class="bh-mc-monogram">${monogram}</span>`;
+
+    const quickLinks = [
+        profile.website_url ? { url: profile.website_url, icon: 'fa-globe', label: 'Resmi Site', favDomain: profile.website_url } : null,
+        profile.dealer_locator_url ? { url: profile.dealer_locator_url, icon: 'fa-map-location-dot', label: 'Bayi Ağı', favDomain: profile.dealer_locator_url } : null,
+        profile.portal_url ? { url: profile.portal_url, icon: 'fa-right-to-bracket', label: 'B2B Portal', favDomain: profile.portal_url } : null,
+        profile.price_list_url ? { url: profile.price_list_url, icon: 'fa-file-invoice-dollar', label: 'Fiyat / Katalog', favDomain: profile.price_list_url } : null
+    ].filter(Boolean);
+
+    const quickLinksHtml = quickLinks.map(link => {
+        let favHost = '';
+        try { favHost = new URL(link.favDomain).hostname; } catch { favHost = ''; }
+        const fav = favHost ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(favHost)}&sz=32" onerror="this.style.display='none'" alt="">` : `<i class="fas ${link.icon}"></i>`;
+        return `<a class="bh-mc-link" href="${dashboardSafe(link.url)}" target="_blank" rel="noreferrer">${fav}<span>${dashboardSafe(link.label)}</span></a>`;
+    }).join('');
+
+    const userName = currentUser?.full_name || currentUser?.email || '';
+    const userRole = currentUser?.role === 'admin' ? 'Sistem Yöneticisi' : (currentUser?.company_name || 'Marka Kullanıcısı');
+    const periodChip = periodLabel ? `<span class="bh-mc-period">${dashboardSafe(periodLabel)}</span>` : '';
+
+    const brandSelector = brandOptions
+        ? `<label class="bh-mc-brand-select">
+                <select id="brandHubBrandFilter" onchange="onBrandHubBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
+                    ${brandOptions}
+                </select>
+            </label>`
+        : '';
+
+    const heroTitle = options.heroTitle || '';
+    const showFilterToggle = options.showFilterToggle === true;
+    const filterToggleHtml = showFilterToggle
+        ? `<button type="button" class="bh-mc-filter-toggle" onclick="togglePageFilterPanel(this)" aria-label="Filtreleri aç/kapat" title="Filtreleri aç/kapat"><i class="fas fa-sliders-h"></i></button>`
+        : '';
+
+    return `
+        <header class="bh-mc-bar" aria-label="${dashboardSafe(brandName)} ${dashboardSafe(pageLabel)} banner">
+            <div class="bh-mc-brand">
+                ${filterToggleHtml}
+                <span class="bh-mc-logo-wrap">${logoHtml}</span>
+                <span class="bh-mc-divider"></span>
+                <div class="bh-mc-titles">
+                    <strong>${dashboardSafe(brandName)}</strong>
+                    <small>${dashboardSafe(pageLabel)}</small>
+                </div>
+            </div>
+            ${heroTitle
+                ? `<div class="bh-mc-page-title">${dashboardSafe(heroTitle)}</div>`
+                : `<div class="bh-mc-quick">${quickLinksHtml}</div>`}
+            <div class="bh-mc-actions">
+                ${periodChip}
+                ${brandSelector}
+                ${userName ? `<div class="bh-mc-user-block"><span class="bh-mc-user">${dashboardSafe(userName)}</span><small class="bh-mc-user-role">${dashboardSafe(userRole)}</small></div>` : ''}
+            </div>
+        </header>
+    `;
+}
+
+// Banner filter butonu: aktif sayfanın filter panelini bulur ve toggle eder
+function togglePageFilterPanel(btn) {
+    const selectors = [
+        '.tmx-filter-panel',
+        '.dbx-filter-panel',
+        '.mi-filter-panel',
+        '.ptx-filter-row',
+        '.pdx-control-row',
+        '.mfx-control-bar',
+        '.bm-filter-bar',
+        '[data-page-filter-panel]',
+        '.filter-bar'
+    ];
+    let target = null;
+    for (const sel of selectors) {
+        target = document.querySelector(sel);
+        if (target) break;
+    }
+    if (!target) return;
+    const collapsed = target.classList.toggle('is-collapsed');
+    if (btn) btn.classList.toggle('is-active', !collapsed);
+}
+
+// Sayfa adı → banner ortasındaki hero başlığı (sayfa içinde tekrarlanmasın)
+const PAGE_HERO_TITLES = {
+    'brand-hub': '',
+    dashboard: 'Yönetici Görünümü',
+    historical: 'Traktör Pazarı Tarihsel Gelişimi',
+    'total-market': 'Toplam Pazar Karşılaştırması',
+    'brand-summary': 'Marka ve Distribütör Ekosistemi',
+    distributor: 'Marka ve Distribütör Ekosistemi',
+    'hp-segment': 'HP Segment Komuta Merkezi',
+    'hp-top': 'HP Segment Komuta Merkezi',
+    'hp-top-il': 'HP Segment Komuta Merkezi',
+    'hp-top-model': 'HP Segment Komuta Merkezi',
+    'hp-top-il-cat': 'HP Segment Komuta Merkezi',
+    'obt-hp': 'HP Segment Komuta Merkezi',
+    'brand-hp': 'HP Segment Komuta Merkezi',
+    'hp-brand-matrix': 'HP Segment Komuta Merkezi',
+    'prov-top-brand': 'İl Liderlik Merkezi',
+    'brand-compare': 'Marka Karşılaştırma Merkezi',
+    benchmark: 'Marka Karşılaştırma Merkezi',
+    'regional-index': 'Bölgesel Mekanizasyon Komuta Merkezi',
+    'model-region': 'Model-Bölge Analizi',
+    'map-full': 'Türkiye Satış Haritası',
+    map: 'Türkiye Satış Haritası',
+    sales: 'Satış Analizi',
+    competitors: 'Rakip Analizi',
+    models: 'Model Karşılaştırma Stüdyosu',
+    'model-intel': 'Model Kataloğu',
+    province: 'İl Agro Intelligence',
+    weather: 'İklim Komuta Merkezi',
+    'media-watch': 'Marka Medya Radarı',
+    'ai-insights': 'AI Öngörüler',
+    subscription: 'Abonelik',
+    tarmakbir: 'TarmakBir Komuta Merkezi',
+    settings: 'Hesap Ayarları'
+};
+
+// Filtre paneli olan sayfalar (banner solunda toggle butonu gözükür)
+const PAGES_WITH_FILTER = new Set([
+    'dashboard', 'map', 'map-full', 'brand-summary', 'distributor',
+    'hp-segment', 'hp-top', 'hp-top-il', 'hp-top-model', 'hp-top-il-cat',
+    'obt-hp', 'brand-hp', 'hp-brand-matrix', 'prov-top-brand',
+    'brand-compare', 'benchmark', 'regional-index', 'model-region',
+    'sales', 'competitors', 'model-intel', 'province',
+    'weather', 'ai-insights', 'tarmakbir', 'tarmakbir2',
+    'historical', 'total-market'
+]);
+
+// Global banner: her sayfada navigateTo tarafından çağrılır
+function renderGlobalBrandBanner(pageLabel, page) {
+    const host = document.getElementById('brandBannerHost');
+    if (!host) return;
+    const brand = activeBrandContext || currentUser?.brand || (allBrands && allBrands[0]) || {};
+    const brandOptions = currentUser?.role === 'admin'
+        ? (allBrands || []).map(b => `<option value="${b.id}" ${String(b.id) === String(brand?.id || '') ? 'selected' : ''}>${dashboardSafe(b.name)}</option>`).join('')
+        : '';
+    const heroTitle = PAGE_HERO_TITLES[page] !== undefined ? PAGE_HERO_TITLES[page] : '';
+    host.innerHTML = buildBrandStageHtml(brand, {
+        global: true,
+        pageLabel: (pageLabel || 'Komuta Merkezi').toUpperCase(),
+        periodLabel: getCurrentPeriodLabel(),
+        brandOptions,
+        heroTitle,
+        showFilterToggle: PAGES_WITH_FILTER.has(page)
+    });
+    // Superuser önizleme paket switcher
+    renderSuperuserPreviewSwitch();
+}
+
+function renderSuperuserPreviewSwitch() {
+    if (!currentUser?.is_superuser) return;
+    const host = document.getElementById('brandBannerHost');
+    if (!host || host.querySelector('.superuser-preview-switch')) return;
+    const current = currentUser.preview_plan_slug || '';
+    const div = document.createElement('div');
+    div.className = 'superuser-preview-switch';
+    div.innerHTML = `
+        <span class="sup-pre-label"><i class="fas fa-crown"></i> Önizleme:</span>
+        <select onchange="onSuperuserPreviewChange(this.value)">
+            <option value="">Tüm yetkiler (admin)</option>
+            <option value="starter" ${current === 'starter' ? 'selected' : ''}>Starter</option>
+            <option value="growth" ${current === 'growth' ? 'selected' : ''}>Growth</option>
+            <option value="enterprise" ${current === 'enterprise' ? 'selected' : ''}>Enterprise</option>
+        </select>
+    `;
+    host.appendChild(div);
+}
+
+async function onSuperuserPreviewChange(slug) {
+    try {
+        await API.setPreviewPlan(slug || null);
+        if (currentUser) currentUser.preview_plan_slug = slug || null;
+        window._myFeaturesCache = null;
+        API.clearCache?.();
+        location.reload();
+    } catch (err) {
+        alert('Önizleme değiştirilemedi: ' + (err.message || ''));
+    }
+}
+
+function getCurrentPeriodLabel() {
+    const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+    const year = selectedYear || new Date().getFullYear();
+    return `${year}`;
+}
+
+function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
+    const brand = portalData?.brand || {};
+    const profile = portalData?.profile || {};
+    const items = portalData?.items || [];
+    const contacts = portalData?.contacts || [];
+    const report = portalData?.executive_report || {};
+    const sales = report?.sales || {};
+    const portfolio = report?.portfolio || {};
+    const corporate = report?.corporate || {};
+    const brandName = brand.name || 'Marka';
+    const theme = setActiveBrandContext(brand, { persist: true }) || getBrandThemeProfile(brand);
+    const reportLinks = report?.source_links || [];
+    const reportDocumentLink = reportLinks.find(item => /faaliyet|rapor|report/i.test(item.label || ''))?.url || '';
+    const news = (report?.news && report.news.length > 0)
+        ? report.news
+        : items.slice(0, 6).map(item => ({
+            date: item.published_at || null,
+            title: item.title || '-',
+            summary: item.summary || '',
+            url: item.cta_url || ''
+        }));
+    const roadmap = report?.automation_roadmap || [];
+    const sourceLinks = reportLinks;
+    charts.brandHubMix?.destroy?.();
+    const stageHtml = buildBrandStageHtml(brand, {
+        profile,
+        periodLabel: report?.latest_period?.label || '',
+        brandOptions
+    });
+
+    const quickLinks = [
+        profile.website_url ? `<a class="bh-link-btn" href="${profile.website_url}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
+        profile.dealer_locator_url ? `<a class="bh-link-btn" href="${profile.dealer_locator_url}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
+        profile.portal_url ? `<a class="bh-link-btn" href="${profile.portal_url}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
+        reportDocumentLink ? `<a class="bh-link-btn" href="${reportDocumentLink}" target="_blank" rel="noreferrer"><i class="fas fa-file-lines"></i><span>Rapor / Kaynak</span></a>` : ''
+    ].filter(Boolean).join('');
+
+    const heroStats = (profile.hero_stats || []).map(item => `
+        <div class="bh-stat-chip">
+            <span>${dashboardSafe(item.label || '-')}</span>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <small>${dashboardSafe(item.note || '')}</small>
+        </div>
+    `).join('');
+
+    const freshnessChips = (report.freshness || []).map(item => `
+        <div class="bhx-fresh-chip">
+            <span>${dashboardSafe(item.label || '-')}</span>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <small>${dashboardSafe(item.note || '')}</small>
+        </div>
+    `).join('');
+
+    const kpiCards = (report.executive_kpis || []).map(item => `
+        <article class="bhx-kpi-card">
+            <span>${dashboardSafe(item.label || '-')}</span>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <small>${dashboardSafe(item.note || '')}</small>
+        </article>
+    `).join('');
+
+    const storylineCards = (report.storyline_cards || []).map(item => `
+        <article class="bhx-story-card">
+            <span>${dashboardSafe(item.eyebrow || 'Analiz')}</span>
+            <h4>${dashboardSafe(item.title || '-')}</h4>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <p>${dashboardSafe(item.note || '')}</p>
+        </article>
+    `).join('');
+
+    const mixGroups = [
+        { title: 'Kategori dağılımı', items: sales.category_mix || [] },
+        { title: 'Kabin dağılımı', items: sales.cabin_mix || [] },
+        { title: 'Çekiş dağılımı', items: sales.drive_mix || [] },
+        { title: 'HP merkezi', items: sales.hp_mix || [] },
+        { title: 'Şanzıman yapısı', items: sales.gear_mix || [] }
+    ].map(group => `
+        <div class="bhx-mix-card">
+            <div class="bhx-panel-minihead">
+                <h4>${dashboardSafe(group.title)}</h4>
+                <span>${dashboardSafe(group.items?.[0]?.label || 'Veri')}</span>
+            </div>
+            <div class="bhx-mix-list">
+                ${group.items.length > 0 ? group.items.slice(0, 5).map(item => `
+                    <div class="bhx-mix-row">
+                        <span>${dashboardSafe(item.label || '-')}</span>
+                        <div class="bhx-mix-bar"><b style="width:${Math.max(item.share_pct || 0, 6)}%"></b></div>
+                        <strong>${dashboardSafe(item.share_pct != null ? `${item.share_pct}%` : '-')}</strong>
+                    </div>
+                `).join('') : '<div class="bh-empty">Bu kırılım için veri yok.</div>'}
+            </div>
+        </div>
+    `).join('');
+
+    const provinceRows = (sales.top_provinces || []).map((item, index) => `
+        <div class="bh-rank-row">
+            <span class="bh-rank-index">${index + 1}</span>
+            <div>
+                <strong>${dashboardSafe(item.province_name || '-')}</strong>
+                <small>${dashboardSafe(item.region || '')}</small>
+            </div>
+            <div class="bhx-rank-meta">
+                <b>${formatNumber(item.total_sales || 0)}</b>
+                <small>${dashboardSafe(item.share_pct != null ? `${item.share_pct}% pay` : '-')}</small>
+            </div>
+        </div>
+    `).join('');
+
+    const regionRows = (sales.regional_momentum || []).map(item => `
+        <div class="bhx-region-row">
+            <div>
+                <strong>${dashboardSafe(item.region_name || '-')}</strong>
+                <small>${formatNumber(item.current_sales || 0)} adet</small>
+            </div>
+            <b class="${(item.yoy_pct || 0) >= 0 ? 'is-up' : 'is-down'}">${dashboardSafe(formatSignedPct(item.yoy_pct, 1))}</b>
+        </div>
+    `).join('');
+
+    const gainerRows = (sales.province_gainers || []).map(item => `
+        <div class="bhx-watch-row">
+            <strong>${dashboardSafe(item.province_name || '-')}</strong>
+            <span>${dashboardSafe(formatSignedPct(item.yoy_pct, 1))}</span>
+        </div>
+    `).join('');
+
+    const declinerRows = (sales.province_decliners || []).map(item => `
+        <div class="bhx-watch-row bhx-watch-row--warn">
+            <strong>${dashboardSafe(item.province_name || '-')}</strong>
+            <span>${dashboardSafe(formatSignedPct(item.yoy_pct, 1))}</span>
+        </div>
+    `).join('');
+
+    const concentrationCards = [
+        { label: 'Top 3 il yoğunluğu', value: sales.top3_share_pct != null ? `${sales.top3_share_pct}%` : '-', note: `${formatNumber(sales.top3_qty || 0)} adet` },
+        { label: 'Top 10 il yoğunluğu', value: sales.top10_share_pct != null ? `${sales.top10_share_pct}%` : '-', note: `${formatNumber(sales.top10_qty || 0)} adet` },
+        { label: 'Aktif il yaygınlığı', value: formatNumber(sales.active_provinces || 0), note: 'Tek ile sıkışmayan dağılım' },
+        { label: 'Pay farkı', value: dashboardSafe(formatSignedPoints(sales.share_delta_pp, 2)), note: 'Geçen yıl aynı döneme göre' }
+    ].map(item => `
+        <div class="bhx-stat-card">
+            <span>${dashboardSafe(item.label)}</span>
+            <strong>${dashboardSafe(item.value)}</strong>
+            <small>${dashboardSafe(item.note)}</small>
+        </div>
+    `).join('');
+
+    const portfolioStats = [
+        { label: 'Teknik model', value: formatNumber(portfolio.technical_model_count || 0), note: `${formatNumber(portfolio.technical_variant_count || 0)} varyant izi` },
+        { label: 'Ortalama HP', value: portfolio.avg_hp ? `${portfolio.avg_hp} HP` : '-', note: 'Teknik katalog ortalaması' },
+        { label: 'Ortalama fiyat', value: fmtPrice(portfolio.avg_price_usd), note: portfolio.price_per_hp_usd ? `${formatNumber(portfolio.price_per_hp_usd)} $ / HP` : 'Fiyat tabanı' },
+        { label: 'Fiyat bandı', value: formatUsdBand(portfolio.min_price_usd, portfolio.max_price_usd), note: 'Teknik veri tablosu' }
+    ].map(item => `
+        <div class="bhx-stat-card">
+            <span>${dashboardSafe(item.label)}</span>
+            <strong>${dashboardSafe(item.value)}</strong>
+            <small>${dashboardSafe(item.note)}</small>
+        </div>
+    `).join('');
+
+    const configRows = (portfolio.configuration_split || []).map(item => `
+        <div class="bhx-config-row">
+            <div>
+                <strong>${dashboardSafe(item.label || '-')}</strong>
+                <small>${dashboardSafe(item.protection || '-')} / ${dashboardSafe(item.drive_type || '-')}</small>
+            </div>
+            <b>${formatNumber(item.model_count || 0)}</b>
+        </div>
+    `).join('');
+
+    const topModelCards = (portfolio.top_models || []).map(item => `
+        <article class="bhx-model-card" ${modelIntelAttrs(brand?.name || '', item.model_name || '', getKnownModelIntelSource(brand?.name || '', item.model_name || ''))} data-model-intel-hover="true">
+            <div class="bhx-model-head">
+                <strong>${dashboardSafe(item.model_name || '-')}</strong>
+                <span>${dashboardSafe(item.share_pct != null ? `${item.share_pct}% pay` : '-')}</span>
+            </div>
+            <div class="bhx-model-metrics">
+                <span>${item.avg_hp ? `${item.avg_hp} HP` : 'HP yok'}</span>
+                <span>${formatUsdBand(item.min_price_usd, item.max_price_usd)}</span>
+            </div>
+            <div class="bh-tag-list">
+                ${(item.drive_types || []).slice(0, 2).map(value => `<span class="bh-tag">${dashboardSafe(value)}</span>`).join('')}
+                ${(item.protections || []).slice(0, 2).map(value => `<span class="bh-tag">${dashboardSafe(value)}</span>`).join('')}
+                ${(item.gear_configs || []).slice(0, 2).map(value => `<span class="bh-tag">${dashboardSafe(value)}</span>`).join('')}
+            </div>
+        </article>
+    `).join('');
+
+    const technicalRows = (portfolio.technical_matrix || []).map(item => `
+        <div class="bhx-tech-row">
+            <div class="bhx-tech-main">
+                <strong>${dashboardSafe(item.model_name || '-')}</strong>
+                <small>${item.avg_hp ? `${item.avg_hp} HP` : 'HP yok'} • ${dashboardSafe(item.origin || 'Katalog')}</small>
+            </div>
+            <div class="bhx-tech-spec">${formatUsdBand(item.min_price_usd, item.max_price_usd)}</div>
+            <div class="bhx-tech-spec">${dashboardSafe((item.drive_types || []).join(', ') || '-')}</div>
+            <div class="bhx-tech-spec">${dashboardSafe((item.protections || []).join(', ') || '-')}</div>
+            <div class="bhx-tech-spec">${dashboardSafe((item.gear_configs || []).join(', ') || '-')}</div>
+        </div>
+    `).join('');
+
+    const governanceCards = [...(corporate.governance || []), ...(corporate.official_2025_snapshot || [])].map(item => `
+        <div class="bhx-stat-card">
+            <span>${dashboardSafe(item.label || '-')}</span>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <small>${dashboardSafe(item.note || '')}</small>
+        </div>
+    `).join('');
+
+    const facilityCards = [...(corporate.facilities || []), ...(corporate.footprint || [])].map(item => `
+        <article class="bhx-facility-card">
+            <span>${dashboardSafe(item.title || item.label || '-')}</span>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <small>${dashboardSafe(item.note || '')}</small>
+        </article>
+    `).join('');
+
+    const ownershipRows = (corporate.ownership || []).map(item => `
+        <div class="bhx-owner-row">
+            <div>
+                <strong>${dashboardSafe(item.name || '-')}</strong>
+                <small>Oy ${dashboardSafe(item.vote_pct != null ? `${item.vote_pct}%` : '-')}</small>
+            </div>
+            <b>${dashboardSafe(item.share_pct != null ? `${item.share_pct}%` : '-')}</b>
+        </div>
+    `).join('');
+
+    const leadershipRows = [...(corporate.board || []), ...(corporate.executive_team || [])].map(item => `
+        <div class="bhx-person-row">
+            <strong>${dashboardSafe(item.name || '-')}</strong>
+            <span>${dashboardSafe(item.title || '')}</span>
+        </div>
+    `).join('');
+
+    const timelineRows = (corporate.timeline || []).map(item => `
+        <div class="bhx-timeline-row">
+            <span>${dashboardSafe(item.year || '-')}</span>
+            <div>
+                <strong>${dashboardSafe(item.title || '-')}</strong>
+                <small>${dashboardSafe(item.note || '')}</small>
+            </div>
+        </div>
+    `).join('');
+
+    const productFocusRows = (corporate.product_focus || []).map(item => `
+        <div class="bhx-watch-card">
+            <strong>${dashboardSafe(item.title || '-')}</strong>
+            <p>${dashboardSafe(item.note || '')}</p>
+        </div>
+    `).join('');
+
+    const exportWatchRows = (corporate.export_watch || []).map(item => `
+        <div class="bhx-watch-card ${item.tone === 'opportunity' ? 'is-positive' : ''}">
+            <strong>${dashboardSafe(item.title || '-')}</strong>
+            <p>${dashboardSafe(item.text || '')}</p>
+            ${item.source_url ? `<a href="${item.source_url}" target="_blank" rel="noreferrer">Resmi kaynak</a>` : ''}
+        </div>
+    `).join('');
+
+    const newsRows = news.map(item => `
+        <article class="bhx-news-card">
+            <span>${item.date ? new Date(item.date).toLocaleDateString('tr-TR') : 'Resmi kaynak'}</span>
+            <h4>${dashboardSafe(item.title || '-')}</h4>
+            <p>${dashboardSafe(item.summary || '')}</p>
+            ${item.url ? `<a href="${item.url}" target="_blank" rel="noreferrer">Habere git</a>` : ''}
+        </article>
+    `).join('');
+
+    const roadmapRows = roadmap.map(item => `
+        <article class="bhx-roadmap-card">
+            <span>${dashboardSafe(item.owner || 'Otomasyon')}</span>
+            <h4>${dashboardSafe(item.title || '-')}</h4>
+            <p>${dashboardSafe(item.summary || '')}</p>
+        </article>
+    `).join('');
+
+    const sourceRowHtml = sourceLinks.map(item => `
+        <a class="bh-source-link" href="${item.url}" target="_blank" rel="noreferrer">${dashboardSafe(item.label || item.url || 'Kaynak')}</a>
+    `).join('');
+
+    const contactCards = [
+        ...(contacts || []),
+        corporate.investor_contact ? {
+            contact_type: 'yatırımcı',
+            label: corporate.investor_contact.name,
+            city: 'İstanbul',
+            title: corporate.investor_contact.title,
+            phone: corporate.investor_contact.phone,
+            email: corporate.investor_contact.email,
+            url: corporate.investor_contact.url
+        } : null
+    ].filter(Boolean).map(item => `
+        <article class="bh-contact-card">
+            <div class="bh-contact-meta">
+                <span>${dashboardSafe(item.contact_type || 'iletişim')}</span>
+                <small>${dashboardSafe(item.city || '')}</small>
+            </div>
+            <h4>${dashboardSafe(item.label || '-')}</h4>
+            <p>${dashboardSafe(item.title || '')}</p>
+            <div class="bh-contact-stack">
+                ${item.phone ? `<a href="tel:${item.phone}">${dashboardSafe(item.phone)}</a>` : ''}
+                ${item.email ? `<a href="mailto:${item.email}">${dashboardSafe(item.email)}</a>` : ''}
+                ${item.url ? `<a href="${item.url}" target="_blank" rel="noreferrer">Bağlantı</a>` : ''}
+            </div>
+        </article>
+    `).join('');
+
+    pageContent.innerHTML = `
+        <div class="bh-shell bh-shell--executive">
+            ${stageHtml}
+
+            <section class="bh-hero bhx-hero">
+                <div class="bh-hero-shell bh-hero-shell-wide">
+                    <div class="bh-hero-content">
+                        <div class="bh-hero-main">
+                            <div class="bh-hero-copy">
+                                <span class="bh-overline">${dashboardSafe(report?.latest_period?.label || 'Güncel dönem')}</span>
+                                <h3>${dashboardSafe(profile.hero_title || `${brandName} Marka Merkezi`)}</h3>
+                                <p>${dashboardSafe(report.hero_note || profile.hero_subtitle || profile.overview || '')}</p>
+                            </div>
+                        </div>
+                        <div class="bh-hero-stats">
+                            ${heroStats || '<div class="bh-empty">Marka özel istatistik kaydı bulunamadı.</div>'}
+                        </div>
+                        <div class="bhx-fresh-grid">
+                            ${freshnessChips}
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="bhx-kpi-grid">
+                ${kpiCards}
+            </section>
+
+            <section class="bhx-story-grid">
+                ${storylineCards}
+            </section>
+
+            <section class="bh-grid bh-grid-wide">
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Aylık ritim</h3>
+                            <p>${dashboardSafe(report?.latest_period?.label || '')} penceresinde ${dashboardSafe(brandName)} ve önceki yıl kıyası</p>
+                        </div>
+                    </div>
+                    <div class="bh-chart-wrap">
+                        <canvas id="brandHubTrendChart"></canvas>
+                    </div>
+                </article>
+
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Yıllık güç eğrisi</h3>
+                            <p>Mevcut veri setinde marka hacmi ve pazar payı birlikte okunur</p>
+                        </div>
+                    </div>
+                    <div class="bh-chart-wrap">
+                        <canvas id="brandHubYearlyChart"></canvas>
+                    </div>
+                </article>
+            </section>
+
+            <section class="bhx-grid bhx-grid-market">
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>İl ve yaygınlık okuması</h3>
+                            <p>Top 10 il dağılımı, yoğunluk ve saha denge seviyesi</p>
+                        </div>
+                    </div>
+                    <div class="bh-rank-list">
+                        ${provinceRows || '<div class="bh-empty">İl bazlı veri bulunamadı.</div>'}
+                    </div>
+                    <div class="bhx-stat-grid">
+                        ${concentrationCards}
+                    </div>
+                </article>
+
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Momentum ve bölge hızı</h3>
+                            <p>Öne çıkan il momentumu ile bölgesel yöne bakış</p>
+                        </div>
+                    </div>
+                    <div class="bh-chart-wrap bh-chart-wrap-sm">
+                        <canvas id="brandHubProvinceChart"></canvas>
+                    </div>
+                    <div class="bhx-watch-layout">
+                        <div>
+                            <h4>Yükselen iller</h4>
+                            <div class="bhx-watch-list">
+                                ${gainerRows || '<div class="bh-empty">Yükselen il sinyali yok.</div>'}
+                            </div>
+                        </div>
+                        <div>
+                            <h4>Baskı altındaki iller</h4>
+                            <div class="bhx-watch-list">
+                                ${declinerRows || '<div class="bh-empty">Baskı altındaki il sinyali yok.</div>'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bhx-region-list">
+                        ${regionRows || '<div class="bh-empty">Bölgesel momentum verisi bulunamadı.</div>'}
+                    </div>
+                </article>
+            </section>
+
+            <section class="bhx-grid bhx-grid-signal">
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Segment profili</h3>
+                            <p>Kategori, çekiş, kabin, HP ve şanzıman kırılımı</p>
+                        </div>
+                    </div>
+                    <div class="bhx-mix-grid">
+                        ${mixGroups}
+                    </div>
+                </article>
+
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Portföy ekonomisi</h3>
+                            <p>Teknik katalog, fiyat seviyesi ve varyant yapısı</p>
+                        </div>
+                    </div>
+                    <div class="bhx-stat-grid">
+                        ${portfolioStats}
+                    </div>
+                    <div class="bhx-config-list">
+                        ${configRows || '<div class="bh-empty">Teknik konfigürasyon bilgisi yok.</div>'}
+                    </div>
+                </article>
+            </section>
+
+            <section class="bhx-grid bhx-grid-models">
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>En çok tescil alan modeller</h3>
+                            <p>TÜİK verisi ile teknik katalogun kesişim noktası</p>
+                        </div>
+                    </div>
+                    <div class="bhx-model-grid">
+                        ${topModelCards || '<div class="bh-empty">Model liderliği verisi bulunamadı.</div>'}
+                    </div>
+                </article>
+
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Teknik matris</h3>
+                            <p>Katalogtaki model omurgası, güç, fiyat ve konfigürasyon yapısı</p>
+                        </div>
+                    </div>
+                    <div class="bhx-tech-table">
+                        <div class="bhx-tech-row bhx-tech-row--head">
+                            <div class="bhx-tech-main">Model</div>
+                            <div class="bhx-tech-spec">Fiyat</div>
+                            <div class="bhx-tech-spec">Çekiş</div>
+                            <div class="bhx-tech-spec">Koruma</div>
+                            <div class="bhx-tech-spec">Vites</div>
+                        </div>
+                        ${technicalRows || '<div class="bh-empty">Teknik satır bulunamadı.</div>'}
+                    </div>
+                </article>
+            </section>
+
+            <section class="bhx-grid bhx-grid-corporate">
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Kurumsal dosya</h3>
+                            <p>Sermaye, operasyon ve resmi 2025 görünümü aynı pencerede</p>
+                        </div>
+                    </div>
+                    <div class="bhx-stat-grid">
+                        ${governanceCards}
+                    </div>
+                    <div class="bhx-facility-grid">
+                        ${facilityCards}
+                    </div>
+                </article>
+
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Ortaklık ve yönetim</h3>
+                            <p>Sahiplik yapısı, kurul kompozisyonu ve yatırımcı iletişim noktası</p>
+                        </div>
+                    </div>
+                    <div class="bhx-owner-list">
+                        ${ownershipRows || '<div class="bh-empty">Ortaklık yapısı verisi yok.</div>'}
+                    </div>
+                    <div class="bhx-person-list">
+                        ${leadershipRows || '<div class="bh-empty">Yönetim kadrosu verisi yok.</div>'}
+                    </div>
+                    <div class="bh-contact-grid">
+                        ${contactCards || '<div class="bh-empty">İletişim verisi yok.</div>'}
+                    </div>
+                </article>
+            </section>
+
+            <section class="bhx-grid bhx-grid-future">
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Tarihçe, ürün odağı ve dış pazar sinyali</h3>
+                            <p>Markanın hikayesi ile gelecek açılımları aynı sayfada okunur</p>
+                        </div>
+                    </div>
+                    <div class="bhx-timeline">
+                        ${timelineRows || '<div class="bh-empty">Zaman çizelgesi yok.</div>'}
+                    </div>
+                    <div class="bhx-watch-grid">
+                        ${productFocusRows}
+                        ${exportWatchRows}
+                    </div>
+                </article>
+
+                <article class="bh-panel bhx-panel">
+                    <div class="bh-panel-head">
+                        <div>
+                            <h3>Resmi akış ve otomasyon katmanı</h3>
+                            <p>Bugünün resmi hikayesi, yarının n8n istihbarat motoruyla aynı çerçevede</p>
+                        </div>
+                    </div>
+                    <div class="bhx-news-grid">
+                        ${newsRows || '<div class="bh-empty">Resmi haber akışı yok.</div>'}
+                    </div>
+                    <div class="bhx-roadmap-grid">
+                        ${roadmapRows || '<div class="bh-empty">Otomasyon yol haritası tanımlı değil.</div>'}
+                    </div>
+                    <div class="bh-source-wrap">
+                        ${sourceRowHtml}
+                    </div>
+                </article>
+            </section>
+        </div>
+    `;
+
+    renderBrandHubExecutiveTrendChart(report, brandName);
+    renderBrandHubExecutiveYearlyChart(report, brandName);
+    renderBrandHubProvinceChart(report);
+}
+
+async function loadBrandHubPage() {
+    const pageContent = document.getElementById('pageContent');
+    if (!pageContent) return;
+
+    try {
+        const state = ensureBrandHubState();
+        const effectiveBrandId = currentUser?.role === 'admin'
+            ? (state.brand_id || String(allBrands?.[0]?.id || ''))
+            : String(currentUser?.brand_id || '');
+
+        if (!effectiveBrandId) {
+            pageContent.innerHTML = `
+                <div class="error-state">
+                    <i class="fas fa-circle-exclamation"></i>
+                    <h3>Marka seçimi bulunamadı</h3>
+                    <p>Marka Merkezi için bir marka atanmış olmalı.</p>
+                </div>
+            `;
+            return;
+        }
+
+        state.brand_id = String(effectiveBrandId);
+        const portalData = await API.getBrandPortal(effectiveBrandId);
+        const brand = portalData?.brand || currentUser?.brand || {};
+        const theme = setActiveBrandContext(brand, { persist: true }) || getBrandThemeProfile(brand);
+        const sales = portalData?.sales || {};
+        const catalog = portalData?.catalog_summary || {};
+        const profile = portalData?.profile || {};
+        const items = portalData?.items || [];
+        const contacts = portalData?.contacts || [];
+        const models = portalData?.showcase_models || [];
+        const periodLabel = portalData?.latest_period?.label || 'Güncel dönem';
+        const focusRegions = profile.focus_regions || [];
+
+        const brandOptions = currentUser?.role === 'admin'
+            ? (allBrands || []).map(item => `
+                <option value="${item.id}" ${String(item.id) === String(state.brand_id) ? 'selected' : ''}>
+                    ${dashboardSafe(item.name)}
+                </option>
+            `).join('')
+            : `<option value="${dashboardSafe(currentUser?.brand_id || '')}">${dashboardSafe(currentUser?.brand?.name || brand.name || 'Marka')}</option>`;
+
+        if (portalData?.executive_report) {
+            renderExecutiveBrandHub(pageContent, portalData, brandOptions);
+            return;
+        }
+
+        const stageHtml = buildBrandStageHtml(brand, {
+            profile,
+            periodLabel,
+            brandOptions
+        });
+
+        const quickLinks = [
+            profile.website_url ? `<a class="bh-link-btn" href="${profile.website_url}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
+            profile.dealer_locator_url ? `<a class="bh-link-btn" href="${profile.dealer_locator_url}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
+            profile.portal_url ? `<a class="bh-link-btn" href="${profile.portal_url}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
+            profile.price_list_url ? `<a class="bh-link-btn" href="${profile.price_list_url}" target="_blank" rel="noreferrer"><i class="fas fa-file-invoice-dollar"></i><span>Fiyat / Katalog</span></a>` : ''
+        ].filter(Boolean).join('');
+
+        const kpiCards = [
+            { label: 'Dönem satış hacmi', value: formatNumber(sales.total_sales || 0), meta: periodLabel },
+            { label: 'Yıllık değişim', value: sales.yoy_pct !== null && sales.yoy_pct !== undefined ? `${sales.yoy_pct > 0 ? '+' : ''}${sales.yoy_pct}%` : '-', meta: 'Aynı döneme göre' },
+            { label: 'Pazar payı', value: sales.market_share_pct !== null && sales.market_share_pct !== undefined ? `${sales.market_share_pct}%` : '-', meta: sales.ranking ? `${sales.ranking}. sırada` : 'Sıra bilgisi yok' },
+            { label: 'Aktif il', value: formatNumber(sales.active_provinces || 0), meta: 'Son dönem saha izi' },
+            { label: 'Mevcut model', value: formatNumber(catalog.model_count || 0), meta: catalog.avg_hp ? `${catalog.avg_hp} HP ort.` : 'Katalog özeti' },
+            { label: 'Fiyat bandı', value: catalog.min_price_usd && catalog.max_price_usd ? `${fmtPrice(catalog.min_price_usd)} - ${fmtPrice(catalog.max_price_usd)}` : '-', meta: catalog.max_hp ? `${catalog.max_hp} HP tepe` : 'Fiyat bilgisi yok' }
+        ].map(card => `
+            <div class="bh-kpi-card">
+                <span>${dashboardSafe(card.label)}</span>
+                <strong>${dashboardSafe(card.value)}</strong>
+                <small>${dashboardSafe(card.meta)}</small>
+            </div>
+        `).join('');
+
+        const heroStats = (profile.hero_stats || []).map(item => `
+            <div class="bh-stat-chip">
+                <span>${dashboardSafe(item.label || '-')}</span>
+                <strong>${dashboardSafe(item.value || '-')}</strong>
+                <small>${dashboardSafe(item.note || '')}</small>
+            </div>
+        `).join('');
+
+        const spotlightItems = items.slice(0, 4).map(item => `
+            <article class="bh-story-card ${item.is_featured ? 'is-featured' : ''}">
+                <div class="bh-story-meta">
+                    <span>${dashboardSafe(item.item_type || 'güncelleme')}</span>
+                    <small>${item.published_at ? new Date(item.published_at).toLocaleDateString('tr-TR') : 'Resmi kaynak'}</small>
+                </div>
+                <h4>${dashboardSafe(item.title || '-')}</h4>
+                <p>${dashboardSafe(item.summary || '')}</p>
+                ${item.cta_url ? `<a href="${item.cta_url}" target="_blank" rel="noreferrer">${dashboardSafe(item.cta_label || 'Detay')}</a>` : ''}
+            </article>
+        `).join('');
+
+        const productLineBlocks = (profile.product_lines || []).map(line => `
+            <div class="bh-line-card">
+                <div class="bh-line-head">
+                    <strong>${dashboardSafe(line.label || '-')}</strong>
+                </div>
+                <div class="bh-tag-list">
+                    ${(line.items || []).map(item => `<span class="bh-tag">${dashboardSafe(item)}</span>`).join('')}
+                </div>
+            </div>
+        `).join('');
+
+        const modelCards = models.length > 0
+            ? models.map(model => `
+                <article class="bh-model-card">
+                    <div class="bh-model-title">
+                        <strong>${dashboardSafe(model.model_name)}</strong>
+                        <span>${dashboardSafe(model.category || '-')} • ${dashboardSafe(model.drive_type || '-')} • ${dashboardSafe(model.cabin_type || '-')}</span>
+                    </div>
+                    <div class="bh-model-metrics">
+                        <span>${model.horsepower ? `${model.horsepower} HP` : '-'}</span>
+                        <span>${model.price_usd ? fmtPrice(model.price_usd) : 'Fiyat yok'}</span>
+                    </div>
+                </article>
+            `).join('')
+            : '<div class="bh-empty">Bu marka için aktif model katalog kaydı bulunamadı.</div>';
+
+        const provinceRows = (sales.top_provinces || []).length > 0
+            ? sales.top_provinces.map((item, index) => `
+                <div class="bh-rank-row">
+                    <span class="bh-rank-index">${index + 1}</span>
+                    <div>
+                        <strong>${dashboardSafe(item.province_name)}</strong>
+                        <small>${dashboardSafe(item.region_name || '')}</small>
+                    </div>
+                    <b>${formatNumber(item.total_sales || 0)}</b>
+                </div>
+            `).join('')
+            : '<div class="bh-empty">İl bazlı veri bulunamadı.</div>';
+
+        const regionPills = focusRegions.length > 0
+            ? focusRegions.map(item => `
+                <div class="bh-focus-pill">
+                    <strong>${dashboardSafe(item.region || '-')}</strong>
+                    <span>${dashboardSafe(item.note || '')}</span>
+                </div>
+            `).join('')
+            : '<div class="bh-empty">Bölge odağı tanımlı değil.</div>';
+
+        const contactCards = contacts.length > 0
+            ? contacts.map(contact => `
+                <article class="bh-contact-card">
+                    <div class="bh-contact-meta">
+                        <span>${dashboardSafe(contact.contact_type || 'iletişim')}</span>
+                        <small>${dashboardSafe(contact.city || contact.region_name || '')}</small>
+                    </div>
+                    <h4>${dashboardSafe(contact.label || '-')}</h4>
+                    <p>${dashboardSafe(contact.title || '')}</p>
+                    <div class="bh-contact-stack">
+                        ${contact.phone ? `<a href="tel:${contact.phone}">${dashboardSafe(contact.phone)}</a>` : ''}
+                        ${contact.email ? `<a href="mailto:${contact.email}">${dashboardSafe(contact.email)}</a>` : ''}
+                        ${contact.url ? `<a href="${contact.url}" target="_blank" rel="noreferrer">Bağlantı</a>` : ''}
+                    </div>
+                </article>
+            `).join('')
+            : '<div class="bh-empty">Bayi veya ekip iletişim kaydı bulunamadı.</div>';
+
+        const socialLinks = (profile.social_links || []).length > 0
+            ? profile.social_links.map(item => `
+                <a class="bh-social-link" href="${item.url}" target="_blank" rel="noreferrer">
+                    <span>${dashboardSafe(item.platform || 'Bağlantı')}</span>
+                    <strong>${dashboardSafe(item.handle || item.url || '-')}</strong>
+                </a>
+            `).join('')
+            : '<div class="bh-empty">Sosyal medya veya resmi bağlantı kaydı bulunamadı.</div>';
+
+        const sourceLinks = (profile.source_notes || []).length > 0
+            ? profile.source_notes.map(item => `
+                <a class="bh-source-link" href="${item.url}" target="_blank" rel="noreferrer">${dashboardSafe(item.label || item.url || 'Kaynak')}</a>
+            `).join('')
+            : '';
+
+        pageContent.innerHTML = `
+            <div class="bh-shell">
+                ${stageHtml}
+
+                <section class="bh-hero">
+                    <div class="bh-hero-shell bh-hero-shell-wide">
+                        <div class="bh-hero-content">
+                            <div class="bh-hero-main">
+                                <div class="bh-hero-copy">
+                                    <span class="bh-overline">${dashboardSafe(periodLabel)}</span>
+                                    <h3>${dashboardSafe(profile.hero_title || `${brand.name} Marka Merkezi`)}</h3>
+                                    <p>${dashboardSafe(profile.hero_subtitle || profile.overview || '')}</p>
+                                </div>
+                            </div>
+                            <div class="bh-hero-stats">
+                                ${heroStats || '<div class="bh-empty">Marka özel istatistik kaydı bulunamadı.</div>'}
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="bh-kpi-grid">
+                    ${kpiCards}
+                </section>
+
+                <section class="bh-grid bh-grid-wide">
+                    <article class="bh-panel">
+                        <div class="bh-panel-head">
+                            <div>
+                                <h3>Satış ritmi</h3>
+                                <p>${dashboardSafe(periodLabel)} döneminde markanın aylık hareketi</p>
+                            </div>
+                        </div>
+                        <div class="bh-chart-wrap">
+                            <canvas id="brandHubTrendChart"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="bh-panel">
+                        <div class="bh-panel-head">
+                            <div>
+                                <h3>Resmi akış</h3>
+                                <p>Haber, fuar, ürün ve saha vitrinleri</p>
+                            </div>
+                        </div>
+                        <div class="bh-story-grid">
+                            ${spotlightItems || '<div class="bh-empty">Marka özel resmi akış kaydı bulunamadı.</div>'}
+                        </div>
+                    </article>
+                </section>
+
+                <section class="bh-grid">
+                    <article class="bh-panel">
+                        <div class="bh-panel-head">
+                            <div>
+                                <h3>Portföy ve ürün çizgisi</h3>
+                                <p>Mevcut katalog, seri yapısı ve teknik odak</p>
+                            </div>
+                        </div>
+                        <div class="bh-line-grid">
+                            ${productLineBlocks || '<div class="bh-empty">Ürün serisi kaydı bulunamadı.</div>'}
+                        </div>
+                        <div class="bh-model-list">
+                            ${modelCards}
+                        </div>
+                    </article>
+
+                    <article class="bh-panel">
+                        <div class="bh-panel-head">
+                            <div>
+                                <h3>Bölge ve segment sinyali</h3>
+                                <p>İl liderliği, kategori dağılımı ve odak bölgeler</p>
+                            </div>
+                        </div>
+                        <div class="bh-region-layout">
+                            <div class="bh-rank-list">
+                                ${provinceRows}
+                            </div>
+                            <div class="bh-chart-wrap bh-chart-wrap-sm">
+                                <canvas id="brandHubMixChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="bh-focus-grid">
+                            ${regionPills}
+                        </div>
+                    </article>
+                </section>
+
+                <section class="bh-grid">
+                    <article class="bh-panel">
+                        <div class="bh-panel-head">
+                            <div>
+                                <h3>Bayi ve ekip rehberi</h3>
+                                <p>İletişim, merkez ve saha bağlantıları</p>
+                            </div>
+                        </div>
+                        <div class="bh-contact-grid">
+                            ${contactCards}
+                        </div>
+                    </article>
+
+                    <article class="bh-panel">
+                        <div class="bh-panel-head">
+                            <div>
+                                <h3>Dijital varlık</h3>
+                                <p>Sosyal kanallar ve kaynak bağlantıları</p>
+                            </div>
+                        </div>
+                        <div class="bh-social-grid">
+                            ${socialLinks}
+                        </div>
+                        <div class="bh-source-wrap">
+                            ${sourceLinks}
+                        </div>
+                    </article>
+                </section>
+            </div>
+        `;
+
+        renderBrandHubTrendChart(portalData);
+        renderBrandHubMixChart(portalData);
+    } catch (err) {
+        console.error('Brand hub load error:', err);
+        pageContent.innerHTML = `
+            <div class="error-state">
+                <i class="fas fa-circle-exclamation"></i>
+                <h3>Marka Merkezi yüklenemedi</h3>
+                <p>${dashboardSafe(err.message || 'Bilinmeyen hata')}</p>
+            </div>
+        `;
+    }
+}
+
+async function loadDashboard() {
+    try {
+        const state = ensureDashboardState();
+        const filters = getDashboardFilters();
+        const [availableYears, filterOptions, dashboardData] = await Promise.all([
+            API.getTuikYears(),
+            API.getMapFilterOptions(filters.year, filters),
+            API.getDashboardDeepDive(filters)
+        ]);
+
+        Object.values(charts).forEach(chart => chart?.destroy?.());
+        charts = {};
+
+        const years = (availableYears || [])
+            .map(year => parseInt(year, 10))
+            .filter(Number.isFinite)
+            .sort((a, b) => a - b);
+        const selectedYearValue = state.year || (years.length ? String(years[years.length - 1]) : 'all');
+        const dashboardThemeBrand = dashboardData?.selected_brand?.brand_id
+            ? findBrandById(dashboardData.selected_brand.brand_id)
+            : (currentUser?.role !== 'admin' ? (findBrandById(currentUser?.brand_id) || currentUser?.brand) : activeBrandContext);
+        if (dashboardThemeBrand) {
+            setActiveBrandContext(dashboardThemeBrand, { persist: true });
+        }
+        const brandOptions = currentUser?.role === 'admin'
+            ? [
+                '<option value="">Tüm Markalar</option>',
+                ...(allBrands || []).map(brand => `
+                    <option value="${brand.id}" ${String(brand.id) === String(state.brand_id || '') ? 'selected' : ''}>
+                        ${dashboardSafe(brand.name)}
+                    </option>
+                `)
+            ].join('')
+            : `<option value="${dashboardSafe(currentUser?.brand_id || '')}">${dashboardSafe(currentUser?.brand?.name || 'Markanız')}</option>`;
+        const yearOptions = [
+            `<option value="all" ${selectedYearValue === 'all' ? 'selected' : ''}>Tüm Yıllar</option>`,
+            ...years.map(year => `<option value="${year}" ${String(year) === String(selectedYearValue) ? 'selected' : ''}>${year}</option>`)
+        ].join('');
+
+        const focusName = dashboardData?.selected_brand?.brand_name || 'Filtrelenmiş Pazar';
+        const hasData = Number(dashboardData?.overview?.market_sales || 0) > 0;
+        const heroSentence = hasData
+            ? `${dashboardSafe(focusName)}, ${dashboardSafe(dashboardData?.period?.label || 'güncel dönem')} içinde ${formatNumber(dashboardData?.overview?.context_sales)} adetlik hacim üretti. ${dashboardSafe(dashboardData?.leader_brand?.brand_name || 'Lider marka')} ${formatDashboardPercent(dashboardData?.leader_brand?.market_share_pct, 1)} pay ile sektör ritmini belirliyor.`
+            : 'Seçilen filtre seti için gösterilecek kayıt bulunamadı. Filtreleri gevşetip tekrar deneyebilirsiniz.';
+
+        const periodDelta = dashboardData?.selected_brand ? dashboardData?.period?.context_yoy_pct : dashboardData?.period?.market_yoy_pct;
+        const shareValue = dashboardData?.selected_brand?.market_share_pct ?? dashboardData?.leader_brand?.market_share_pct;
+        const shareLabel = dashboardData?.selected_brand ? 'Pazar Payı' : 'Lider Marka Payı';
+        const volumeLabel = dashboardData?.selected_brand ? 'Seçili Marka Satışı' : 'Filtrelenmiş Toplam Satış';
+        const trendTitle = dashboardData?.selected_brand
+            ? `${dashboardSafe(dashboardData.selected_brand.brand_name)} ve pazar trendi`
+            : 'Pazar trendi ve önceki yıl kıyası';
+        const trendSubtitle = dashboardData?.selected_brand
+            ? 'Mavi alan toplam pazarı, vurgu çizgisi seçili markayı gösterir.'
+            : 'Filtrelenen segmentte aylık hacim ve önceki yıl karşılaştırması.';
+        const provinceSubtitle = dashboardData?.selected_brand
+            ? `${dashboardSafe(dashboardData.selected_brand.brand_name)} için en güçlü il dağılımı`
+            : 'Filtrelenen segmentte talebin en yoğun toplandığı iller';
+        const rankingSubtitle = dashboardData?.selected_brand
+            ? 'Seçilen teknik filtrelerde sektör bağlamı korunur, odak marka vurgulanır.'
+            : 'Aynı teknik filtreler altında marka liderleri';
+        const profileTitle = dashboardData?.selected_brand
+            ? `${dashboardSafe(dashboardData.selected_brand.brand_name)} segment profili`
+            : 'Filtrelenen pazar segment profili';
+
+        const rankingRows = (dashboardData?.brand_ranking || []).map((item, index) => {
+            const isFocus = item.brand_id === dashboardData?.selected_brand?.brand_id;
+            return `
+                <tr class="${isFocus ? 'dbx-table-row-focus' : ''}">
+                    <td>
+                        <div class="rank" style="background:${item.primary_color}22;color:${item.primary_color}">${index + 1}</div>
+                    </td>
+                    <td>
+                        <div class="dbx-brand-cell">
+                            <span class="dbx-brand-dot" style="background:${item.primary_color}"></span>
+                            <span>${dashboardSafe(item.brand_name)}</span>
+                        </div>
+                    </td>
+                    <td>${formatNumber(item.total_sales)}</td>
+                    <td>${formatDashboardPercent(item.market_share_pct, 1)}</td>
+                    <td>${formatNumber(item.province_count)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const modelCards = (dashboardData?.top_models || []).length
+            ? dashboardData.top_models.map((model, index) => `
+                <div class="dbx-model-card" ${modelIntelAttrs(model.brand_name, model.model_name, getKnownModelIntelSource(model.brand_name, model.model_name))} data-model-intel-hover="true">
+                    <div class="dbx-model-rank">${index + 1}</div>
+                    <div class="dbx-model-copy">
+                        <strong>${dashboardSafe(model.model_name)}</strong>
+                        <span>${dashboardSafe(model.brand_name)} • ${model.avg_hp ? `${model.avg_hp} HP` : 'HP yok'}</span>
+                    </div>
+                    <div class="dbx-model-metric">
+                        <strong>${formatNumber(model.total_sales)}</strong>
+                        <span>${formatDashboardPercent(model.share_pct, 1)}</span>
+                    </div>
+                </div>
+            `).join('')
+            : '<div class="empty-state"><p>Model verisi bulunamadı.</p></div>';
+
+        const spotlightCards = [
+            {
+                label: 'Lider Marka',
+                value: dashboardData?.leader_brand?.brand_name || '-',
+                meta: dashboardData?.leader_brand ? formatDashboardPercent(dashboardData.leader_brand.market_share_pct, 1) : '-'
+            },
+            {
+                label: 'Baskın İl',
+                value: dashboardData?.highlights?.top_province?.province_name || '-',
+                meta: dashboardData?.highlights?.top_province ? `${formatNumber(dashboardData.highlights.top_province.total_sales)} adet` : '-'
+            },
+            {
+                label: 'Baskın Segment',
+                value: dashboardData?.highlights?.top_hp?.label || '-',
+                meta: dashboardData?.highlights?.top_category?.label || '-'
+            }
+        ].map(item => `
+            <div class="dbx-spotlight-card">
+                <span>${dashboardSafe(item.label)}</span>
+                <strong>${dashboardSafe(item.value)}</strong>
+                <small>${dashboardSafe(item.meta)}</small>
+            </div>
+        `).join('');
+
+        const content = document.getElementById('pageContent');
+        content.innerHTML = `
+            <div class="dbx-shell">
+                <section id="dashboardFilterPanel" class="tmx-filter-panel dbx-filter-panel">
+                    <div class="tmx-filter-header">
+                        <div class="tmx-filter-copy">
+                            <span class="tmx-kicker">Dashboard Kontrolleri</span>
+                            <div class="tmx-filter-title-row">
+                                <h3>Filtreler</h3>
+                                <span id="dashboardFilterSummary" class="tmx-filter-summary"></span>
+                            </div>
+                        </div>
+                        <div class="tmx-filter-actions">
+                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="resetDashboardFilters()">
+                                <i class="fas fa-undo-alt"></i><span>Sıfırla</span>
+                            </button>
+                            <button type="button" class="tmx-btn tmx-btn-secondary" data-dashboard-collapse onclick="toggleDashboardFilters()"></button>
+                        </div>
+                    </div>
+                    <div class="tmx-filter-body">
+                        <div class="tmx-filter-grid dbx-filter-grid">
+                            <select id="dbYearFilter" onchange="onDashboardFilterChange()">
+                                ${yearOptions}
+                            </select>
+                            <select id="dbCabinFilter" onchange="onDashboardFilterChange()">
+                                <option value="">Tüm Kabin</option>
+                            </select>
+                            <select id="dbDriveFilter" onchange="onDashboardFilterChange()">
+                                <option value="">Tüm Çekiş</option>
+                            </select>
+                            <select id="dbGearFilter" onchange="onDashboardFilterChange()">
+                                <option value="">Tüm Şanzıman</option>
+                            </select>
+                            <select id="dbHpFilter" onchange="onDashboardFilterChange()">
+                                <option value="">Tüm HP</option>
+                            </select>
+                        </div>
+                        <div class="tmx-filter-hint">
+                            <i class="fas fa-lightbulb"></i>
+                            <span>Marka seçimi trend ve spotlight kartlarını odaklar; teknik filtreler tüm gösterge paneli bağlamını daraltır.</span>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="dbx-kpi-grid">
+                    <div class="dbx-kpi-card dbx-kpi-blue">
+                        <span>Hacim</span>
+                        <strong>${formatNumber(dashboardData?.overview?.context_sales || 0)}</strong>
+                        <small>${dashboardSafe(volumeLabel)}</small>
+                    </div>
+                    <div class="dbx-kpi-card dbx-kpi-amber">
+                        <span>Yıllık Değişim</span>
+                        <strong>${formatDashboardDelta(periodDelta, 1)}</strong>
+                        <small>${dashboardData?.period?.target_year ? 'Aynı döneme göre' : 'Kıyas verisi yok'}</small>
+                    </div>
+                    <div class="dbx-kpi-card dbx-kpi-green">
+                        <span>${dashboardSafe(shareLabel)}</span>
+                        <strong>${shareValue != null ? formatDashboardPercent(shareValue, 1) : '-'}</strong>
+                        <small>${dashboardData?.selected_brand ? dashboardSafe(dashboardData.selected_brand.brand_name) : dashboardSafe(dashboardData?.leader_brand?.brand_name || 'Lider marka')}</small>
+                    </div>
+                    <div class="dbx-kpi-card dbx-kpi-cyan">
+                        <span>Ortalama HP</span>
+                        <strong>${dashboardData?.overview?.avg_hp ? `${dashboardData.overview.avg_hp} HP` : '-'}</strong>
+                        <small>Ağırlıklı model gücü</small>
+                    </div>
+                    <div class="dbx-kpi-card dbx-kpi-purple">
+                        <span>4WD Oranı</span>
+                        <strong>${formatDashboardPercent(dashboardData?.overview?.ratio_4wd_pct, 1)}</strong>
+                        <small>Filtrelenen profil içindeki pay</small>
+                    </div>
+                </div>
+
+                <div class="dbx-grid dbx-grid-top">
+                    <section class="card dbx-panel dbx-panel-wide">
+                        <div class="dbx-panel-head">
+                            <div>
+                                <h3>${dashboardSafe(trendTitle)}</h3>
+                            </div>
+                        </div>
+                        <div class="dbx-canvas dbx-canvas-xl">
+                            <canvas id="dbTrendChart"></canvas>
+                        </div>
+                    </section>
+
+                    <section class="card dbx-panel">
+                        <div class="dbx-panel-head">
+                            <div>
+                                <h3>Pazar payı dağılımı</h3>
+                            </div>
+                        </div>
+                        <div class="dbx-canvas dbx-canvas-md">
+                            <canvas id="dbMarketShareChart"></canvas>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="dbx-grid">
+                    <section class="card dbx-panel">
+                        <div class="dbx-panel-head">
+                            <div>
+                                <h3>En çok satan iller</h3>
+                            </div>
+                        </div>
+                        <div class="dbx-canvas dbx-canvas-md">
+                            <canvas id="dbProvinceChart"></canvas>
+                        </div>
+                    </section>
+
+                    <section class="card dbx-panel">
+                        <div class="dbx-panel-head">
+                            <div>
+                                <h3>Marka sıralaması</h3>
+                            </div>
+                        </div>
+                        <div class="dbx-table-wrap">
+                            <table class="data-table dbx-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Marka</th>
+                                        <th>Satış</th>
+                                        <th>Pay</th>
+                                        <th>İl</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${rankingRows || '<tr><td colspan="5">Veri bulunamadı</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="dbx-grid">
+                    <section class="card dbx-panel">
+                        <div class="dbx-panel-head">
+                            <div>
+                                <span class="dbx-overline">Segment Profili</span>
+                                <h3>${dashboardSafe(profileTitle)}</h3>
+                                <p>HP dağılımı ile ürün kombinasyonu aynı tabloda toplandı.</p>
+                            </div>
+                        </div>
+                        <div class="dbx-canvas dbx-canvas-md">
+                            <canvas id="dbHpChart"></canvas>
+                        </div>
+                        <div class="dbx-pill-stack">
+                            ${renderDashboardMixPills('Kategori', dashboardData?.category_mix || [], 'dbx-pill-blue')}
+                            ${renderDashboardMixPills('Çekiş', dashboardData?.drive_mix || [], 'dbx-pill-green')}
+                            ${renderDashboardMixPills('Kabin', dashboardData?.cabin_mix || [], 'dbx-pill-amber')}
+                        </div>
+                    </section>
+
+                    <section class="card dbx-panel">
+                        <div class="dbx-panel-head">
+                            <div>
+                                <span class="dbx-overline">Model Odağı</span>
+                                <h3>En güçlü modeller</h3>
+                                <p>Satışa en çok katkı veren model karması</p>
+                            </div>
+                        </div>
+                        <div class="dbx-model-list">
+                            ${modelCards}
+                        </div>
+                    </section>
+                </div>
+            </div>
+        `;
+
+        updateSelectOptions('dbCabinFilter', filterOptions?.cabin_types || [], 'Tüm Kabin', value => mfCabinLabels[value] || value);
+        updateSelectOptions('dbDriveFilter', filterOptions?.drive_types || [], 'Tüm Çekiş');
+        updateSelectOptions('dbGearFilter', filterOptions?.gear_configs || [], 'Tüm Şanzıman');
+        updateSelectOptions('dbHpFilter', filterOptions?.hp_ranges || [], 'Tüm HP', value => `${value} HP`);
+
+        document.getElementById('dbCabinFilter').value = state.cabin_type || '';
+        document.getElementById('dbDriveFilter').value = state.drive_type || '';
+        document.getElementById('dbGearFilter').value = state.gear_config || '';
+        document.getElementById('dbHpFilter').value = state.hp_range || '';
+
+        syncDashboardFilterPanel(buildDashboardFilterSummary(dashboardData));
+        renderDashboardTrendChart(dashboardData);
+        renderDashboardShareChart(dashboardData);
+        renderDashboardProvinceChart(dashboardData);
+        renderDashboardHpChart(dashboardData);
+    } catch (err) {
+        showError(err);
+    }
+}
+
 // ============================================
 // MAP PAGE
 // ============================================
 let leafletMap = null;
 let geoJsonLayer = null;
 let mapSalesData = null;
+let mapAvailableYears = [];
+let turkeyMapFocusMode = false;
+let turkeyMapFiltersCollapsed = false;
+let turkeyMapResizeTimer = null;
+let turkeyMapResizeObserver = null;
+let turkeyMapSelectedProvinceName = '';
+let turkeyMapProvinceSelectHandler = null;
+
+function getTurkeyMapSelectedText(selectId, fallback = '') {
+    const select = document.getElementById(selectId);
+    return select?.selectedOptions?.[0]?.textContent?.trim() || fallback;
+}
+
+function buildTurkeyMapFilterSummary() {
+    const isAllLabel = (label) => {
+        const normalized = String(label || '').toLocaleLowerCase('tr-TR').trim();
+        return normalized.startsWith('tüm ') || normalized.startsWith('tum ');
+    };
+    const summaryItems = [];
+    const brandLabel = getTurkeyMapSelectedText('mapBrandFilter', 'T\u00fcm Markalar');
+    const yearLabel = getTurkeyMapSelectedText('mapYearFilter', 'Tüm Yıllar');
+    const regionLabel = getTurkeyMapSelectedText('mapRegionFilter', 'T\u00fcm B\u00f6lgeler');
+    const cabinLabel = getTurkeyMapSelectedText('mapCabinFilter', '');
+    const driveLabel = getTurkeyMapSelectedText('mapDriveFilter', '');
+    const gearLabel = getTurkeyMapSelectedText('mapGearFilter', '');
+    const hpLabel = getTurkeyMapSelectedText('mapHpFilter', '');
+
+    if (brandLabel) summaryItems.push(brandLabel);
+    if (yearLabel) summaryItems.push(yearLabel);
+    if (regionLabel && !isAllLabel(regionLabel)) summaryItems.push(regionLabel);
+    if (cabinLabel && !isAllLabel(cabinLabel)) summaryItems.push(cabinLabel);
+    if (driveLabel && !isAllLabel(driveLabel)) summaryItems.push(driveLabel);
+    if (gearLabel && !isAllLabel(gearLabel)) summaryItems.push(`\u015eanz\u0131man ${gearLabel}`);
+    if (hpLabel && !isAllLabel(hpLabel)) summaryItems.push(hpLabel);
+
+    return summaryItems.join(' • ') || 'T\u00fcm pazar g\u00f6r\u00fcn\u00fcm\u00fc';
+}
+
+function fitTurkeyMapBounds() {
+    if (leafletMap && geoJsonLayer?.getBounds) {
+        leafletMap.fitBounds(geoJsonLayer.getBounds(), { padding: turkeyMapFocusMode ? [32, 32] : [20, 20] });
+        return;
+    }
+    if (leafletMap) leafletMap.setView([39.0, 35.5], turkeyMapFocusMode ? 6.25 : 6);
+}
+
+function scheduleTurkeyMapResize(refit = false) {
+    if (turkeyMapResizeTimer) clearTimeout(turkeyMapResizeTimer);
+    turkeyMapResizeTimer = setTimeout(() => {
+        if (!leafletMap) return;
+        leafletMap.invalidateSize();
+        if (refit) fitTurkeyMapBounds();
+    }, 260);
+}
+
+function syncTurkeyMapWorkspaceUi() {
+    const workspace = document.getElementById('turkeyMapWorkspace');
+    const filterPanel = document.getElementById('turkeyMapFilterPanel');
+    const summaryEl = document.getElementById('turkeyMapFilterSummary');
+    if (!workspace || !filterPanel) return;
+
+    document.body.classList.toggle('map-focus-mode', turkeyMapFocusMode && currentPage === 'map');
+    workspace.classList.toggle('is-focus', turkeyMapFocusMode);
+    filterPanel.classList.toggle('is-collapsed', turkeyMapFiltersCollapsed);
+
+    if (summaryEl) summaryEl.textContent = buildTurkeyMapFilterSummary();
+
+    document.querySelectorAll('[data-turkey-map-collapse]').forEach(btn => {
+        btn.innerHTML = turkeyMapFiltersCollapsed
+            ? '<i class="fas fa-chevron-down"></i><span>Filtreleri Ac</span>'
+            : '<i class="fas fa-chevron-up"></i><span>Filtreleri Gizle</span>';
+        btn.title = turkeyMapFiltersCollapsed ? 'Filtre panelini ac' : 'Filtre panelini gizle';
+    });
+
+    document.querySelectorAll('[data-turkey-map-focus]').forEach(btn => {
+        btn.innerHTML = turkeyMapFocusMode
+            ? '<i class="fas fa-compress"></i><span>Odaktan Cik</span>'
+            : '<i class="fas fa-expand"></i><span>Tam Ekran</span>';
+        btn.title = turkeyMapFocusMode ? 'Harita odagindan cik' : 'Haritayi tam ekrana al';
+    });
+}
+
+function toggleTurkeyMapFilters(force) {
+    turkeyMapFiltersCollapsed = typeof force === 'boolean' ? force : !turkeyMapFiltersCollapsed;
+    syncTurkeyMapWorkspaceUi();
+    scheduleTurkeyMapResize(true);
+}
+
+async function toggleTurkeyMapFocusMode(options = {}) {
+    if (currentPage !== 'map') return;
+    const workspace = document.getElementById('turkeyMapWorkspace');
+    if (!workspace) return;
+
+    const shouldEnable = typeof options.force === 'boolean' ? options.force : !turkeyMapFocusMode;
+    turkeyMapFocusMode = shouldEnable;
+
+    if (shouldEnable) {
+        turkeyMapFiltersCollapsed = true;
+        document.getElementById('sidebar')?.classList.remove('open');
+    }
+
+    syncTurkeyMapWorkspaceUi();
+    scheduleTurkeyMapResize(true);
+
+    if (shouldEnable && options.requestFullscreen !== false && workspace.requestFullscreen && document.fullscreenElement !== workspace) {
+        try {
+            await workspace.requestFullscreen();
+        } catch (err) {
+            console.warn('Turkey map fullscreen request failed:', err);
+        }
+        return;
+    }
+
+    if (!shouldEnable && document.fullscreenElement === workspace && document.exitFullscreen) {
+        try {
+            await document.exitFullscreen();
+        } catch (err) {
+            console.warn('Turkey map fullscreen exit failed:', err);
+        }
+    }
+}
+
+function handleTurkeyMapDoubleClick(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    toggleTurkeyMapFocusMode({ requestFullscreen: true });
+}
+
+function teardownTurkeyMapWorkspace() {
+    if (turkeyMapResizeTimer) {
+        clearTimeout(turkeyMapResizeTimer);
+        turkeyMapResizeTimer = null;
+    }
+
+    turkeyMapFocusMode = false;
+    turkeyMapFiltersCollapsed = false;
+    document.body.classList.remove('map-focus-mode');
+
+    const workspace = document.getElementById('turkeyMapWorkspace');
+    if (workspace && document.fullscreenElement === workspace && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+    }
+}
+
+document.addEventListener('fullscreenchange', () => {
+    const workspace = document.getElementById('turkeyMapWorkspace');
+    if (!workspace || currentPage !== 'map') return;
+
+    const isWorkspaceFullscreen = document.fullscreenElement === workspace;
+    if (isWorkspaceFullscreen && !turkeyMapFocusMode) {
+        turkeyMapFocusMode = true;
+        turkeyMapFiltersCollapsed = true;
+        syncTurkeyMapWorkspaceUi();
+        scheduleTurkeyMapResize(true);
+        return;
+    }
+
+    if (!document.fullscreenElement && turkeyMapFocusMode) {
+        turkeyMapFocusMode = false;
+        document.body.classList.remove('map-focus-mode');
+        syncTurkeyMapWorkspaceUi();
+        scheduleTurkeyMapResize(true);
+    }
+});
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && currentPage === 'map' && turkeyMapFocusMode && !document.fullscreenElement) {
+        turkeyMapFocusMode = false;
+        document.body.classList.remove('map-focus-mode');
+        syncTurkeyMapWorkspaceUi();
+        scheduleTurkeyMapResize(true);
+    }
+});
 
 async function loadMapPage() {
     try {
-        let defaultYear = document.getElementById('mapYearFilter')?.value || 'all';
-        mapSalesData = await API.getSalesByProvince(defaultYear, currentUser?.brand_id);
+        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || String(currentUser?.brand_id || '');
+        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
+        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
+        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
+        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
+        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
+        mapAvailableYears = (await API.getTuikYears())
+            .map(year => parseInt(year, 10))
+            .filter(Number.isFinite)
+            .filter((year, index, arr) => arr.indexOf(year) === index)
+            .sort((a, b) => a - b);
+        const currentYearValue = document.getElementById('mapYearFilter')?.value;
+        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
+        const defaultYear = (!currentYearValue || currentYearValue === 'all')
+            ? 'all'
+            : (mapAvailableYears.includes(parseInt(currentYearValue, 10)) ? currentYearValue : 'all');
+        const yearOptions = [
+            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>T\u00fcm Y\u0131llar</option>`,
+            ...((mapAvailableYears || []).length
+                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
+                : [`<option value="${defaultYear}" selected>${defaultYear}</option>`])
+        ].join('');
+
+        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
+        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
         const content = document.getElementById('pageContent');
 
         content.innerHTML = `
             <div class="filter-bar">
                 <select id="mapBrandFilter" onchange="updateMap()">
                     <option value="">Tüm Markalar</option>
-                    ${allBrands.map(b => `<option value="${b.id}" ${b.id === currentUser?.brand_id ? 'selected' : ''}>${b.name}</option>`).join('')}
+                    ${brandOptions}
+                </select>
+                <select id="mapYearFilter" onchange="updateMap()">
+                    ${yearOptions}
+                </select>
+                <select id="mapCabinFilter" onchange="updateMap()">
+                    <option value="">Tüm Kabin</option>
+                    ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
+                </select>
+                <select id="mapDriveFilter" onchange="updateMap()">
+                    <option value="">Tüm Çekiş</option>
+                    ${selectedOption(currentDriveValue, currentDriveValue)}
+                </select>
+                <select id="mapGearFilter" onchange="updateMap()">
+                    <option value="">Tüm Şanzıman</option>
+                    ${selectedOption(currentGearValue, currentGearValue)}
+                </select>
+                <select id="mapHpFilter" onchange="updateMap()">
+                    <option value="">Tüm HP</option>
+                    ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
                 </select>
                 <select id="mapRegionFilter" onchange="updateMap()">
                     <option value="">Tüm Bölgeler</option>
@@ -2076,16 +6693,6 @@ async function loadMapPage() {
                     <option value="Karadeniz">Karadeniz</option>
                     <option value="Doğu Anadolu">Doğu Anadolu</option>
                     <option value="Güneydoğu Anadolu">Güneydoğu Anadolu</option>
-                </select>
-                <select id="mapYearFilter" onchange="updateMap()">
-                    <option value="all">Tüm Tarihler</option>
-                    <option value="2025" selected>2025</option>
-                    <option value="2024">2024</option>
-                    <option value="2023">2023</option>
-                    <option value="2022">2022</option>
-                    <option value="2021">2021</option>
-                    <option value="2020">2020</option>
-                    <option value="2026">2026</option>
                 </select>
             </div>
 
@@ -2108,8 +6715,573 @@ async function loadMapPage() {
             <!-- Tablolar Tam Ekran map için gizlendi, sadece harita var. (İsteğe göre eklenebilir) -->
         `;
 
-        initLeafletMap(mapSalesData, 'all');
+        if (currentRegionValue) {
+            const regionFilter = document.getElementById('mapRegionFilter');
+            if (regionFilter) regionFilter.value = currentRegionValue;
+        }
 
+        await updateMap();
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function loadMapPage() {
+    try {
+        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || String(currentUser?.brand_id || '');
+        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
+        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
+        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
+        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
+        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
+        mapAvailableYears = (await API.getTuikYears())
+            .map(year => parseInt(year, 10))
+            .filter(Number.isFinite)
+            .filter((year, index, arr) => arr.indexOf(year) === index)
+            .sort((a, b) => a - b);
+        const currentYearValue = document.getElementById('mapYearFilter')?.value;
+        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
+        const defaultYear = currentYearValue === 'all'
+            ? 'all'
+            : ((currentYearValue && mapAvailableYears.includes(parseInt(currentYearValue, 10)))
+                ? currentYearValue
+                : fallbackYear);
+        const yearOptions = [
+            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>Tüm Yıllar</option>`,
+            ...(mapAvailableYears || []).length
+                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
+                : [`<option value="${fallbackYear}" ${defaultYear === fallbackYear ? 'selected' : ''}>${fallbackYear}</option>`]
+        ].join('');
+
+        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
+        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
+        const content = document.getElementById('pageContent');
+
+        content.innerHTML = `
+            <div id="turkeyMapWorkspace" class="turkey-map-workspace">
+                <section id="turkeyMapFilterPanel" class="tmx-filter-panel">
+                    <div class="tmx-filter-header">
+                        <div class="tmx-filter-copy">
+                            <span class="tmx-kicker">Harita Kontrolleri</span>
+                            <div class="tmx-filter-title-row">
+                                <h3>Filtreler</h3>
+                                <span id="turkeyMapFilterSummary" class="tmx-filter-summary"></span>
+                            </div>
+                        </div>
+                        <div class="tmx-filter-actions">
+                            <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
+                            <button type="button" class="tmx-btn tmx-btn-primary" data-turkey-map-focus onclick="toggleTurkeyMapFocusMode({ requestFullscreen: true })"></button>
+                        </div>
+                    </div>
+                    <div class="tmx-filter-body">
+                        <div class="tmx-filter-grid">
+                            <select id="mapBrandFilter" onchange="updateMap()">
+                                <option value="">TÃ¼m Markalar</option>
+                                ${brandOptions}
+                            </select>
+                            <select id="mapYearFilter" onchange="updateMap()">
+                                ${yearOptions}
+                            </select>
+                            <select id="mapCabinFilter" onchange="updateMap()">
+                                <option value="">TÃ¼m Kabin</option>
+                                ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
+                            </select>
+                            <select id="mapDriveFilter" onchange="updateMap()">
+                                <option value="">TÃ¼m Ã‡ekiÅŸ</option>
+                                ${selectedOption(currentDriveValue, currentDriveValue)}
+                            </select>
+                            <select id="mapGearFilter" onchange="updateMap()">
+                                <option value="">TÃ¼m ÅanzÄ±man</option>
+                                ${selectedOption(currentGearValue, currentGearValue)}
+                            </select>
+                            <select id="mapHpFilter" onchange="updateMap()">
+                                <option value="">TÃ¼m HP</option>
+                                ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
+                            </select>
+                            <select id="mapRegionFilter" onchange="updateMap()">
+                                <option value="">TÃ¼m BÃ¶lgeler</option>
+                                <option value="Marmara">Marmara</option>
+                                <option value="Ege">Ege</option>
+                                <option value="Akdeniz">Akdeniz</option>
+                                <option value="Ä°Ã§ Anadolu">Ä°Ã§ Anadolu</option>
+                                <option value="Karadeniz">Karadeniz</option>
+                                <option value="DoÄŸu Anadolu">DoÄŸu Anadolu</option>
+                                <option value="GÃ¼neydoÄŸu Anadolu">GÃ¼neydoÄŸu Anadolu</option>
+                            </select>
+                        </div>
+                        <div class="tmx-filter-hint">
+                            <i class="fas fa-expand"></i>
+                            <span>Haritaya cift tiklayarak veya tam ekran butonuyla büyük ekrana gecebilirsiniz.</span>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="card tmx-map-card">
+                    <div class="card-header tmx-map-card-header">
+                        <div class="tmx-map-heading">
+                            <h3><i class="fas fa-map-marked-alt"></i> TÃ¼rkiye SatÄ±ÅŸ HaritasÄ±</h3>
+                            <span class="tmx-map-subtitle">Buyuk ekran kullaniminda filtreler katlanir, sol panel otomatik gizlenir.</span>
+                        </div>
+                        <div class="tmx-map-header-actions">
+                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
+                            </button>
+                            <button type="button" class="tmx-btn tmx-btn-ghost" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
+                            <button type="button" class="tmx-btn tmx-btn-primary" data-turkey-map-focus onclick="toggleTurkeyMapFocusMode({ requestFullscreen: true })"></button>
+                        </div>
+                    </div>
+                    <div class="card-body tmx-map-body">
+                        <div class="tmx-map-stage" ondblclick="handleTurkeyMapDoubleClick(event)">
+                            <div class="turkey-map-container tmx-map-container">
+                                <div id="turkeyMap"></div>
+                            </div>
+                            <div class="tmx-floating-actions">
+                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFilters()" title="Filtreleri ac veya gizle">
+                                    <i class="fas fa-sliders-h"></i>
+                                </button>
+                                <button type="button" class="tmx-fab" onclick="fitTurkeyMapBounds()" title="Haritayi sigdir">
+                                    <i class="fas fa-crosshairs"></i>
+                                </button>
+                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFocusMode({ force: false })" title="Odaktan cik">
+                                    <i class="fas fa-compress"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="tmx-legend">
+                            <span><i style="background:#1e40af"></i>YÃ¼ksek</span>
+                            <span><i style="background:#3b82f6"></i>Orta-YÃ¼ksek</span>
+                            <span><i style="background:#60a5fa"></i>Orta</span>
+                            <span><i style="background:#93c5fd"></i>DÃ¼ÅŸÃ¼k</span>
+                            <span><i style="background:#1e293b"></i>SatÄ±ÅŸ Yok</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        if (currentRegionValue) {
+            const regionFilter = document.getElementById('mapRegionFilter');
+            if (regionFilter) regionFilter.value = currentRegionValue;
+        }
+
+        syncTurkeyMapWorkspaceUi();
+        await updateMap();
+
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function loadMapPage() {
+    try {
+        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || String(currentUser?.brand_id || '');
+        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
+        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
+        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
+        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
+        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
+        mapAvailableYears = (await API.getTuikYears())
+            .map(year => parseInt(year, 10))
+            .filter(Number.isFinite)
+            .filter((year, index, arr) => arr.indexOf(year) === index)
+            .sort((a, b) => a - b);
+
+        const currentYearValue = document.getElementById('mapYearFilter')?.value;
+        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
+        const defaultYear = currentYearValue === 'all'
+            ? 'all'
+            : ((currentYearValue && mapAvailableYears.includes(parseInt(currentYearValue, 10)))
+                ? currentYearValue
+                : fallbackYear);
+        const yearOptions = [
+            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>Tüm Yıllar</option>`,
+            ...(mapAvailableYears || []).length
+                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
+                : [`<option value="${fallbackYear}" ${defaultYear === fallbackYear ? 'selected' : ''}>${fallbackYear}</option>`]
+        ].join('');
+
+        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
+        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
+        const content = document.getElementById('pageContent');
+
+        content.innerHTML = `
+            <div id="turkeyMapWorkspace" class="turkey-map-workspace">
+                <section id="turkeyMapFilterPanel" class="tmx-filter-panel">
+                    <div class="tmx-filter-header">
+                        <div class="tmx-filter-copy">
+                            <span class="tmx-kicker">Harita Kontrolleri</span>
+                            <div class="tmx-filter-title-row">
+                                <h3>Filtreler</h3>
+                                <span id="turkeyMapFilterSummary" class="tmx-filter-summary"></span>
+                            </div>
+                        </div>
+                        <div class="tmx-filter-actions">
+                            <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
+                            <button type="button" class="tmx-btn tmx-btn-primary" data-turkey-map-focus onclick="toggleTurkeyMapFocusMode({ requestFullscreen: true })"></button>
+                        </div>
+                    </div>
+                    <div class="tmx-filter-body">
+                        <div class="tmx-filter-grid">
+                            <select id="mapBrandFilter" onchange="updateMap()">
+                                <option value="">T\u00fcm Markalar</option>
+                                ${brandOptions}
+                            </select>
+                            <select id="mapYearFilter" onchange="updateMap()">
+                                ${yearOptions}
+                            </select>
+                            <select id="mapCabinFilter" onchange="updateMap()">
+                                <option value="">T\u00fcm Kabin</option>
+                                ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
+                            </select>
+                            <select id="mapDriveFilter" onchange="updateMap()">
+                                <option value="">T\u00fcm \u00c7eki\u015f</option>
+                                ${selectedOption(currentDriveValue, currentDriveValue)}
+                            </select>
+                            <select id="mapGearFilter" onchange="updateMap()">
+                                <option value="">T\u00fcm \u015eanz\u0131man</option>
+                                ${selectedOption(currentGearValue, currentGearValue)}
+                            </select>
+                            <select id="mapHpFilter" onchange="updateMap()">
+                                <option value="">T\u00fcm HP</option>
+                                ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
+                            </select>
+                            <select id="mapRegionFilter" onchange="updateMap()">
+                                <option value="">T\u00fcm B\u00f6lgeler</option>
+                                <option value="Marmara">Marmara</option>
+                                <option value="Ege">Ege</option>
+                                <option value="Akdeniz">Akdeniz</option>
+                                <option value="\u0130\u00e7 Anadolu">\u0130\u00e7 Anadolu</option>
+                                <option value="Karadeniz">Karadeniz</option>
+                                <option value="Do\u011fu Anadolu">Do\u011fu Anadolu</option>
+                                <option value="G\u00fcneydo\u011fu Anadolu">G\u00fcneydo\u011fu Anadolu</option>
+                            </select>
+                        </div>
+                        <div class="tmx-filter-hint">
+                            <i class="fas fa-expand"></i>
+                            <span>Haritaya cift tiklayarak veya tam ekran butonuyla büyük ekrana gecebilirsiniz.</span>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="card tmx-map-card">
+                    <div class="card-header tmx-map-card-header">
+                        <div class="tmx-map-heading">
+                            <h3><i class="fas fa-map-marked-alt"></i> T\u00fcrkiye Sat\u0131\u015f Haritas\u0131</h3>
+                            <span class="tmx-map-subtitle">Buyuk ekran kullaniminda filtreler katlanir, sol panel otomatik gizlenir.</span>
+                        </div>
+                        <div class="tmx-map-header-actions">
+                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body tmx-map-body">
+                        <div class="tmx-map-stage" ondblclick="handleTurkeyMapDoubleClick(event)">
+                            <div class="turkey-map-container tmx-map-container">
+                                <div id="turkeyMap"></div>
+                            </div>
+                            <div class="tmx-floating-actions">
+                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFilters()" title="Filtreleri ac veya gizle">
+                                    <i class="fas fa-sliders-h"></i>
+                                </button>
+                                <button type="button" class="tmx-fab" onclick="fitTurkeyMapBounds()" title="Haritayi sigdir">
+                                    <i class="fas fa-crosshairs"></i>
+                                </button>
+                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFocusMode({ force: false })" title="Odaktan cik">
+                                    <i class="fas fa-compress"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="tmx-legend">
+                            <span><i style="background:#1e40af"></i>Y\u00fcksek</span>
+                            <span><i style="background:#3b82f6"></i>Orta-Y\u00fcksek</span>
+                            <span><i style="background:#60a5fa"></i>Orta</span>
+                            <span><i style="background:#93c5fd"></i>D\u00fc\u015f\u00fck</span>
+                            <span><i style="background:#1e293b"></i>Sat\u0131\u015f Yok</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        if (currentRegionValue) {
+            const regionFilter = document.getElementById('mapRegionFilter');
+            if (regionFilter) regionFilter.value = currentRegionValue;
+        }
+
+        syncTurkeyMapWorkspaceUi();
+        await updateMap();
+    } catch (err) {
+        showError(err);
+    }
+}
+
+function setMapPageChromeHidden(enabled) {
+    document.body.classList.toggle('map-page-immersive', !!enabled);
+    if (!enabled) document.body.classList.remove('map-focus-mode');
+    if (!enabled) document.getElementById('sidebar')?.classList.remove('open');
+}
+
+function isTurkeyMapAllLabel(label) {
+    const normalized = String(label || '').toLocaleLowerCase('tr-TR').trim();
+    return normalized.startsWith('t\u00fcm ') || normalized.startsWith('tum ');
+}
+
+function buildTurkeyMapFilterSummary() {
+    const summaryItems = [];
+    const brandLabel = getTurkeyMapSelectedText('mapBrandFilter', 'T\u00fcm Markalar');
+    const yearLabel = getTurkeyMapSelectedText('mapYearFilter', 'Tüm Yıllar');
+    const regionLabel = getTurkeyMapSelectedText('mapRegionFilter', 'T\u00fcm B\u00f6lgeler');
+    const cabinLabel = getTurkeyMapSelectedText('mapCabinFilter', '');
+    const driveLabel = getTurkeyMapSelectedText('mapDriveFilter', '');
+    const gearLabel = getTurkeyMapSelectedText('mapGearFilter', '');
+    const hpLabel = getTurkeyMapSelectedText('mapHpFilter', '');
+
+    if (brandLabel) summaryItems.push(brandLabel);
+    if (yearLabel) summaryItems.push(yearLabel);
+    if (regionLabel && !isTurkeyMapAllLabel(regionLabel)) summaryItems.push(regionLabel);
+    if (cabinLabel && !isTurkeyMapAllLabel(cabinLabel)) summaryItems.push(cabinLabel);
+    if (driveLabel && !isTurkeyMapAllLabel(driveLabel)) summaryItems.push(driveLabel);
+    if (gearLabel && !isTurkeyMapAllLabel(gearLabel)) summaryItems.push(`\u015eanz\u0131man ${gearLabel}`);
+    if (hpLabel && !isTurkeyMapAllLabel(hpLabel)) summaryItems.push(hpLabel);
+
+    return summaryItems.join(' \u2022 ') || 'T\u00fcm pazar g\u00f6r\u00fcn\u00fcm\u00fc';
+}
+
+function applyTurkeyMapViewportBounds() {
+    if (!leafletMap || !geoJsonLayer?.getBounds) return;
+
+    const bounds = geoJsonLayer.getBounds();
+    const container = leafletMap.getContainer();
+    const width = container?.clientWidth || 0;
+    const height = container?.clientHeight || 0;
+    const edgePadding = Math.max(12, Math.min(28, Math.round(width * 0.018)));
+    const verticalPadding = Math.max(12, Math.min(30, Math.round(height * 0.02)));
+    const toolbarHeight = document.querySelector('.tmx-map-toolbar')?.offsetHeight || 0;
+    const titleHeight = document.querySelector('.tmx-map-title')?.offsetHeight || 0;
+    const legendHeight = document.querySelector('.tmx-legend')?.offsetHeight || 0;
+
+    leafletMap.fitBounds(bounds, {
+        paddingTopLeft: [edgePadding, Math.max(verticalPadding, toolbarHeight + verticalPadding)],
+        paddingBottomRight: [edgePadding, Math.max(verticalPadding, titleHeight + legendHeight + verticalPadding)],
+        animate: false
+    });
+}
+
+function fitTurkeyMapBounds() {
+    if (leafletMap && geoJsonLayer?.getBounds) {
+        applyTurkeyMapViewportBounds();
+        return;
+    }
+    if (leafletMap) leafletMap.setView([39.0, 35.5], 6);
+}
+
+function bindTurkeyMapResizeObserver() {
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const stage = document.querySelector('.tmx-map-stage');
+    if (!stage) return;
+
+    if (turkeyMapResizeObserver) turkeyMapResizeObserver.disconnect();
+
+    turkeyMapResizeObserver = new ResizeObserver(entries => {
+        const rect = entries?.[0]?.contentRect;
+        if (!rect?.width || !rect?.height || !['map', 'regional-index'].includes(currentPage)) return;
+        scheduleTurkeyMapResize(true);
+    });
+
+    turkeyMapResizeObserver.observe(stage);
+}
+
+function scheduleTurkeyMapResize(refit = false) {
+    if (turkeyMapResizeTimer) clearTimeout(turkeyMapResizeTimer);
+    turkeyMapResizeTimer = setTimeout(() => {
+        if (!leafletMap) return;
+        leafletMap.invalidateSize();
+        if (refit) fitTurkeyMapBounds();
+    }, 220);
+}
+
+function syncTurkeyMapWorkspaceUi() {
+    const filterPanel = document.getElementById('turkeyMapFilterPanel');
+    const summaryEl = document.getElementById('turkeyMapFilterSummary');
+    if (!filterPanel) return;
+
+    setMapPageChromeHidden(currentPage === 'map');
+    filterPanel.classList.toggle('is-collapsed', turkeyMapFiltersCollapsed);
+    if (summaryEl) summaryEl.textContent = buildTurkeyMapFilterSummary();
+
+    document.querySelectorAll('[data-turkey-map-collapse]').forEach(btn => {
+        btn.innerHTML = turkeyMapFiltersCollapsed
+            ? '<i class="fas fa-sliders-h"></i><span>Filtreleri A\u00e7</span>'
+            : '<i class="fas fa-times"></i><span>Filtreleri Gizle</span>';
+        btn.title = turkeyMapFiltersCollapsed ? 'Filtre panelini a\u00e7' : 'Filtre panelini gizle';
+    });
+}
+
+function toggleTurkeyMapFilters(force) {
+    turkeyMapFiltersCollapsed = typeof force === 'boolean' ? force : !turkeyMapFiltersCollapsed;
+    syncTurkeyMapWorkspaceUi();
+    scheduleTurkeyMapResize(true);
+}
+
+function toggleTurkeyMapFocusMode() {
+    return;
+}
+
+function handleTurkeyMapDoubleClick(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+}
+
+function teardownTurkeyMapWorkspace() {
+    if (turkeyMapResizeTimer) {
+        clearTimeout(turkeyMapResizeTimer);
+        turkeyMapResizeTimer = null;
+    }
+    if (turkeyMapResizeObserver) {
+        turkeyMapResizeObserver.disconnect();
+        turkeyMapResizeObserver = null;
+    }
+
+    turkeyMapFiltersCollapsed = true;
+    turkeyMapProvinceSelectHandler = null;
+    turkeyMapSelectedProvinceName = '';
+    document.body.classList.remove('map-focus-mode');
+    setMapPageChromeHidden(false);
+}
+
+async function loadMapPage() {
+    try {
+        setMapPageChromeHidden(true);
+        turkeyMapFiltersCollapsed = true;
+        turkeyMapProvinceSelectHandler = null;
+        turkeyMapSelectedProvinceName = '';
+
+        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || getSelectedBrandId({ fallbackToFirst: true, allowBlankForAdmin: true });
+        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
+        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
+        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
+        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
+        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
+
+        mapAvailableYears = (await API.getTuikYears())
+            .map(year => parseInt(year, 10))
+            .filter(Number.isFinite)
+            .filter((year, index, arr) => arr.indexOf(year) === index)
+            .sort((a, b) => a - b);
+
+        const currentYearValue = document.getElementById('mapYearFilter')?.value;
+        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
+        const defaultYear = (!currentYearValue || currentYearValue === 'all')
+            ? 'all'
+            : (mapAvailableYears.includes(parseInt(currentYearValue, 10)) ? currentYearValue : 'all');
+        const yearOptions = [
+            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>Tüm Yıllar</option>`,
+            ...(mapAvailableYears || []).length
+                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
+                : [`<option value="${fallbackYear}" ${defaultYear === fallbackYear ? 'selected' : ''}>${fallbackYear}</option>`]
+        ].join('');
+
+        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
+        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
+        const content = document.getElementById('pageContent');
+
+        content.innerHTML = `
+            <div id="turkeyMapWorkspace" class="turkey-map-workspace">
+                <section id="turkeyMapFilterPanel" class="tmx-filter-panel">
+                    <div class="tmx-filter-header">
+                        <div class="tmx-filter-copy">
+                            <span class="tmx-kicker">Harita Kontrolleri</span>
+                            <div class="tmx-filter-title-row">
+                                <h3>Filtreler</h3>
+                                <span id="turkeyMapFilterSummary" class="tmx-filter-summary"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tmx-filter-body">
+                        <div class="tmx-filter-grid">
+                            <select id="mapBrandFilter" onchange="updateMap()">
+                                <option value="">Tüm Markalar</option>
+                                ${brandOptions}
+                            </select>
+                            <select id="mapYearFilter" onchange="updateMap()">
+                                ${yearOptions}
+                            </select>
+                            <select id="mapCabinFilter" onchange="updateMap()">
+                                <option value="">Tüm Kabin</option>
+                                ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
+                            </select>
+                            <select id="mapDriveFilter" onchange="updateMap()">
+                                <option value="">Tüm Çekiş</option>
+                                ${selectedOption(currentDriveValue, currentDriveValue)}
+                            </select>
+                            <select id="mapGearFilter" onchange="updateMap()">
+                                <option value="">Tüm Şanzıman</option>
+                                ${selectedOption(currentGearValue, currentGearValue)}
+                            </select>
+                            <select id="mapHpFilter" onchange="updateMap()">
+                                <option value="">Tüm HP</option>
+                                ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
+                            </select>
+                            <select id="mapRegionFilter" onchange="updateMap()">
+                                <option value="">Tüm Bölgeler</option>
+                                <option value="Marmara">Marmara</option>
+                                <option value="Ege">Ege</option>
+                                <option value="Akdeniz">Akdeniz</option>
+                                <option value="İç Anadolu">İç Anadolu</option>
+                                <option value="Karadeniz">Karadeniz</option>
+                                <option value="Doğu Anadolu">Doğu Anadolu</option>
+                                <option value="Güneydoğu Anadolu">Güneydoğu Anadolu</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="card tmx-map-card">
+                    <div class="card-body tmx-map-body">
+                        <div class="tmx-map-stage">
+                            <div class="tmx-map-toolbar">
+                                <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
+                                <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                    <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
+                                </button>
+                                <button type="button" class="tmx-btn tmx-btn-ghost" data-sidebar-toggle onclick="toggleSidebar(event)">
+                                    <i class="fas fa-bars"></i><span>Menü</span>
+                                </button>
+                            </div>
+                            <div class="tmx-map-title">
+                                <strong>Türkiye Satış Haritası</strong>
+                                <span>İl bazlı satış dağılımı</span>
+                            </div>
+                            <div class="turkey-map-container tmx-map-container">
+                                <div id="turkeyMap"></div>
+                            </div>
+                        </div>
+                        <div class="tmx-legend">
+                            <span><i style="background:#1e40af"></i>Yüksek</span>
+                            <span><i style="background:#3b82f6"></i>Orta-Yüksek</span>
+                            <span><i style="background:#60a5fa"></i>Orta</span>
+                            <span><i style="background:#93c5fd"></i>Düşük</span>
+                            <span><i style="background:#1e293b"></i>Satış Yok</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        if (currentRegionValue) {
+            const regionFilter = document.getElementById('mapRegionFilter');
+            if (regionFilter) regionFilter.value = currentRegionValue;
+        }
+
+        bindTurkeyMapResizeObserver();
+        syncTurkeyMapWorkspaceUi();
+        await updateMap();
+        scheduleTurkeyMapResize(true);
     } catch (err) {
         showError(err);
     }
@@ -2121,6 +7293,8 @@ function initLeafletMap(salesData, selectedRegion = 'all') {
     leafletMap = L.map('turkeyMap', {
         center: [39.0, 35.5],
         zoom: 6,
+        zoomSnap: 0.1,
+        zoomDelta: 0.25,
         zoomControl: false,
         dragging: false,
         touchZoom: false,
@@ -2137,7 +7311,7 @@ function initLeafletMap(salesData, selectedRegion = 'all') {
     }).addTo(leafletMap);
 
     // Load GeoJSON
-    loadTurkeyGeoJSON(salesData);
+    loadTurkeyGeoJSON(salesData, selectedRegion);
 }
 
 async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
@@ -2150,8 +7324,10 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
         const provinceSales = {};
         (salesData || []).forEach(s => {
             const name = s.province_name;
-            if (!provinceSales[name]) provinceSales[name] = { total: 0, brands: {}, models: {} };
+            const provinceTotal = parseInt(s.province_total_sales, 10) || 0;
+            if (!provinceSales[name]) provinceSales[name] = { total: 0, provinceTotal: 0, brands: {}, models: {} };
             provinceSales[name].total += parseInt(s.total_sales);
+            provinceSales[name].provinceTotal = Math.max(provinceSales[name].provinceTotal || 0, provinceTotal);
             if (s.brand_name) {
                 if (!provinceSales[name].brands[s.brand_name]) provinceSales[name].brands[s.brand_name] = 0;
                 provinceSales[name].brands[s.brand_name] += parseInt(s.total_sales);
@@ -2202,10 +7378,10 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                 const sales = provinceSales[dbName]?.total || 0;
                 return {
                     fillColor: getColor(sales),
-                    weight: 1,
+                    weight: turkeyMapSelectedProvinceName === dbName ? 2.4 : 1,
                     opacity: 1,
-                    color: '#334155',
-                    fillOpacity: 0.85
+                    color: turkeyMapSelectedProvinceName === dbName ? '#f8fafc' : '#334155',
+                    fillOpacity: turkeyMapSelectedProvinceName === dbName ? 0.98 : 0.85
                 };
             },
             onEachFeature: function(feature, layer) {
@@ -2213,13 +7389,17 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                 const dbName = nameMap[name] || name;
                 const data = provinceSales[dbName];
                 const sales = data?.total || 0;
+                const provinceTotal = data?.provinceTotal || sales;
                 const prov = allProvinces.find(p => p.name === dbName);
 
                 // Tooltip
                 const isBrandSelected = !!document.getElementById('mapBrandFilter')?.value;
+                const percentageBase = isBrandSelected ? provinceTotal : sales;
+                const shouldShowProvinceShare = isBrandSelected && provinceTotal > 0 && provinceTotal !== sales;
                 const topItems = data ? (isBrandSelected && Object.keys(data.models).length > 0
                     ? Object.entries(data.models).sort((a,b) => b[1]-a[1]).slice(0,5)
-                    : Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,3)) : [];
+                    : Object.entries(data.brands).sort((a,b) => b[1]-a[1]).slice(0,5)) : [];
+                const shareLabel = (value) => percentageBase > 0 ? `%${((value / percentageBase) * 100).toFixed(1)}` : '%0.0';
                 
                 const titleStr = isBrandSelected ? "En Çok Satan Modeller:" : "En Çok Satan Markalar:";
                 layer.bindTooltip(`
@@ -2229,13 +7409,32 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
+                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>Ä°l ToplamÄ±:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
+                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>Ä°l PayÄ±:</span><span>${shareLabel(sales)}</span></div>` : ''}
                         ${topItems.length > 0 ? `
                             <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                             <div style="font-size:11px;color:#94a3b8">${titleStr}</div>
-                            ${topItems.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])}</span></div>`).join('')}
+                            ${topItems.map((b,i) => `<div style="display:flex;justify-content:space-between;font-size:11px;gap:12px"><span>${i+1}. ${b[0]}</span><span>${formatNumber(b[1])} (${shareLabel(b[1])})</span></div>`).join('')}
                         ` : ''}
                     </div>
                 `, { sticky: true, className: 'map-tooltip' });
+                const cleanTooltipHtml = `
+                    <div style="font-size:13px;min-width:180px">
+                        <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
+                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                        <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
+                        ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
+                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>\u0130l Toplam\u0131:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
+                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>\u0130l Pay\u0131:</span><span>${shareLabel(sales)}</span></div>` : ''}
+                        ${topItems.length > 0 ? `
+                            <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
+                            <div style="font-size:11px;color:#94a3b8">${titleStr.replace(/Ã‡/g, 'Ç').replace(/Ã¶/g, 'ö').replace(/Ã¼/g, 'ü').replace(/Ä±/g, 'ı').replace(/ÅŸ/g, 'ş').replace(/Ä°/g, 'İ')}</div>
+                            ${topItems.map((b, i) => `<div style="display:flex;justify-content:space-between;font-size:11px;gap:12px"><span>${i + 1}. ${b[0]}</span><span>${formatNumber(b[1])} (${shareLabel(b[1])})</span></div>`).join('')}
+                        ` : ''}
+                    </div>
+                `;
+                layer.setTooltipContent(cleanTooltipHtml);
 
                 // Hover effect
                 layer.on('mouseover', function() {
@@ -2243,19 +7442,41 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                     this.bringToFront();
                 });
                 layer.on('mouseout', function() {
-                    geoJsonLayer.resetStyle(this);
+                    if (turkeyMapSelectedProvinceName === dbName) {
+                        this.setStyle({ weight: 2.4, color: '#f8fafc', fillOpacity: 0.98 });
+                    } else {
+                        geoJsonLayer.resetStyle(this);
+                    }
                 });
                 layer.on('click', function() {
-                    // İl detayına git
+                    turkeyMapSelectedProvinceName = dbName;
+                    if (geoJsonLayer?.eachLayer) {
+                        geoJsonLayer.eachLayer(item => {
+                            if (item !== this) geoJsonLayer.resetStyle(item);
+                        });
+                    }
+                    this.setStyle({ weight: 2.4, color: '#f8fafc', fillOpacity: 0.98 });
                     if (prov) {
-                        document.getElementById('pageContent').scrollTo(0, 0);
+                        if (typeof turkeyMapProvinceSelectHandler === 'function') {
+                            turkeyMapProvinceSelectHandler({
+                                province: prov,
+                                province_name: dbName,
+                                sales,
+                                province_total_sales: provinceTotal,
+                                is_brand_selected: isBrandSelected,
+                                top_items: topItems,
+                                raw: data
+                            });
+                        } else {
+                            document.getElementById('pageContent')?.scrollTo(0, 0);
+                        }
                     }
                 });
             }
         }).addTo(leafletMap);
 
         // Fit bounds to Turkey
-        leafletMap.fitBounds(geoJsonLayer.getBounds(), { padding: [20, 20] });
+        applyTurkeyMapViewportBounds();
 
     } catch (err) {
         console.error('GeoJSON yükleme hatası:', err);
@@ -2337,15 +7558,33 @@ function renderRegionChart(salesData) {
 }
 
 async function updateMap() {
-    const brandId = document.getElementById('mapBrandFilter')?.value;
     const regionVal = document.getElementById('mapRegionFilter')?.value;
-    const yearVal = document.getElementById('mapYearFilter')?.value || 'all';
-    
-    // Yıl değiştiyse backend'den veriyi tekrar çekelim.
-    mapSalesData = await API.getSalesByProvince(yearVal, brandId);
-    
+    const yearVal = document.getElementById('mapYearFilter')?.value || (currentPage === 'regional-index' ? String(selectedYear || '') : 'all');
+
+    const requestedFilters = getTurkeyMapFilters();
+    const options = await API.getMapFilterOptions(yearVal, requestedFilters);
+    updateTurkeyMapFilterOptions(options);
+
+    const effectiveFilters = getTurkeyMapFilters();
+    syncActiveBrandContextById(effectiveFilters.brand_id);
+    mapSalesData = await API.getSalesByProvince(yearVal, effectiveFilters.brand_id, {
+        cabin_type: effectiveFilters.cabin_type,
+        drive_type: effectiveFilters.drive_type,
+        hp_range: effectiveFilters.hp_range,
+        gear_config: effectiveFilters.gear_config
+    });
+
     if (leafletMap) {
         loadTurkeyGeoJSON(mapSalesData, regionVal);
+    } else {
+        initLeafletMap(mapSalesData, regionVal || 'all');
+    }
+
+    syncTurkeyMapWorkspaceUi();
+    scheduleTurkeyMapResize(true);
+
+    if (currentPage === 'regional-index') {
+        await handleRegionalIndexMapUpdated();
     }
 }
 
@@ -2354,10 +7593,11 @@ async function updateMap() {
 // ============================================
 async function loadSalesPage() {
     try {
+        const selectedBrandId = getSelectedBrandId({ fallbackToFirst: true, allowBlankForAdmin: true });
         const [categoryData, hpData, trendData] = await Promise.all([
-            API.getSalesByCategory(selectedYear, 'category', currentUser?.brand_id),
-            API.getHpComparison(selectedYear, currentUser?.brand_id),
-            API.getMonthlyTrend(selectedYear, currentUser?.brand_id)
+            API.getSalesByCategory(selectedYear, 'category', selectedBrandId),
+            API.getHpComparison(selectedYear, selectedBrandId),
+            API.getMonthlyTrend(selectedYear, selectedBrandId)
         ]);
 
         const content = document.getElementById('pageContent');
@@ -2372,7 +7612,7 @@ async function loadSalesPage() {
                 </select>
                 <select id="salesBrandFilter">
                     <option value="">Tüm Markalar</option>
-                    ${allBrands.map(b => `<option value="${b.id}" ${b.id === currentUser?.brand_id ? 'selected' : ''}>${b.name}</option>`).join('')}
+                    ${allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${b.name}</option>`).join('')}
                 </select>
                 <button class="btn-filter" onclick="updateSalesCharts()"><i class="fas fa-filter"></i> Filtrele</button>
             </div>
@@ -2484,6 +7724,7 @@ function renderAllBrandsTrend(data) {
 async function updateSalesCharts() {
     const dim = document.getElementById('salesDimension')?.value;
     const brandId = document.getElementById('salesBrandFilter')?.value;
+    syncActiveBrandContextById(brandId);
     const data = await API.getSalesByCategory(selectedYear, dim, brandId);
     charts.category?.destroy();
     renderCategoryChart(data);
@@ -2494,14 +7735,14 @@ async function updateSalesCharts() {
 // ============================================
 async function loadCompetitorsPage() {
     try {
+        const selectedBrandId = getSelectedBrandId({ fallbackToFirst: true });
+        const selectedBrand = findBrandById(selectedBrandId) || null;
         const marketShare = await API.getMarketShare(selectedYear);
         const content = document.getElementById('pageContent');
 
         content.innerHTML = `
             <div class="filter-bar">
-                <select id="compBrandFilter">
-                    ${allBrands.map(b => `<option value="${b.id}" ${b.id === currentUser?.brand_id ? 'selected' : ''}>${b.name}</option>`).join('')}
-                </select>
+                <input type="hidden" id="compBrandFilter" value="${selectedBrandId || ''}">
                 <select id="compDimension">
                     <option value="cabin_type">Kabinli vs Rollbar</option>
                     <option value="drive_type">2WD vs 4WD</option>
@@ -2544,7 +7785,7 @@ async function loadCompetitorsPage() {
                     label: 'Pazar Payı %',
                     data: top15.map(b => parseFloat(b.market_share_pct)),
                     backgroundColor: top15.map(b => {
-                        const isMyBrand = b.slug === currentUser?.brand?.slug;
+                        const isMyBrand = String(b.brand_id || b.id || '') === String(selectedBrandId || '') || b.slug === selectedBrand?.slug;
                         return isMyBrand ? b.primary_color : b.primary_color + '80';
                     }),
                     borderColor: top15.map(b => b.primary_color),
@@ -2558,7 +7799,7 @@ async function loadCompetitorsPage() {
         // Competitor table
         const tbody = document.querySelector('#compTable tbody');
         top15.forEach((b, i) => {
-            const isMyBrand = b.slug === currentUser?.brand?.slug;
+            const isMyBrand = String(b.brand_id || b.id || '') === String(selectedBrandId || '') || b.slug === selectedBrand?.slug;
             tbody.innerHTML += `
                 <tr style="${isMyBrand ? 'background:rgba(59,130,246,0.08);font-weight:600' : ''}">
                     <td><div class="rank" style="background:${b.primary_color}20;color:${b.primary_color}">${i + 1}</div></td>
@@ -2582,6 +7823,7 @@ async function loadCompetitorAnalysis() {
     const dimension = document.getElementById('compDimension')?.value;
     if (!brandId) return;
 
+    syncActiveBrandContextById(brandId);
     const compIds = allBrands.filter(b => b.id !== parseInt(brandId)).slice(0, 5).map(b => b.id);
     const data = await API.getCompetitorCompare(selectedYear, brandId, compIds.join(','));
 
@@ -2613,56 +7855,393 @@ async function loadCompetitorAnalysis() {
     });
 }
 
+function onCompetitorBrandChange() {
+    const brandId = document.getElementById('compBrandFilter')?.value || '';
+    syncActiveBrandContextById(brandId);
+    loadCompetitorsPage();
+}
+
 // ============================================
 // MODELS PAGE
 // ============================================
+// ============================================
+// MODEL KARŞILAŞTIRMA STÜDYOSU
+// 2 modeli yan yana spec, fiyat, satış, segment uyum boyutuyla karşılaştırır
+// ============================================
+let modelCompareState = { brand1_id: '', model1_key: '', brand2_id: '', model2_key: '' };
+
 async function loadModelsPage() {
-    const content = document.getElementById('pageContent');
-    content.innerHTML = `
-        <div class="filter-bar">
-            <select id="modelBrandFilter">
-                <option value="">Tüm Markalar</option>
-                ${allBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('')}
-            </select>
-            <select id="modelCategory">
-                <option value="">Tüm Kategoriler</option>
-                <option value="tarla">Tarla</option>
-                <option value="bahce">Bahçe</option>
-            </select>
-            <select id="modelDrive">
-                <option value="">Tüm Çekişler</option>
-                <option value="2WD">2WD</option>
-                <option value="4WD">4WD</option>
-            </select>
-            <select id="modelCabin">
-                <option value="">Tüm Tipler</option>
-                <option value="kabinli">Kabinli</option>
-                <option value="rollbar">Rollbar</option>
-            </select>
-            <input type="number" id="modelHpMin" placeholder="Min HP" style="width:80px">
-            <input type="number" id="modelHpMax" placeholder="Max HP" style="width:80px">
-            <button class="btn-filter" onclick="searchModels()"><i class="fas fa-search"></i> Ara</button>
-        </div>
+    try {
+        const allModelsRaw = await API.getModels();
+        const allModels = (allModelsRaw || []).filter(m => m.brand_id && m.model_name);
+        if (!allModels.length) {
+            document.getElementById('pageContent').innerHTML = '<div class="empty-state"><h3>Model verisi bulunamadı</h3></div>';
+            return;
+        }
 
-        <div class="card">
-            <div class="card-header">
-                <h3>Traktör Modelleri</h3>
-                <span style="font-size:12px;color:var(--text-muted)" id="modelCount">-</span>
-            </div>
-            <div class="card-body">
-                <div class="empty-state" id="modelResults">
-                    <i class="fas fa-tractor"></i>
-                    <h3>Model aramak için filtreleri kullanın</h3>
-                    <p>Marka, kategori veya beygir gücü seçerek arama yapabilirsiniz</p>
-                </div>
-            </div>
-        </div>
+        // Marka grupları (selectörler için)
+        const brandsMap = new Map();
+        allModels.forEach(m => {
+            if (!brandsMap.has(m.brand_id)) {
+                brandsMap.set(m.brand_id, { id: m.brand_id, name: m.brand_name, models: [] });
+            }
+            brandsMap.get(m.brand_id).models.push(m);
+        });
+        const brandsList = Array.from(brandsMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
 
-        <div class="card" id="compareSection" style="display:none">
-            <div class="card-header"><h3>Model Karşılaştırma</h3></div>
-            <div class="card-body" id="compareResults"></div>
-        </div>
-    `;
+        // Marka A her zaman aktif markaya kilitli (banner'dan)
+        const activeBrandId = String(activeBrandContext?.id || currentUser?.brand_id || brandsList[0]?.id || '');
+        if (String(modelCompareState.brand1_id) !== activeBrandId) {
+            modelCompareState.brand1_id = activeBrandId;
+            modelCompareState.model1_key = '';
+        }
+        if (!modelCompareState.model1_key) {
+            modelCompareState.model1_key = String(brandsMap.get(Number(activeBrandId))?.models[0]?.model_id || brandsList[0]?.models[0]?.model_id || '');
+        }
+        if (!modelCompareState.brand2_id) {
+            const altBrand = brandsList.find(b => String(b.id) !== String(modelCompareState.brand1_id)) || brandsList[1] || brandsList[0];
+            modelCompareState.brand2_id = String(altBrand?.id || '');
+            modelCompareState.model2_key = String(altBrand?.models[0]?.model_id || '');
+        }
+
+        const findModel = (brandId, modelKey) => {
+            const brand = brandsMap.get(Number(brandId));
+            if (!brand) return null;
+            return brand.models.find(m => String(m.model_id) === String(modelKey)) || brand.models[0];
+        };
+        const m1 = findModel(modelCompareState.brand1_id, modelCompareState.model1_key);
+        const m2 = findModel(modelCompareState.brand2_id, modelCompareState.model2_key);
+
+        if (!m1 || !m2) {
+            document.getElementById('pageContent').innerHTML = '<div class="empty-state"><h3>Karşılaştırma için model seçilemedi</h3></div>';
+            return;
+        }
+
+        const brand1 = findBrandById(m1.brand_id);
+        const brand2 = findBrandById(m2.brand_id);
+        const c1 = brand1?.primary_color || '#22c55e';
+        const c2 = brand2?.primary_color || '#f59e0b';
+
+        const brandOptionsFor = (selectedId) => brandsList.map(b =>
+            `<option value="${b.id}" ${String(b.id) === String(selectedId) ? 'selected' : ''}>${dashboardSafe(b.name)}</option>`
+        ).join('');
+
+        const modelOptionsFor = (brandId, selectedKey) => {
+            const brand = brandsMap.get(Number(brandId));
+            return (brand?.models || []).map(m =>
+                `<option value="${m.model_id}" ${String(m.model_id) === String(selectedKey) ? 'selected' : ''}>
+                    ${dashboardSafe(m.model_name)} · ${m.horsepower ? Math.round(m.horsepower) + ' HP' : 'HP yok'}
+                </option>`
+            ).join('');
+        };
+
+        // Spec satırları (yan yana karşılaştırma + kazanan)
+        const specRows = [
+            { label: 'Beygir Gücü', key: 'horsepower', unit: ' HP', higherWins: true, format: v => v ? `${Math.round(v)} HP` : '-' },
+            { label: 'Liste Fiyatı', key: 'price_usd', unit: '', higherWins: false, format: v => v ? fmtPrice(v) : '-' },
+            { label: 'Maliyet / HP', key: '__cost_per_hp', higherWins: false, format: (v, m) => (m.price_usd && m.horsepower) ? fmtPrice(m.price_usd / m.horsepower) : '-' },
+            { label: 'Ağırlık', key: 'weight_kg', higherWins: null, format: v => v ? `${formatNumber(v)} kg` : '-' },
+            { label: 'Kategori', key: 'category', higherWins: null, format: v => v ? translateLabel(v) : '-' },
+            { label: 'Çekiş', key: 'drive_type', higherWins: null, format: v => v || '-' },
+            { label: 'Kabin', key: 'cabin_type', higherWins: null, format: v => v ? translateLabel(v) : '-' },
+            { label: 'Şanzıman', key: 'gear_config', higherWins: null, format: v => v || '-' },
+            { label: 'Motor markası', key: 'engine_brand', higherWins: null, format: v => v || '-' },
+            { label: 'Menşei', key: 'origin', higherWins: null, format: v => v || '-' }
+        ];
+
+        const specRowsHtml = specRows.map(row => {
+            const v1Raw = row.key === '__cost_per_hp'
+                ? (m1.price_usd && m1.horsepower ? m1.price_usd / m1.horsepower : null)
+                : m1[row.key];
+            const v2Raw = row.key === '__cost_per_hp'
+                ? (m2.price_usd && m2.horsepower ? m2.price_usd / m2.horsepower : null)
+                : m2[row.key];
+
+            let winnerCol = '';
+            let diffText = '';
+            if (row.higherWins != null && v1Raw != null && v2Raw != null && Number.isFinite(Number(v1Raw)) && Number.isFinite(Number(v2Raw))) {
+                const n1 = Number(v1Raw); const n2 = Number(v2Raw);
+                if (n1 !== n2) {
+                    const diff = ((n2 - n1) / Math.max(Math.abs(n1), 0.0001)) * 100;
+                    if (row.higherWins) {
+                        winnerCol = n1 > n2 ? 'left' : 'right';
+                    } else {
+                        winnerCol = n1 < n2 ? 'left' : 'right';
+                    }
+                    diffText = `${diff > 0 ? '+' : ''}${diff.toFixed(1)}%`;
+                }
+            }
+
+            const v1Cell = row.format(v1Raw, m1);
+            const v2Cell = row.format(v2Raw, m2);
+            return `
+                <tr>
+                    <td class="mcx-spec-label">${dashboardSafe(row.label)}</td>
+                    <td class="mcx-spec-val ${winnerCol === 'left' ? 'is-winner' : ''}">${dashboardSafe(v1Cell)}</td>
+                    <td class="mcx-spec-diff">${dashboardSafe(diffText)}</td>
+                    <td class="mcx-spec-val ${winnerCol === 'right' ? 'is-winner' : ''}">${dashboardSafe(v2Cell)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        // KPI bant: 6 hızlı karar metriği
+        const hpDiff = (m1.horsepower && m2.horsepower) ? m2.horsepower - m1.horsepower : null;
+        const priceDiff = (m1.price_usd && m2.price_usd) ? m2.price_usd - m1.price_usd : null;
+        const weightDiff = (m1.weight_kg && m2.weight_kg) ? m2.weight_kg - m1.weight_kg : null;
+        const cph1 = (m1.price_usd && m1.horsepower) ? m1.price_usd / m1.horsepower : null;
+        const cph2 = (m2.price_usd && m2.horsepower) ? m2.price_usd / m2.horsepower : null;
+        const cphDiff = (cph1 && cph2) ? cph2 - cph1 : null;
+
+        const fmtSignedNum = (val, suffix = '') => {
+            if (val == null) return '-';
+            const sign = val > 0 ? '+' : '';
+            return `${sign}${formatNumber(Math.round(val))}${suffix}`;
+        };
+        const fmtSignedPrice = (val) => {
+            if (val == null) return '-';
+            const sign = val > 0 ? '+' : '-';
+            return `${sign}${fmtPrice(Math.abs(val))}`;
+        };
+
+        const kpis = [
+            { label: 'HP Farkı', value: fmtSignedNum(hpDiff, ' HP'), note: hpDiff != null ? (hpDiff > 0 ? `${dashboardSafe(brand2?.name || '')} +güç` : `${dashboardSafe(brand1?.name || '')} +güç`) : 'Veri eksik', tone: hpDiff != null ? (hpDiff > 0 ? 'is-up-right' : 'is-up-left') : 'is-analysis' },
+            { label: 'Fiyat Farkı', value: fmtSignedPrice(priceDiff), note: priceDiff != null ? (priceDiff > 0 ? `${dashboardSafe(brand2?.name || '')} pahalı` : `${dashboardSafe(brand2?.name || '')} ucuz`) : 'Fiyat eksik', tone: priceDiff != null ? (priceDiff < 0 ? 'is-up-right' : 'is-up-left') : 'is-analysis' },
+            { label: 'Maliyet/HP', value: cphDiff != null ? fmtSignedPrice(cphDiff) : '-', note: cphDiff != null ? (cphDiff > 0 ? `${dashboardSafe(brand1?.name || '')} verimli` : `${dashboardSafe(brand2?.name || '')} verimli`) : '-', tone: cphDiff != null ? (cphDiff > 0 ? 'is-up-left' : 'is-up-right') : 'is-analysis' },
+            { label: 'Ağırlık Farkı', value: fmtSignedNum(weightDiff, ' kg'), note: weightDiff != null ? 'Daha ağır = daha stabil' : 'Veri eksik', tone: 'is-analysis' },
+            { label: 'Kategori uyumu', value: m1.category === m2.category ? 'Aynı sınıf' : 'Farklı sınıf', note: `${translateLabel(m1.category || '-')} vs ${translateLabel(m2.category || '-')}`, tone: m1.category === m2.category ? 'is-up' : 'is-warning' },
+            { label: 'Çekiş', value: m1.drive_type === m2.drive_type ? 'Aynı çekiş' : 'Farklı çekiş', note: `${m1.drive_type || '-'} vs ${m2.drive_type || '-'}`, tone: m1.drive_type === m2.drive_type ? 'is-up' : 'is-warning' }
+        ];
+
+        const kpiHtml = kpis.map(k => `
+            <article class="mcx-kpi ${k.tone}">
+                <span>${dashboardSafe(k.label)}</span>
+                <strong>${dashboardSafe(k.value)}</strong>
+                <small>${dashboardSafe(k.note)}</small>
+            </article>
+        `).join('');
+
+        // Aynı segmentteki alternatif modeller (her iki modelin HP koridoru ±15 HP)
+        const targetHp = m1.horsepower || m2.horsepower || 0;
+        const targetCategory = m1.category || m2.category;
+        const alternatives = allModels
+            .filter(m => m.model_id !== m1.model_id && m.model_id !== m2.model_id)
+            .filter(m => {
+                const hpOk = !targetHp || (m.horsepower && Math.abs(m.horsepower - targetHp) <= 15);
+                const catOk = !targetCategory || m.category === targetCategory;
+                return hpOk && catOk;
+            })
+            .sort((a, b) => (b.horsepower || 0) - (a.horsepower || 0))
+            .slice(0, 8);
+
+        const alternativeCardsHtml = alternatives.map(m => {
+            const brand = findBrandById(m.brand_id);
+            const color = brand?.primary_color || '#94a3b8';
+            return `
+                <article class="mcx-alt-card" ${modelIntelAttrs(m.brand_name, m.model_name, '', m.brand_id, m.model_code || m.tuik_model_adi || '')}>
+                    <div class="mcx-alt-head">
+                        <span class="mcx-alt-dot" style="background:${color}"></span>
+                        <strong>${dashboardSafe(m.brand_name)}</strong>
+                    </div>
+                    <h4>${dashboardSafe(m.model_name)}</h4>
+                    <div class="mcx-alt-meta">
+                        <span>${m.horsepower ? Math.round(m.horsepower) + ' HP' : 'HP yok'}</span>
+                        <span>${m.drive_type || '-'}</span>
+                        <span>${m.price_usd ? fmtPrice(m.price_usd) : '-'}</span>
+                    </div>
+                    <div class="mcx-alt-actions">
+                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('left', '${m.brand_id}', '${m.model_id}')">⟵ Sol'a koy</button>
+                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('right', '${m.brand_id}', '${m.model_id}')">Sağ'a koy ⟶</button>
+                    </div>
+                </article>
+            `;
+        }).join('') || '<div class="mcx-empty">Aynı HP koridorunda alternatif model bulunamadı.</div>';
+
+        // Scatter chart için tüm segment modelleri (HP × Fiyat)
+        const segmentModels = allModels.filter(m => {
+            const hpOk = !targetHp || (m.horsepower && Math.abs(m.horsepower - targetHp) <= 25);
+            const catOk = !targetCategory || m.category === targetCategory;
+            return m.horsepower && m.price_usd && hpOk && catOk;
+        });
+
+        const content = document.getElementById('pageContent');
+        content.innerHTML = `
+            <div class="mcx-shell">
+                <!-- Selector bar (Model A: aktif marka — banner'dan; Model B: rakip seç) -->
+                <section class="mcx-selector-bar">
+                    <div class="mcx-side mcx-side-left" style="--side-color:${c1}">
+                        <div class="mcx-side-head">
+                            <span class="mcx-side-dot" style="background:${c1}"></span>
+                            <span class="mcx-side-label">${dashboardSafe(brand1?.name || 'Marka A')} · Model A</span>
+                        </div>
+                        <div class="mcx-side-fields mcx-side-fields-single">
+                            <select id="mcxModel1" onchange="onModelCompareModelChange('left', this.value)">${modelOptionsFor(modelCompareState.brand1_id, modelCompareState.model1_key)}</select>
+                        </div>
+                    </div>
+                    <div class="mcx-vs-badge">VS</div>
+                    <div class="mcx-side mcx-side-right" style="--side-color:${c2}">
+                        <div class="mcx-side-head">
+                            <span class="mcx-side-label">Rakip · Model B</span>
+                            <span class="mcx-side-dot" style="background:${c2}"></span>
+                        </div>
+                        <div class="mcx-side-fields">
+                            <select id="mcxBrand2" onchange="onModelCompareBrandChange('right', this.value)">${brandOptionsFor(modelCompareState.brand2_id)}</select>
+                            <select id="mcxModel2" onchange="onModelCompareModelChange('right', this.value)">${modelOptionsFor(modelCompareState.brand2_id, modelCompareState.model2_key)}</select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Headline -->
+                <section class="mcx-headline">
+                    <h2><span style="color:${c1}">${dashboardSafe(brand1?.name || '')} ${dashboardSafe(m1.model_name)}</span> <em>vs</em> <span style="color:${c2}">${dashboardSafe(brand2?.name || '')} ${dashboardSafe(m2.model_name)}</span></h2>
+                    <div class="mcx-quick-actions">
+                        <button class="mcx-action-btn" onclick="openModelCompareXray('left')"><i class="fas fa-x-ray"></i>Model A Röntgeni</button>
+                        <button class="mcx-action-btn" onclick="openModelCompareXray('right')"><i class="fas fa-x-ray"></i>Model B Röntgeni</button>
+                    </div>
+                </section>
+
+                <!-- 6'lı karar KPI bandı -->
+                <section class="mcx-kpi-grid">${kpiHtml}</section>
+
+                <!-- Yan yana spec karşılaştırma + scatter -->
+                <section class="mcx-grid-main">
+                    <article class="mcx-panel mcx-spec-panel">
+                        <div class="mcx-panel-head">
+                            <h3>Teknik özellik karşılaştırması</h3>
+                            <span class="mcx-hint">Yeşil arka plan = ilgili spec'te kazanan model</span>
+                        </div>
+                        <table class="mcx-spec-table">
+                            <thead>
+                                <tr>
+                                    <th>Spec</th>
+                                    <th class="mcx-spec-head" style="color:${c1}">${dashboardSafe(brand1?.name || '')}<br><small>${dashboardSafe(m1.model_name)}</small></th>
+                                    <th class="mcx-spec-diff-head">% Fark</th>
+                                    <th class="mcx-spec-head" style="color:${c2}">${dashboardSafe(brand2?.name || '')}<br><small>${dashboardSafe(m2.model_name)}</small></th>
+                                </tr>
+                            </thead>
+                            <tbody>${specRowsHtml}</tbody>
+                        </table>
+                    </article>
+                    <article class="mcx-panel">
+                        <div class="mcx-panel-head">
+                            <h3>HP × Fiyat segment haritası</h3>
+                            <span class="mcx-hint">Aynı segmentteki tüm modeller içinde pozisyon</span>
+                        </div>
+                        <div class="mcx-chart-wrap"><canvas id="mcxScatterChart"></canvas></div>
+                    </article>
+                </section>
+
+                <!-- Alternatif modeller -->
+                <section class="mcx-panel">
+                    <div class="mcx-panel-head">
+                        <h3>Aynı segmentten alternatif modeller</h3>
+                        <span class="mcx-hint">${targetHp ? `${Math.round(targetHp)} HP ±15` : 'HP eksenli'} · ${targetCategory ? translateLabel(targetCategory) : 'Tüm kategoriler'}</span>
+                    </div>
+                    <div class="mcx-alt-grid">${alternativeCardsHtml}</div>
+                </section>
+
+                <p class="mcx-footnote">Tam katalog ve tek model derinlemesine analizi için sol menüdeki <strong>Model Kataloğu</strong> sekmesine geçebilirsiniz.</p>
+            </div>
+        `;
+
+        // Seçilen modelleri window'a kaydet (Röntgen butonu için)
+        window._mcxModels = { left: m1, right: m2 };
+
+        // HP × Fiyat scatter
+        const scatterCanvas = document.getElementById('mcxScatterChart');
+        if (scatterCanvas && segmentModels.length) {
+            charts.mcxScatter?.destroy?.();
+            const otherDots = segmentModels.filter(m => m.model_id !== m1.model_id && m.model_id !== m2.model_id);
+            charts.mcxScatter = new Chart(scatterCanvas, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Segment',
+                            data: otherDots.map(m => ({ x: m.horsepower, y: m.price_usd, name: `${m.brand_name} ${m.model_name}` })),
+                            backgroundColor: 'rgba(148, 163, 184, 0.4)',
+                            pointRadius: 5
+                        },
+                        {
+                            label: brand1?.name || 'Model A',
+                            data: m1.horsepower && m1.price_usd ? [{ x: m1.horsepower, y: m1.price_usd, name: `${brand1?.name} ${m1.model_name}` }] : [],
+                            backgroundColor: c1,
+                            borderColor: '#fff',
+                            borderWidth: 2,
+                            pointRadius: 11
+                        },
+                        {
+                            label: brand2?.name || 'Model B',
+                            data: m2.horsepower && m2.price_usd ? [{ x: m2.horsepower, y: m2.price_usd, name: `${brand2?.name} ${m2.model_name}` }] : [],
+                            backgroundColor: c2,
+                            borderColor: '#fff',
+                            borderWidth: 2,
+                            pointRadius: 11
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1', font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.raw.name || ''} · ${Math.round(ctx.raw.x)} HP · ${fmtPrice(ctx.raw.y)}`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { title: { display: true, text: 'HP', color: '#94a3b8' }, ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { title: { display: true, text: 'Liste fiyatı ($)', color: '#94a3b8' }, ticks: { color: '#64748b', callback: v => fmtPrice(v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        showError(err);
+    }
+}
+
+function onModelCompareBrandChange(side, brandId) {
+    if (side === 'left') {
+        modelCompareState.brand1_id = brandId;
+        modelCompareState.model1_key = '';
+    } else {
+        modelCompareState.brand2_id = brandId;
+        modelCompareState.model2_key = '';
+    }
+    loadModelsPage();
+}
+
+function onModelCompareModelChange(side, modelKey) {
+    if (side === 'left') modelCompareState.model1_key = modelKey;
+    else modelCompareState.model2_key = modelKey;
+    loadModelsPage();
+}
+
+function setModelCompareTarget(side, brandId, modelKey) {
+    if (side === 'left') {
+        modelCompareState.brand1_id = String(brandId);
+        modelCompareState.model1_key = String(modelKey);
+    } else {
+        modelCompareState.brand2_id = String(brandId);
+        modelCompareState.model2_key = String(modelKey);
+    }
+    loadModelsPage();
+}
+
+function openModelCompareXray(side) {
+    const m = window._mcxModels?.[side];
+    if (!m) return;
+    const brand = findBrandById(m.brand_id);
+    if (typeof openModelIntelModal === 'function') {
+        openModelIntelModal({
+            brand_id: m.brand_id,
+            brand: brand?.name || m.brand_name || '',
+            model: m.model_name || '',
+            tuik_model_adi: m.model_code || m.tuik_model_adi || m.model_name || ''
+        });
+    }
 }
 
 async function searchModels() {
@@ -2671,10 +8250,12 @@ async function searchModels() {
         category: document.getElementById('modelCategory')?.value,
         drive_type: document.getElementById('modelDrive')?.value,
         cabin_type: document.getElementById('modelCabin')?.value,
+        q: document.getElementById('modelSearchText')?.value,
         hp_min: document.getElementById('modelHpMin')?.value,
         hp_max: document.getElementById('modelHpMax')?.value,
     };
 
+    syncActiveBrandContextById(filters.brand_id);
     Object.keys(filters).forEach(k => { if (!filters[k]) delete filters[k]; });
     const models = await API.getModels(filters);
 
@@ -2691,12 +8272,12 @@ async function searchModels() {
             <thead>
                 <tr>
                     <th>Marka</th><th>Model</th><th>HP</th><th>Kategori</th>
-                    <th>Kabin</th><th>Çekiş</th><th>Şanzıman</th><th>Ağırlık</th>
+                    <th>Kabin</th><th>Çekiş</th><th>Şanzıman</th><th>Ağırlık</th><th>Röntgen</th>
                 </tr>
             </thead>
             <tbody>
                 ${models.map(m => `
-                    <tr>
+                    <tr class="mi-hover-row" ${modelIntelAttrs(m.brand_name, m.model_name, '', m.brand_id, m.model_code || m.tuik_model_adi || '')} data-model-intel-hover="true">
                         <td style="color:${allBrands.find(b => b.id === m.brand_id)?.primary_color || '#fff'};font-weight:600">${m.brand_name}</td>
                         <td>${m.model_name}</td>
                         <td>${m.horsepower} HP</td>
@@ -2705,11 +8286,1077 @@ async function searchModels() {
                         <td>${m.drive_type}</td>
                         <td>${m.gear_config || '-'}</td>
                         <td>${m.weight_kg ? m.weight_kg + ' kg' : '-'}</td>
+                        <td>
+                            <button type="button" class="mi-row-btn" onclick="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
+                                <i class="fas fa-x-ray"></i><span>Röntgen</span>
+                            </button>
+                        </td>
                     </tr>
                 `).join('')}
             </tbody>
         </table>
     `;
+}
+
+function modelIntelAttrs(brand, model, sourceUrl = '', brandId = '', tuikModelName = '') {
+    return [
+        `data-model-intel-brand-id="${dashboardSafe(brandId || '')}"`,
+        `data-model-intel-brand="${dashboardSafe(brand || '')}"`,
+        `data-model-intel-model="${dashboardSafe(model || '')}"`,
+        `data-model-intel-tuik-model="${dashboardSafe(tuikModelName || model || '')}"`,
+        `data-model-intel-source="${dashboardSafe(sourceUrl || '')}"`
+    ].join(' ');
+}
+
+function getKnownModelIntelSource(brand = '', model = '') {
+    const combined = `${brand} ${model}`.toUpperCase();
+    if (combined.includes('CLAAS') && combined.includes('ARION') && combined.includes('450')) {
+        return 'https://www.tr.lectura-specs.com/tr/model/tarim-makinalari/traktorler-4wd-claas/arion-450-trend-11756863';
+    }
+    return '';
+}
+
+function openModelIntelFromElement(el) {
+    selectModelIntelFromElement(el);
+}
+
+function getModelIntelTargetFromElement(el) {
+    if (!el) return null;
+    const brand_id = el.dataset.modelIntelBrandId || '';
+    const brand = el.dataset.modelIntelBrand || '';
+    const model = el.dataset.modelIntelModel || '';
+    const tuik_model_adi = el.dataset.modelIntelTuikModel || '';
+    const source_url = el.dataset.modelIntelSource || '';
+    if (!brand && !model && !source_url) return null;
+    return { brand_id, brand, model, tuik_model_adi, source_url };
+}
+
+function selectModelIntelFromElement(el) {
+    const target = getModelIntelTargetFromElement(el);
+    if (!target) return;
+    modelIntelState.selected_model = target;
+    // Tıklanır tıklanmaz röntgen modal'ı doğrudan aç (FAB yok artık)
+    openModelIntelModal({
+        brand_id: target.brand_id || '',
+        brand: target.brand || '',
+        model: target.model || '',
+        tuik_model_adi: target.tuik_model_adi || target.model || '',
+        source_url: target.source_url || ''
+    });
+}
+
+// Floating shortcut button artık kullanılmıyor — fonksiyonlar geriye uyumluluk için no-op
+function ensureModelIntelShortcut() {
+    const existing = document.getElementById('modelIntelShortcutBtn');
+    if (existing) existing.remove();
+    return null;
+}
+
+function updateModelIntelShortcut() {
+    const existing = document.getElementById('modelIntelShortcutBtn');
+    if (existing) existing.remove();
+}
+
+function openSelectedModelIntel() {
+    const selected = modelIntelState.selected_model;
+    if (!selected) return;
+    openModelIntelModal({
+        brand_id: selected.brand_id || '',
+        brand: selected.brand || '',
+        model: selected.model || '',
+        tuik_model_adi: selected.tuik_model_adi || selected.model || '',
+        source_url: selected.source_url || ''
+    });
+}
+
+function openModelIntelDirectFromElement(el) {
+    const target = getModelIntelTargetFromElement(el);
+    if (!target) return;
+    modelIntelState.selected_model = target;
+    openModelIntelModal({
+        brand_id: target.brand_id || '',
+        brand: el.dataset.modelIntelBrand || '',
+        model: el.dataset.modelIntelModel || '',
+        tuik_model_adi: el.dataset.modelIntelTuikModel || el.dataset.modelIntelModel || '',
+        source_url: el.dataset.modelIntelSource || ''
+    });
+}
+
+function bindModelIntelInteractions() {
+    if (document.body.dataset.modelIntelBound === 'true') return;
+    document.body.dataset.modelIntelBound = 'true';
+
+    document.addEventListener('click', event => {
+        if (event.target.closest('button, a, input, select, textarea')) return;
+        const trigger = event.target.closest('[data-model-intel-hover="true"]');
+        if (!trigger) return;
+        selectModelIntelFromElement(trigger);
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeModelIntelModal();
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'm') {
+            event.preventDefault();
+            openSelectedModelIntel();
+        }
+    });
+}
+
+async function loadModelIntelPage() {
+    const selectedBrandId = getSelectedBrandId({ fallbackToFirst: true, allowBlankForAdmin: true });
+    modelIntelState.brand_id = modelIntelState.brand_id || selectedBrandId || '';
+
+    const brandOptions = currentUser?.role === 'admin'
+        ? `<option value="">Tüm Markalar</option>${allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(modelIntelState.brand_id || '') ? 'selected' : ''}>${dashboardSafe(b.name)}</option>`).join('')}`
+        : `<option value="${dashboardSafe(currentUser?.brand_id || '')}">${dashboardSafe(currentUser?.brand?.name || 'Markanız')}</option>`;
+
+    const content = document.getElementById('pageContent');
+    content.innerHTML = `
+        <div class="mi-shell">
+            <section class="mi-filter-panel">
+                <div class="mi-filter-grid">
+                    <label style="flex:1">
+                        <span>Model araması</span>
+                        <input id="miModelSearch" type="search" value="${dashboardSafe(modelIntelState.q || '')}" placeholder="örn. Arion 450, 5S, TD...">
+                    </label>
+                    <div class="mi-filter-actions">
+                        <button type="button" class="mi-action-btn" onclick="refreshModelIntelDirectory()"><i class="fas fa-search"></i><span>Listele</span></button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="modelIntelDirectory" class="mi-directory">
+                <div class="loading-screen"><div class="spinner"></div><p>Model kataloğu hazırlanıyor...</p></div>
+            </section>
+        </div>
+    `;
+
+    document.getElementById('miModelSearch')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') refreshModelIntelDirectory();
+    });
+    refreshModelIntelDirectory();
+}
+
+async function refreshModelIntelDirectory() {
+    const brandId = String(activeBrandContext?.id || currentUser?.brand_id || '');
+    const q = document.getElementById('miModelSearch')?.value || '';
+    modelIntelState.brand_id = brandId;
+    modelIntelState.q = q;
+    modelIntelState.source_url = '';
+    modelIntelState.selected_model = null;
+    updateModelIntelShortcut();
+    syncActiveBrandContextById(brandId);
+
+    const host = document.getElementById('modelIntelDirectory');
+    if (!host) return;
+    host.innerHTML = '<div class="loading-screen"><div class="spinner"></div><p>Model kataloğu hazırlanıyor...</p></div>';
+
+    try {
+        const filters = {};
+        if (brandId) filters.brand_id = brandId;
+        if (q) filters.q = q;
+        const models = await API.getModels(filters);
+        renderModelIntelDirectory(models || []);
+    } catch (err) {
+        host.innerHTML = `<div class="mi-empty"><i class="fas fa-exclamation-triangle"></i><p>${dashboardSafe(err.message || 'Model listesi alınamadı')}</p></div>`;
+    }
+}
+
+function openModelIntelFromFilters() {
+    const brandId = document.getElementById('miBrandFilter')?.value || '';
+    const brand = findBrandById(brandId)?.name || '';
+    const model = document.getElementById('miModelSearch')?.value || '';
+    openModelIntelModal({ brand_id: brandId, brand, model, source_url: getKnownModelIntelSource(brand, model) });
+}
+
+function renderModelIntelDirectory(models = []) {
+    const host = document.getElementById('modelIntelDirectory');
+    if (!host) return;
+
+    const countLabel = `${models.length} model`;
+    const cardHtml = models.length
+        ? models.slice(0, 60).map(model => {
+            const sourceUrl = getKnownModelIntelSource(model.brand_name, model.model_name);
+            return `
+                <article class="mi-model-card" ${modelIntelAttrs(model.brand_name, model.model_name, sourceUrl, model.brand_id, model.model_code || model.tuik_model_adi || '')} data-model-intel-hover="true">
+                    <div class="mi-model-top">
+                        <span class="mi-brand-dot"></span>
+                        <strong>${dashboardSafe(model.brand_name)}</strong>
+                    </div>
+                    <h3>${dashboardSafe(model.model_name)}</h3>
+                    <div class="mi-model-facts">
+                        <span>${model.horsepower ? `${dashboardSafe(model.horsepower)} HP` : 'HP yok'}</span>
+                        <span>${dashboardSafe(model.drive_type || '-')}</span>
+                        <span>${dashboardSafe(model.gear_config || '-')}</span>
+                    </div>
+                    <div class="mi-model-price">${model.price_usd ? fmtPrice(Number(model.price_usd)) : 'Fiyat kaydı yok'}</div>
+                    <button type="button" class="mi-card-btn" onclick="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
+                        <i class="fas fa-x-ray"></i><span>Röntgen</span>
+                    </button>
+                </article>
+            `;
+        }).join('')
+        : `<div class="mi-empty"><i class="fas fa-search"></i><p>Model bulunamadı. Arama metnini sadeleştirip tekrar deneyin veya model adını yazıp Seçili Röntgen'i açın.</p></div>`;
+
+    host.innerHTML = `
+        <div class="mi-directory-head">
+            <div>
+                <span class="mi-kicker">Canlı katalog</span>
+                <h3>${dashboardSafe(countLabel)}</h3>
+            </div>
+            <p>Modeli seçin; Ctrl+M veya Seçili Röntgen ile teknik formu açın.</p>
+        </div>
+        <div class="mi-card-grid">${cardHtml}</div>
+    `;
+}
+
+function ensureModelIntelModal() {
+    let modal = document.getElementById('modelIntelModal');
+    if (modal) return modal;
+
+    document.body.insertAdjacentHTML('beforeend', `
+        <div class="mi-modal" id="modelIntelModal" aria-hidden="true">
+            <div class="mi-modal-backdrop" onclick="closeModelIntelModal()"></div>
+            <section class="mi-modal-panel" role="dialog" aria-modal="true" aria-labelledby="modelIntelTitle">
+                <div class="mi-modal-head">
+                    <div>
+                        <span class="mi-kicker">Model röntgeni</span>
+                        <h2 id="modelIntelTitle">Teknik dosya</h2>
+                    </div>
+                    <button type="button" class="mi-close-btn" onclick="closeModelIntelModal()" aria-label="Kapat"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="mi-modal-body" id="modelIntelBody"></div>
+            </section>
+        </div>
+    `);
+    return document.getElementById('modelIntelModal');
+}
+
+function closeModelIntelModal() {
+    const modal = document.getElementById('modelIntelModal');
+    if (!modal) return;
+    modal.classList.remove('is-open');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+async function openModelIntelModal(params = {}) {
+    const modal = ensureModelIntelModal();
+    const body = document.getElementById('modelIntelBody');
+    const title = document.getElementById('modelIntelTitle');
+    const request = {
+        brand_id: params.brand_id || '',
+        brand: params.brand || '',
+        model: params.model || '',
+        tuik_model_adi: params.tuik_model_adi || params.model_code || params.model || '',
+        source_url: params.source_url || getKnownModelIntelSource(params.brand || '', params.model || '')
+    };
+    modelIntelState.active_request = request;
+
+    modal.classList.add('is-open');
+    modal.setAttribute('aria-hidden', 'false');
+    if (title) title.textContent = `${request.brand || ''} ${request.model || 'Teknik dosya'}`.trim();
+    if (body) {
+        body.innerHTML = `
+            <div class="mi-loading">
+                <div class="spinner"></div>
+                <div>
+                    <strong>Röntgen çekiliyor...</strong>
+                    <span>Teknik veri, TÜİK izi ve kaynak radarı birleştiriliyor.</span>
+                </div>
+            </div>
+        `;
+    }
+
+    try {
+        const data = await API.getModelIntelligence(request);
+        renderModelIntelReport(data, request);
+    } catch (err) {
+        if (body) body.innerHTML = `<div class="mi-empty"><i class="fas fa-exclamation-circle"></i><p>${dashboardSafe(err.message || 'Model raporu alınamadı')}</p></div>`;
+    }
+}
+
+function reloadActiveModelIntelWithSource() {
+    const sourceUrl = document.getElementById('miModalSourceUrl')?.value || '';
+    const active = modelIntelState.active_request || {};
+    openModelIntelModal({ ...active, source_url: sourceUrl });
+}
+
+function formatModelIntelValue(item = {}) {
+    const value = item.value;
+    if (value === null || value === undefined || value === '') return '-';
+    if (item.format === 'usd') return fmtPrice(Number(value));
+    if (item.unit) return `${Number.isFinite(Number(value)) ? Number(value).toLocaleString('tr-TR') : dashboardSafe(value)} ${dashboardSafe(item.unit)}`;
+    return dashboardSafe(value);
+}
+
+function buildModelIntelSpecCards(rows = []) {
+    const visible = rows.filter(item => item && item.value !== null && item.value !== undefined && item.value !== '');
+    if (!visible.length) return '<div class="mi-muted-box">Bu bölüm için doğrulanmış veri bekleniyor.</div>';
+    return visible.map(item => `
+        <div class="mi-spec-card">
+            <span>${dashboardSafe(item.label)}</span>
+            <strong>${formatModelIntelValue(item)}</strong>
+        </div>
+    `).join('');
+}
+
+function buildModelIntelMiniRows(rows = [], labelKey, valueKey) {
+    if (!rows.length) return '<div class="mi-muted-box">Kayıt yok.</div>';
+    return rows.map(row => `
+        <div class="mi-mini-row">
+            <span>${dashboardSafe(row[labelKey] || '-')}</span>
+            <strong>${formatNumber(row[valueKey] || 0)}</strong>
+        </div>
+    `).join('');
+}
+
+function normalizeModelIntelGallery(gallery = [], displayName = '') {
+    const seen = new Set();
+    return (Array.isArray(gallery) ? gallery : [])
+        .map((item, index) => {
+            const url = item?.url || item?.image_url || '';
+            if (!url) return null;
+            const key = String(url).toLowerCase();
+            if (seen.has(key)) return null;
+            seen.add(key);
+            const label = item.label || item.caption || item.angle_label || (index === 0 ? `${displayName} ana görseli` : `${displayName} görseli`);
+            return {
+                ...item,
+                url,
+                label,
+                caption: item.caption || label,
+                angle_label: item.angle_label || item.angle || label,
+                source: item.source || item.source_url || '',
+                source_name: item.source_name || item.provider || 'Model galeri'
+            };
+        })
+        .filter(Boolean);
+}
+
+function renderModelIntelGallery(gallery = [], displayName = '', data = {}) {
+    const normalized = normalizeModelIntelGallery(gallery, displayName);
+    const status = data.gallery_status || {};
+    const hasGallery = normalized.length > 0;
+    const syncLabel = hasGallery ? 'Aday tara' : 'Aday kaynak tara';
+    const syncTitle = status.n8n_ready
+        ? 'n8n ile resmi kaynaklardan yeni fotoğraf ara'
+        : 'n8n webhook bağlantısı yapılandırılınca otomatik tarama yapılır';
+    const syncButton = `
+        <button class="mi-gallery-sync-btn" type="button" data-mi-gallery-sync onclick="syncModelIntelGalleryFromModal()" title="${dashboardSafe(syncTitle)}">
+            <i class="fas fa-sync-alt"></i><span>${syncLabel}</span>
+        </button>
+    `;
+
+    if (!hasGallery) {
+        return `
+            <div class="mi-photo-placeholder">
+                <i class="fas fa-tractor"></i>
+                <strong>Doğrulanmış model fotoğrafı yok</strong>
+                <span>${dashboardSafe(status.last_sync_message || status.policy || 'Hatalı görsel yayınlamamak için yalnızca tam model eşleşmesi onaylanan fotoğraflar gösterilir.')}</span>
+                ${syncButton}
+            </div>
+        `;
+    }
+
+    const activeIndex = Math.max(0, Math.min(modelIntelState.gallery_index || 0, normalized.length - 1));
+    const active = normalized[activeIndex] || normalized[0];
+    const sourceLink = active.source
+        ? `<a id="miGallerySourceLink" class="mi-gallery-source" href="${dashboardSafe(active.source)}" target="_blank" rel="noreferrer"><i class="fas fa-external-link-alt"></i><span>Kaynak</span></a>`
+        : '<span id="miGallerySourceLink" class="mi-gallery-source is-muted"><i class="fas fa-link"></i><span>Kaynak bekliyor</span></span>';
+    const navButtons = normalized.length > 1
+        ? `
+            <button class="mi-gallery-nav mi-gallery-prev" type="button" onclick="setModelIntelGalleryImage(${activeIndex - 1})" title="Önceki görsel"><i class="fas fa-chevron-left"></i></button>
+            <button class="mi-gallery-nav mi-gallery-next" type="button" onclick="setModelIntelGalleryImage(${activeIndex + 1})" title="Sonraki görsel"><i class="fas fa-chevron-right"></i></button>
+        `
+        : '';
+    const thumbs = normalized.map((item, index) => `
+        <button class="mi-gallery-thumb ${index === activeIndex ? 'is-active' : ''}" type="button" onclick="setModelIntelGalleryImage(${index})" title="${dashboardSafe(item.angle_label || item.label || displayName)}">
+            <img src="${dashboardSafe(item.url)}" alt="${dashboardSafe(item.label || displayName)}" loading="lazy">
+            <span>${dashboardSafe(item.angle_label || `Görsel ${index + 1}`)}</span>
+        </button>
+    `).join('');
+
+    return `
+        <div class="mi-gallery-viewer">
+            <div class="mi-main-photo">
+                <img id="miGalleryMainImage" src="${dashboardSafe(active.url)}" alt="${dashboardSafe(active.label || displayName)}">
+                <span id="miGalleryCount" class="mi-gallery-count">${activeIndex + 1} / ${normalized.length}</span>
+                ${navButtons}
+            </div>
+            <div class="mi-gallery-meta">
+                <div>
+                    <strong id="miGalleryCaption">${dashboardSafe(active.caption || active.label || displayName)}</strong>
+                    <span id="miGallerySourceName">${dashboardSafe(active.source_name || status.source_label || 'Model galeri')}</span>
+                </div>
+                <div class="mi-gallery-actions">${sourceLink}${syncButton}</div>
+            </div>
+            <div class="mi-gallery-strip" role="list">${thumbs}</div>
+        </div>
+    `;
+}
+
+function setModelIntelGalleryImage(index = 0) {
+    const data = modelIntelState.active_data || {};
+    const displayName = data.profile?.display_name || `${modelIntelState.active_request?.brand || ''} ${modelIntelState.active_request?.model || ''}`.trim() || 'Model dosyası';
+    const gallery = normalizeModelIntelGallery(data.image_gallery || [], displayName);
+    if (!gallery.length) return;
+
+    const nextIndex = ((index % gallery.length) + gallery.length) % gallery.length;
+    modelIntelState.gallery_index = nextIndex;
+    const active = gallery[nextIndex];
+    const main = document.getElementById('miGalleryMainImage');
+    const count = document.getElementById('miGalleryCount');
+    const caption = document.getElementById('miGalleryCaption');
+    const sourceName = document.getElementById('miGallerySourceName');
+    const sourceLink = document.getElementById('miGallerySourceLink');
+    if (main) {
+        main.src = active.url;
+        main.alt = active.label || displayName;
+    }
+    if (count) count.textContent = `${nextIndex + 1} / ${gallery.length}`;
+    if (caption) caption.textContent = active.caption || active.label || displayName;
+    if (sourceName) sourceName.textContent = active.source_name || data.gallery_status?.source_label || 'Model galeri';
+    if (sourceLink) {
+        if (active.source) {
+            sourceLink.setAttribute('href', active.source);
+            sourceLink.classList.remove('is-muted');
+        } else {
+            sourceLink.removeAttribute('href');
+            sourceLink.classList.add('is-muted');
+        }
+    }
+    document.querySelectorAll('.mi-gallery-thumb').forEach((button, buttonIndex) => {
+        button.classList.toggle('is-active', buttonIndex === nextIndex);
+    });
+    document.querySelectorAll('.mi-gallery-prev').forEach(button => button.setAttribute('onclick', `setModelIntelGalleryImage(${nextIndex - 1})`));
+    document.querySelectorAll('.mi-gallery-next').forEach(button => button.setAttribute('onclick', `setModelIntelGalleryImage(${nextIndex + 1})`));
+}
+
+async function syncModelIntelGalleryFromModal() {
+    if (modelIntelState.gallery_syncing) return;
+    const active = modelIntelState.active_request || {};
+    const data = modelIntelState.active_data || {};
+    const profile = data.profile || {};
+    const payload = {
+        brand_id: active.brand_id || profile.brand_id || '',
+        brand: active.brand || profile.brand_name || '',
+        model: active.model || profile.model_name || '',
+        tuik_model_adi: profile.tuik_model_name || active.model || '',
+        source_url: active.source_url || data.meta?.source_url || ''
+    };
+
+    modelIntelState.gallery_syncing = true;
+    const buttons = document.querySelectorAll('[data-mi-gallery-sync]');
+    buttons.forEach(button => {
+        button.disabled = true;
+        button.classList.add('is-loading');
+        const label = button.querySelector('span');
+        if (label) label.textContent = 'Taranıyor';
+    });
+
+    try {
+        const result = await API.syncModelImageGallery(payload);
+        const mergedGallery = normalizeModelIntelGallery([
+            ...(result?.images || []),
+            ...(data.image_gallery || [])
+        ], profile.display_name || payload.model || 'Model dosyası');
+        modelIntelState.active_data = {
+            ...data,
+            image_gallery: mergedGallery,
+            gallery_status: {
+                ...(data.gallery_status || {}),
+                ...(result?.status ? { last_sync_status: result.status } : {}),
+                image_count: mergedGallery.length,
+                last_sync_message: result?.message || result?.error || (mergedGallery.length ? 'Galeri güncellendi.' : 'Galeri için kaynak bekleniyor.')
+            }
+        };
+        modelIntelState.gallery_index = 0;
+        renderModelIntelReport(modelIntelState.active_data, active);
+    } catch (err) {
+        modelIntelState.active_data = {
+            ...data,
+            gallery_status: {
+                ...(data.gallery_status || {}),
+                last_sync_status: 'error',
+                last_sync_message: err.message || 'Galeri taraması tamamlanamadı.'
+            }
+        };
+        renderModelIntelReport(modelIntelState.active_data, active);
+    } finally {
+        modelIntelState.gallery_syncing = false;
+    }
+}
+
+function renderModelIntelReport(data = {}, request = {}) {
+    const body = document.getElementById('modelIntelBody');
+    const title = document.getElementById('modelIntelTitle');
+    if (!body) return;
+
+    const profile = data.profile || {};
+    const metrics = data.metrics || {};
+    const sales = data.sales || {};
+    const source = data.external_source || null;
+    const specs = data.spec_groups || {};
+    const displayName = profile.display_name || `${request.brand || ''} ${request.model || ''}`.trim() || 'Model dosyası';
+    const gallery = normalizeModelIntelGallery(data.image_gallery || [], displayName);
+    modelIntelState.active_data = { ...data, image_gallery: gallery };
+    if ((modelIntelState.gallery_index || 0) >= gallery.length) modelIntelState.gallery_index = 0;
+    if (title) title.textContent = displayName;
+
+    const heroCards = [
+        { label: 'Teknik varyant', value: metrics.variant_count || 0 },
+        { label: 'Ortalama HP', value: metrics.horsepower?.avg_hp ? `${metrics.horsepower.avg_hp} HP` : '-' },
+        { label: 'Fiyat bandı', value: formatUsdBand(metrics.price?.min_usd, metrics.price?.max_usd) },
+        { label: 'TÜİK satış izi', value: formatNumber(sales.summary?.total_sales || 0) }
+    ].map(item => `
+        <div class="mi-hero-card">
+            <span>${dashboardSafe(item.label)}</span>
+            <strong>${dashboardSafe(item.value)}</strong>
+        </div>
+    `).join('');
+
+    const coverageHtml = (data.data_coverage || []).map(item => `
+        <div class="mi-coverage ${dashboardSafe(item.status || '')}">
+            <i class="fas ${item.status === 'ready' ? 'fa-check' : item.status === 'missing' ? 'fa-minus' : 'fa-link'}"></i>
+            <div>
+                <strong>${dashboardSafe(item.label)}</strong>
+                <span>${dashboardSafe(item.source || '')}</span>
+            </div>
+        </div>
+    `).join('');
+
+    const subsystemHtml = (data.subsystem_signals || []).map(item => `
+        <article class="mi-subsystem">
+            <span>${dashboardSafe(item.label)}</span>
+            <strong>${dashboardSafe(item.value || 'Kaynak bekliyor')}</strong>
+            <p>${dashboardSafe(item.note || '')}</p>
+        </article>
+    `).join('');
+
+    const externalSpecs = source?.specs?.length
+        ? source.specs.map(item => `
+            <div class="mi-mini-row">
+                <span>${dashboardSafe(item.label)}</span>
+                <strong>${dashboardSafe(item.value)}</strong>
+            </div>
+        `).join('')
+        : `<div class="mi-muted-box">${source?.status === 'error' || source?.status === 'blocked' ? dashboardSafe(source.error) : 'LECTURA veya teknik katalog URL\'si girildiğinde canlı teknik alanlar burada görünür.'}</div>`;
+
+    const sourceLinks = (data.source_links || []).map(item => `
+        <a class="mi-source-link" href="${dashboardSafe(item.url)}" target="_blank" rel="noreferrer">
+            <span>${dashboardSafe(item.label)}</span>
+            <small>${dashboardSafe(item.note || '')}</small>
+        </a>
+    `).join('');
+
+    const sourceCards = (data.source_cards || []).map(item => `
+        <article class="mi-source-card ${dashboardSafe(item.status || '')}">
+            <span>${dashboardSafe(item.label || '-')}</span>
+            <strong>${dashboardSafe(item.value || '-')}</strong>
+            <p>${dashboardSafe(item.note || '')}</p>
+        </article>
+    `).join('');
+
+    const variantRows = (data.variants || []).slice(0, 8).map(item => `
+        <tr>
+            <td>${dashboardSafe(item.model_name || '-')}</td>
+            <td>${item.engine?.power_hp ? `${dashboardSafe(item.engine.power_hp)} HP` : '-'}</td>
+            <td>${dashboardSafe(item.engine?.brand || '-')}</td>
+            <td>${dashboardSafe(item.transmission?.gear_config || '-')}</td>
+            <td>${dashboardSafe(item.design?.drive_type || '-')}</td>
+            <td>${item.price_usd ? fmtPrice(Number(item.price_usd)) : '-'}</td>
+        </tr>
+    `).join('');
+
+    const photoHtml = renderModelIntelGallery(gallery, displayName, data);
+
+    body.innerHTML = `
+        <section class="mi-report-hero">
+            <div class="mi-photo-panel">
+                ${photoHtml}
+            </div>
+            <div class="mi-report-copy">
+                <span class="mi-kicker">${dashboardSafe(profile.brand_name || 'Model')}</span>
+                <h3>${dashboardSafe(profile.model_name || displayName)}</h3>
+                <p>${dashboardSafe(profile.parent_company || profile.country_of_origin || profile.headquarters || 'Teknik ve ticari izler tek dosyada birleştirildi.')}</p>
+                <div class="mi-hero-card-grid">${heroCards}</div>
+            </div>
+        </section>
+
+        <section class="mi-report-grid">
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Tasarım ve kimlik</h4><span>teknik_veri</span></div>
+                <div class="mi-spec-grid">${buildModelIntelSpecCards(specs.design || [])}</div>
+            </article>
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Motor</h4><span>güç / tork / emisyon</span></div>
+                <div class="mi-spec-grid">${buildModelIntelSpecCards(specs.engine || [])}</div>
+            </article>
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Şanzıman ve aktarma</h4><span>vites / transmisyon</span></div>
+                <div class="mi-spec-grid">${buildModelIntelSpecCards(specs.transmission || [])}</div>
+            </article>
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Hidrolik, PTO ve ölçüler</h4><span>ekipman uyumu</span></div>
+                <div class="mi-spec-grid">${buildModelIntelSpecCards([...(specs.hydraulics || []), ...(specs.dimensions || [])])}</div>
+            </article>
+        </section>
+
+        <section class="mi-report-grid mi-report-grid-wide">
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Alt sistem sinyalleri</h4><span>tamamlanacak kritik alanlar</span></div>
+                <div class="mi-subsystem-grid">${subsystemHtml}</div>
+            </article>
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Veri kapsama</h4><span>hangi kaynak hazır?</span></div>
+                <div class="mi-coverage-grid">${coverageHtml}</div>
+            </article>
+        </section>
+
+        <section class="mi-report-grid mi-report-grid-wide">
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Satış, il ve model yılı izi</h4><span>tuik_veri / N ve N-1</span></div>
+                <div class="mi-mini-grid">
+                    <div><h5>Yıllar</h5>${buildModelIntelMiniRows(sales.yearly || [], 'year', 'total_sales')}</div>
+                    <div><h5>İller</h5>${buildModelIntelMiniRows(sales.top_provinces || [], 'province_name', 'total_sales')}</div>
+                    <div><h5>Model yılları</h5>${buildModelIntelMiniRows(sales.model_years || [], 'model_year', 'total_sales')}</div>
+                    <div><h5>Renkler</h5>${buildModelIntelMiniRows(sales.colors || [], 'color', 'total_sales')}</div>
+                </div>
+            </article>
+            <article class="mi-panel">
+                <div class="mi-panel-head"><h4>Canlı kaynak alanları</h4><span>${dashboardSafe(source?.provider || 'LECTURA / katalog')}</span></div>
+                <div class="mi-mini-stack">${externalSpecs}</div>
+            </article>
+        </section>
+
+        <section class="mi-panel">
+            <div class="mi-panel-head"><h4>Varyant tablosu</h4><span>teknik_veri eşleşmeleri</span></div>
+            <div class="mi-table-wrap">
+                <table class="data-table">
+                    <thead><tr><th>Model</th><th>HP</th><th>Motor</th><th>Şanzıman</th><th>Çekiş</th><th>Fiyat</th></tr></thead>
+                    <tbody>${variantRows || '<tr><td colspan="6">Teknik varyant bulunamadı.</td></tr>'}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="mi-panel">
+            <div class="mi-panel-head"><h4>Kaynak doğrulama özeti</h4><span>gerçek veriyle dolu kontrol kartları</span></div>
+            <div class="mi-source-grid">${sourceCards || '<div class="mi-muted-box">Kaynak özeti hazırlanamadı.</div>'}</div>
+        </section>
+    `;
+}
+
+// ============================================
+// MODEL IMAGES ADMIN PAGE — Marka Merkezi Görsel Yönetimi
+// ============================================
+const ModelImagesAdmin = {
+    state: { coverage: null, pending: [], missing: [], filterBrand: '', running: false, lastTrace: null },
+
+    async load() {
+        const content = document.getElementById('pageContent');
+        if (currentUser?.role !== 'admin') {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-lock"></i>
+                    <h3>Bu sayfa yöneticilere açıktır</h3>
+                    <p>Model görsel doğrulama merkezi yalnızca admin kullanıcılarda görünür.</p>
+                </div>`;
+            return;
+        }
+        content.innerHTML = this.renderShell();
+        await this.refreshAll();
+    },
+
+    renderShell() {
+        return `
+        <div class="mig-admin">
+            <section class="mig-kpi-row" id="migKpiRow">
+                ${this.renderKpiSkeleton()}
+            </section>
+            <section class="mig-actions">
+                <div class="mig-actions-left">
+                    <label>Marka filtresi</label>
+                    <input type="text" id="migBrandFilter" placeholder="Tüm markalar" value="${this.state.filterBrand}">
+                </div>
+                <div class="mig-actions-right">
+                    <button class="btn btn-primary" id="migSyncMissingBtn">
+                        <i class="fas fa-bolt"></i> Eksik Modelleri Tara (12 model)
+                    </button>
+                    <button class="btn btn-ghost" id="migRefreshBtn">
+                        <i class="fas fa-sync"></i> Yenile
+                    </button>
+                </div>
+            </section>
+            <div class="mig-grid">
+                <section class="mig-panel">
+                    <div class="mig-panel-head">
+                        <h3><i class="fas fa-list-check"></i> Onay Bekleyen Aday Görseller</h3>
+                        <span class="mig-badge" id="migPendingCount">-</span>
+                    </div>
+                    <div id="migPendingList" class="mig-pending-list">
+                        <div class="mig-loading">Yükleniyor...</div>
+                    </div>
+                </section>
+                <section class="mig-panel">
+                    <div class="mig-panel-head">
+                        <h3><i class="fas fa-chart-pie"></i> Marka Bazlı Kapsama</h3>
+                        <span class="mig-badge" id="migCoverageBadge">-</span>
+                    </div>
+                    <div id="migCoverageTable" class="mig-coverage-table">
+                        <div class="mig-loading">Yükleniyor...</div>
+                    </div>
+                </section>
+            </div>
+            <section class="mig-panel mig-missing-panel">
+                <div class="mig-panel-head">
+                    <h3><i class="fas fa-image-slash"></i> Fotoğrafsız Modeller</h3>
+                    <span class="mig-badge" id="migMissingBadge">-</span>
+                </div>
+                <div id="migMissingList" class="mig-missing-list">
+                    <div class="mig-loading">Yükleniyor...</div>
+                </div>
+            </section>
+            <div class="mig-trace" id="migTracePanel" style="display:none"></div>
+        </div>`;
+    },
+
+    renderKpiSkeleton() {
+        return `
+            <div class="mig-kpi"><span class="mig-kpi-label">Toplam Model</span><span class="mig-kpi-value">-</span></div>
+            <div class="mig-kpi"><span class="mig-kpi-label">Fotoğraflı</span><span class="mig-kpi-value">-</span></div>
+            <div class="mig-kpi"><span class="mig-kpi-label">Bekleyen Aday</span><span class="mig-kpi-value">-</span></div>
+            <div class="mig-kpi mig-kpi-warn"><span class="mig-kpi-label">Eksik</span><span class="mig-kpi-value">-</span></div>
+            <div class="mig-kpi mig-kpi-accent"><span class="mig-kpi-label">Kapsama %</span><span class="mig-kpi-value">-</span></div>
+        `;
+    },
+
+    async refreshAll() {
+        const settle = (label, p) => p.then(v => ({ ok: true, label, v })).catch(e => ({ ok: false, label, e }));
+        const [covRes, pendRes, missRes] = await Promise.all([
+            settle('coverage', API.getModelImageCoverage()),
+            settle('pending', API.getModelImagePending({ brand: this.state.filterBrand, limit: 60 })),
+            settle('missing', API.getModelImageMissing({ brand: this.state.filterBrand, limit: 80 }))
+        ]);
+
+        const errors = [];
+        if (covRes.ok) this.state.coverage = covRes.v; else { errors.push(`coverage: ${covRes.e?.message || covRes.e}`); this.state.coverage = null; }
+        if (pendRes.ok) this.state.pending = pendRes.v?.items || []; else { errors.push(`pending: ${pendRes.e?.message || pendRes.e}`); this.state.pending = []; }
+        if (missRes.ok) this.state.missing = missRes.v?.items || []; else { errors.push(`missing: ${missRes.e?.message || missRes.e}`); this.state.missing = []; }
+
+        this.renderKpis();
+        this.renderCoverageTable();
+        this.renderPendingList();
+        this.renderMissingList();
+        this.bindEvents();
+
+        const content = document.getElementById('pageContent');
+        const existing = content?.querySelector('.mig-error-banner');
+        if (existing) existing.remove();
+        if (errors.length && content) {
+            content.insertAdjacentHTML('afterbegin', `<div class="alert alert-danger mig-error-banner">Bazı veriler yüklenemedi: ${escapeHtml(errors.join(' | '))}</div>`);
+        }
+    },
+
+    renderKpis() {
+        const row = document.getElementById('migKpiRow');
+        if (!row) return;
+        const c = this.state.coverage?.overall;
+        if (!c) { row.innerHTML = this.renderKpiSkeleton(); return; }
+        row.innerHTML = `
+            <div class="mig-kpi"><span class="mig-kpi-label">Toplam Model</span><span class="mig-kpi-value">${fmtNum(c.total)}</span></div>
+            <div class="mig-kpi"><span class="mig-kpi-label">Fotoğraflı (Onaylı)</span><span class="mig-kpi-value">${fmtNum(c.covered)}</span></div>
+            <div class="mig-kpi"><span class="mig-kpi-label">Bekleyen Aday</span><span class="mig-kpi-value">${fmtNum(c.pending || 0)}</span></div>
+            <div class="mig-kpi mig-kpi-warn"><span class="mig-kpi-label">Eksik</span><span class="mig-kpi-value">${fmtNum(c.missing || (c.total - c.covered))}</span></div>
+            <div class="mig-kpi mig-kpi-accent"><span class="mig-kpi-label">Kapsama %</span><span class="mig-kpi-value">${(c.coverage_pct || 0).toFixed(1)}%</span></div>
+        `;
+    },
+
+    renderCoverageTable() {
+        const host = document.getElementById('migCoverageTable');
+        const badge = document.getElementById('migCoverageBadge');
+        if (!host) return;
+        const rows = this.state.coverage?.by_brand || [];
+        if (badge) badge.textContent = `${rows.length} marka`;
+        if (!rows.length) { host.innerHTML = '<div class="mig-empty">Marka verisi yok.</div>'; return; }
+        host.innerHTML = `
+            <table class="mig-table">
+                <thead>
+                    <tr><th>Marka</th><th>Toplam</th><th>Fotoğraflı</th><th>Bekleyen</th><th>Eksik</th><th>Kapsama</th><th></th></tr>
+                </thead>
+                <tbody>
+                    ${rows.map(r => `
+                        <tr data-brand="${escapeHtml(r.brand_name)}">
+                            <td><strong>${escapeHtml(r.brand_name)}</strong></td>
+                            <td>${fmtNum(r.total_models)}</td>
+                            <td class="mig-num-good">${fmtNum(r.covered_models)}</td>
+                            <td class="mig-num-warn">${fmtNum(r.pending_models)}</td>
+                            <td class="mig-num-danger">${fmtNum(r.missing_models)}</td>
+                            <td>
+                                <div class="mig-bar"><div class="mig-bar-fill" style="width:${Math.min(100, r.coverage_pct)}%"></div></div>
+                                <span class="mig-pct">${r.coverage_pct.toFixed(1)}%</span>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-ghost" data-action="brand-sync" data-brand="${escapeHtml(r.brand_name)}">
+                                    <i class="fas fa-bolt"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    },
+
+    renderPendingList() {
+        const host = document.getElementById('migPendingList');
+        const badge = document.getElementById('migPendingCount');
+        if (!host) return;
+        if (badge) badge.textContent = `${this.state.pending.length}`;
+        if (!this.state.pending.length) {
+            host.innerHTML = '<div class="mig-empty">Onay bekleyen aday görsel yok.</div>';
+            return;
+        }
+        host.innerHTML = this.state.pending.map(item => this.renderPendingItem(item)).join('');
+    },
+
+    renderPendingItem(item) {
+        const conf = item.confidence_score === null ? '-' : `${(Number(item.confidence_score) * 100).toFixed(0)}%`;
+        const matchLevel = item.model_match_level || 'unknown';
+        const matchClass = ['exact_product_page', 'exact_model'].includes(matchLevel) ? 'good' : (matchLevel === 'partial' ? 'warn' : 'danger');
+        const visionNote = item.raw_payload?.vision?.notes || '';
+        const isOfficial = item.raw_payload?.is_official_domain ? '<span class="mig-tag mig-tag-good">Resmi domain</span>' : '<span class="mig-tag">3. taraf</span>';
+        return `
+            <article class="mig-pending-item" data-id="${item.id}">
+                <div class="mig-thumb">
+                    <img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.caption || '')}" loading="lazy" onerror="this.src=''; this.style.background='#1e293b';">
+                </div>
+                <div class="mig-meta">
+                    <div class="mig-meta-head">
+                        <strong>${escapeHtml(item.brand_name)}</strong>
+                        <span>·</span>
+                        <span>${escapeHtml(item.model_name)}</span>
+                    </div>
+                    <div class="mig-meta-tags">
+                        ${isOfficial}
+                        <span class="mig-tag mig-tag-${matchClass}">${matchLevel}</span>
+                        <span class="mig-tag">${escapeHtml(item.verification_status || '')}</span>
+                        <span class="mig-tag mig-tag-conf">Skor: ${conf}</span>
+                    </div>
+                    <div class="mig-meta-source">
+                        <i class="fas fa-link"></i>
+                        <a href="${escapeHtml(item.source_url || '#')}" target="_blank" rel="noopener">${escapeHtml(item.source_name || item.source_url || '-')}</a>
+                    </div>
+                    ${visionNote ? `<div class="mig-meta-vision"><i class="fas fa-robot"></i> ${escapeHtml(visionNote)}</div>` : ''}
+                    <div class="mig-meta-actions">
+                        <button class="btn btn-sm btn-success" data-action="approve" data-id="${item.id}">
+                            <i class="fas fa-check"></i> Onayla
+                        </button>
+                        <button class="btn btn-sm btn-success btn-outline" data-action="approve-primary" data-id="${item.id}">
+                            <i class="fas fa-star"></i> Onayla & Kapak Yap
+                        </button>
+                        <button class="btn btn-sm btn-danger" data-action="reject" data-id="${item.id}">
+                            <i class="fas fa-times"></i> Reddet
+                        </button>
+                    </div>
+                </div>
+            </article>`;
+    },
+
+    renderMissingList() {
+        const host = document.getElementById('migMissingList');
+        const badge = document.getElementById('migMissingBadge');
+        if (!host) return;
+        if (badge) badge.textContent = `${this.state.missing.length}`;
+        if (!this.state.missing.length) {
+            host.innerHTML = '<div class="mig-empty mig-empty-good"><i class="fas fa-check-circle"></i> Onaylı fotoğrafı eksik model yok.</div>';
+            return;
+        }
+        const grouped = {};
+        this.state.missing.forEach(m => {
+            grouped[m.brand_name] = grouped[m.brand_name] || [];
+            grouped[m.brand_name].push(m);
+        });
+        host.innerHTML = Object.entries(grouped).map(([brand, items]) => `
+            <div class="mig-missing-group">
+                <div class="mig-missing-group-head">
+                    <strong>${escapeHtml(brand)}</strong>
+                    <span class="mig-badge">${items.length} eksik</span>
+                </div>
+                <div class="mig-missing-chips">
+                    ${items.map(m => `
+                        <button class="mig-chip ${m.candidate_count > 0 ? 'has-candidate' : ''}"
+                                data-action="single-sync"
+                                data-brand="${escapeHtml(brand)}"
+                                data-model="${escapeHtml(m.model_name)}"
+                                data-tuik="${escapeHtml(m.tuik_model_adi || m.model_name)}"
+                                title="Bu model için tarama başlat">
+                            ${escapeHtml(m.model_name)}
+                            ${m.candidate_count > 0 ? `<span class="mig-chip-cand">${m.candidate_count}</span>` : ''}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+    },
+
+    bindEvents() {
+        const refreshBtn = document.getElementById('migRefreshBtn');
+        if (refreshBtn) refreshBtn.onclick = () => this.refreshAll();
+
+        const filterInput = document.getElementById('migBrandFilter');
+        if (filterInput) {
+            filterInput.oninput = (e) => {
+                this.state.filterBrand = e.target.value.trim();
+            };
+            filterInput.onchange = () => this.refreshAll();
+        }
+
+        const syncMissingBtn = document.getElementById('migSyncMissingBtn');
+        if (syncMissingBtn) syncMissingBtn.onclick = () => this.syncMissing();
+
+        document.getElementById('migPendingList')?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            const id = btn.getAttribute('data-id');
+            const action = btn.getAttribute('data-action');
+            if (action === 'approve') await this.approve(id, false);
+            if (action === 'approve-primary') await this.approve(id, true);
+            if (action === 'reject') await this.reject(id);
+        });
+
+        document.getElementById('migMissingList')?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-action="single-sync"]');
+            if (!btn) return;
+            const brand = btn.getAttribute('data-brand');
+            const model = btn.getAttribute('data-model');
+            const tuik = btn.getAttribute('data-tuik');
+            await this.syncSingle(brand, model, tuik, btn);
+        });
+
+        document.getElementById('migCoverageTable')?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-action="brand-sync"]');
+            if (!btn) return;
+            const brand = btn.getAttribute('data-brand');
+            await this.syncBrand(brand, btn);
+        });
+    },
+
+    async approve(id, primary) {
+        try {
+            await API.approveModelImage(id, { is_primary: Boolean(primary) });
+            await this.refreshAll();
+        } catch (err) {
+            alert('Onay başarısız: ' + (err.message || err));
+        }
+    },
+
+    async reject(id) {
+        const reason = prompt('Red sebebi (opsiyonel):') || '';
+        try {
+            await API.rejectModelImage(id, reason);
+            await this.refreshAll();
+        } catch (err) {
+            alert('Red başarısız: ' + (err.message || err));
+        }
+    },
+
+    async syncSingle(brand, model, tuik, btn) {
+        if (this.state.running) return;
+        this.state.running = true;
+        const original = btn?.innerHTML;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+        try {
+            const res = await API.syncSingleModelImageBridge({ brand, model, tuik_model_adi: tuik });
+            this.showTrace(`Tek model tarama tamam: ${brand} ${model}`, res);
+            await this.refreshAll();
+        } catch (err) {
+            alert('Tarama başarısız: ' + (err.message || err));
+        } finally {
+            this.state.running = false;
+            if (btn) { btn.disabled = false; btn.innerHTML = original; }
+        }
+    },
+
+    async syncBrand(brand, btn) {
+        if (this.state.running) return;
+        if (!confirm(`${brand} için fotoğrafsız modelleri taramak istiyor musun? (max 50 model)`)) return;
+        this.state.running = true;
+        const original = btn?.innerHTML;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+        try {
+            const res = await API.syncMissingModelImages({ brand, limit: 50 });
+            this.showTrace(`${brand} toplu tarama tamam`, res);
+            await this.refreshAll();
+        } catch (err) {
+            alert('Toplu tarama başarısız: ' + (err.message || err));
+        } finally {
+            this.state.running = false;
+            if (btn) { btn.disabled = false; btn.innerHTML = original; }
+        }
+    },
+
+    async syncMissing() {
+        if (this.state.running) return;
+        if (!confirm('Sıradaki 12 fotoğrafsız modeli taramak istiyor musun?')) return;
+        this.state.running = true;
+        const btn = document.getElementById('migSyncMissingBtn');
+        const original = btn?.innerHTML;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Taranıyor...'; }
+        try {
+            const res = await API.syncMissingModelImages({ limit: 12, brand: this.state.filterBrand || undefined });
+            this.showTrace('Toplu tarama tamam', res);
+            await this.refreshAll();
+        } catch (err) {
+            alert('Tarama başarısız: ' + (err.message || err));
+        } finally {
+            this.state.running = false;
+            if (btn) { btn.disabled = false; btn.innerHTML = original; }
+        }
+    },
+
+    showTrace(title, data) {
+        const panel = document.getElementById('migTracePanel');
+        if (!panel) return;
+        const trace = data?.bridge?.trace || data?.bridge?.crawl || data?.bridge || data || {};
+        const results = Array.isArray(trace?.results) ? trace.results : (trace?.images ? [trace] : []);
+        if (!results.length && !trace?.message) {
+            panel.style.display = 'block';
+            panel.innerHTML = `<div class="mig-trace-head"><strong>${escapeHtml(title)}</strong></div><div class="mig-empty">Sonuç yok.</div>`;
+            return;
+        }
+        panel.style.display = 'block';
+        panel.innerHTML = `
+            <div class="mig-trace-head">
+                <strong>${escapeHtml(title)}</strong>
+                <button class="btn btn-sm btn-ghost" onclick="document.getElementById('migTracePanel').style.display='none'">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            ${trace.message ? `<div class="mig-trace-msg">${escapeHtml(trace.message)}</div>` : ''}
+            ${results.length ? `
+                <table class="mig-table mig-trace-table">
+                    <thead><tr><th>Marka</th><th>Model</th><th>Aday</th><th>Onaylı</th><th>Kaydedilen</th><th>Süre</th><th>Hata</th></tr></thead>
+                    <tbody>
+                        ${results.map(r => `
+                            <tr>
+                                <td>${escapeHtml(r.brand || r.brand_name || '-')}</td>
+                                <td>${escapeHtml(r.model || r.model_name || '-')}</td>
+                                <td>${r.candidate_count ?? '-'}</td>
+                                <td class="mig-num-good">${r.approved_count ?? '-'}</td>
+                                <td>${r.saved_count ?? '-'}</td>
+                                <td>${r.elapsed_ms ? `${(r.elapsed_ms/1000).toFixed(1)}s` : '-'}</td>
+                                <td class="mig-num-danger">${r.error ? escapeHtml(String(r.error)) : ''}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            ` : ''}
+        `;
+    }
+};
+
+async function loadModelImagesAdminPage() {
+    return ModelImagesAdmin.load();
 }
 
 // ============================================
@@ -2919,7 +9566,7 @@ function getWeatherIcon(condition) {
 // ============================================
 // AI INSIGHTS PAGE
 // ============================================
-async function loadAIInsightsPage() {
+async function loadAIInsightsPageLegacy() {
     try {
         const insights = await API.getInsights(currentUser?.brand_id);
         const content = document.getElementById('pageContent');
@@ -2980,7 +9627,7 @@ async function loadAIInsightsPage() {
     }
 }
 
-function translateInsightType(type) {
+function translateInsightTypeLegacy(type) {
     const map = { recommendation: '💡 Öneri', warning: '⚠️ Uyarı', opportunity: '🎯 Fırsat', analysis: '📊 Analiz', forecast: '🔮 Tahmin' };
     return map[type] || type;
 }
@@ -2988,60 +9635,3853 @@ function translateInsightType(type) {
 // ============================================
 // SUBSCRIPTION PAGE
 // ============================================
-async function loadSubscriptionPage() {
+function getAiInsightsDefaultBrandId() {
+    if (currentUser?.role !== 'admin') return String(currentUser?.brand_id || '');
+    return String(activeBrandContext?.id || allBrands?.[0]?.id || '');
+}
+
+function resolveAiInsightsRivalId(summary, brandId) {
+    const rows = Array.isArray(summary?.brands) ? summary.brands : [];
+    const currentIndex = rows.findIndex(item => String(item.id) === String(brandId || ''));
+
+    if (currentIndex > 0) return String(rows[currentIndex - 1].id);
+    if (currentIndex === 0 && rows[1]) return String(rows[1].id);
+
+    const fallback = rows.find(item => String(item.id) !== String(brandId || ''));
+    return String(fallback?.id || '');
+}
+
+function ensureAiInsightsState(summary) {
+    const defaultBrandId = getAiInsightsDefaultBrandId();
+    if (!aiInsightsState.brand_id) aiInsightsState.brand_id = defaultBrandId;
+
+    if (currentUser?.role !== 'admin') {
+        aiInsightsState.brand_id = String(currentUser?.brand_id || '');
+    }
+
+    if (!aiInsightsState.rival_id || aiInsightsState.rival_id === aiInsightsState.brand_id) {
+        aiInsightsState.rival_id = resolveAiInsightsRivalId(summary, aiInsightsState.brand_id);
+    }
+
+    if (aiInsightsState.rival_id === aiInsightsState.brand_id) {
+        aiInsightsState.rival_id = '';
+    }
+
+    return aiInsightsState;
+}
+
+function getAiInsightMeta(type) {
+    const map = {
+        recommendation: { label: 'Oneri', icon: 'fa-lightbulb', tone: 'is-opportunity' },
+        warning: { label: 'Risk', icon: 'fa-triangle-exclamation', tone: 'is-warning' },
+        opportunity: { label: 'Firsat', icon: 'fa-bullseye', tone: 'is-opportunity' },
+        analysis: { label: 'Analiz', icon: 'fa-chart-line', tone: 'is-analysis' },
+        forecast: { label: 'Tahmin', icon: 'fa-wand-magic-sparkles', tone: 'is-forecast' }
+    };
+    return map[type] || { label: type || 'Sinyal', icon: 'fa-circle-nodes', tone: 'is-analysis' };
+}
+
+function translateInsightType(type) {
+    return getAiInsightMeta(type).label;
+}
+
+function formatAiScoreValue(item, value) {
+    if (value == null || Number.isNaN(Number(value))) return '-';
+    if (['share', 'yoy', 'concentration'].includes(item?.id)) return fmtPct(Number(value), 1);
+    if (item?.id === 'cost_hp') return value ? `${fmtPrice(Number(value))}/HP` : '-';
+    if (item?.id === 'avg_hp') return `${Number(value).toFixed(1)} HP`;
+    return fmtNum(Number(value));
+}
+
+function buildAiExecutiveMemo({ brand, report, compareData, insights }) {
+    const sales = report?.sales || {};
+    const opportunity = compareData?.whitespaceSegments?.[0] || null;
+    const battle = compareData?.provinceBattles?.[0] || null;
+    const decline = sales?.province_decliners?.[0] || null;
+    const winnerScore = compareData?.winnerScore || { brand1: 0, brand2: 0 };
+    const rivalName = compareData?.brand2?.name || 'rakip marka';
+    const outperform = Number(sales?.outperformance_pp || 0);
+    const scoreGap = Number(winnerScore.brand1 || 0) - Number(winnerScore.brand2 || 0);
+
+    let stance = {
+        label: 'Seçici büyüme',
+        tone: 'is-neutral',
+        note: 'Marka alani korunurken en yüksek getiriyi verecek segment ve il cepleri secilerek büyüme kurgulanmali.'
+    };
+
+    if (outperform >= 1 && scoreGap >= 0) {
+        stance = {
+            label: 'Atak modu',
+            tone: 'is-up',
+            note: 'Pazarin üstünde hareket eden segmentlerde tempo artirimi, dağıtım ve kampanya baskısı ile pay genişletilebilir.'
+        };
+    } else if (outperform < 0 || scoreGap < 0) {
+        stance = {
+            label: 'Savunmayi sertlestir',
+            tone: 'is-down',
+            note: 'Rakibin ivmelendigi il ve HP bantlarinda kayip onleme, fiyat disiplini ve saha kapanisi oncelemeli.'
+        };
+    }
+
+    const headline = `${brand?.name || 'Marka'} ${sales?.current_sales ? `${formatNumber(sales.current_sales)} adet` : 'guncel hacim'} ve ${sales?.market_share_pct != null ? formatDashboardPercent(sales.market_share_pct, 1) : '-'} pay ile ${sales?.rank ? `${sales.rank}. sırada` : 'pazardaki konumunda'}.`;
+    const points = [
+        sales?.outperformance_pp != null
+            ? `Pazara gore momentum ${formatSignedPoints(sales.outperformance_pp, 1)} seviyesinde; marka ${formatSignedPct(sales.brand_yoy_pct, 1)} hareket ederken pazar ${formatSignedPct(sales.market_yoy_pct, 1)} degisti.`
+            : '',
+        opportunity
+            ? `${opportunity.hp} HP bandi ${formatNumber(opportunity.marketSales || 0)} adetlik hacim icinde ${formatNumber(opportunity.openVolume || 0)} adet açık alan uretiyor; lider taraf ${opportunity.leader === 'brand1' ? brand?.name : rivalName}.`
+            : '',
+        battle
+            ? `${battle.name} ${formatNumber(battle.total || 0)} adetlik kritik savas alani; ${battle.leader === 'brand1' ? brand?.name : battle.leader === 'brand2' ? rivalName : 'iki marka'} sahada onde.`
+            : '',
+        decline
+            ? `${decline.province_name} ${formatSignedPct(decline.yoy_pct, 1)} ile zayif halka olarak izlenmeli; savunma plani burada baslamali.`
+            : '',
+        insights?.[0]
+            ? `Son makine sinyali "${insights[0].title}" basligi ile ${new Date(insights[0].created_at).toLocaleDateString('tr-TR')} tarihinde uretildi.`
+            : ''
+    ].filter(Boolean).slice(0, 4);
+
+    return { stance, headline, points };
+}
+
+function buildAiScenarioCards({ report, compareData }) {
+    const sales = report?.sales || {};
+    const portfolio = report?.portfolio || {};
+    const opportunity = compareData?.whitespaceSegments?.[0] || null;
+    const battle = compareData?.provinceBattles?.[0] || null;
+    const topHp = sales?.hp_mix?.[0] || null;
+    const featureLead = (compareData?.featureOverlap || [])
+        .slice()
+        .sort((a, b) => Math.abs((b.b1 || 0) - (b.b2 || 0)) - Math.abs((a.b1 || 0) - (a.b2 || 0)))[0] || null;
+
+    return [
+        {
+            eyebrow: 'Atak senaryosu',
+            title: opportunity ? `${opportunity.hp} HP bandini ac` : 'Acik hacmi topla',
+            value: opportunity ? `${fmtNum(opportunity.openVolume || 0)} adet` : `${formatDashboardPercent(sales.market_share_pct || 0)}`,
+            note: opportunity
+                ? `Lider pay ile toplam pazar arasindaki bosluk, seçili bandda hızlı hacim toplama alani veriyor.`
+                : 'Markanin pay ivmesi olan segmentlerde hedeflenmis saha kapanisi önerilir.'
+        },
+        {
+            eyebrow: 'Savunma senaryosu',
+            title: battle ? `${battle.name} cephesini kilitle` : 'Yüksek hacimli illeri koru',
+            value: battle ? `${fmtNum(battle.gap || 0)} adet fark` : `${fmtNum(sales.top3_qty || 0)} adet`,
+            note: battle
+                ? `Rakip baskisinin en görünür oldugu cephede bayi, stok ve kampanya temposu ayni gun yönetilmeli.`
+                : 'Top 3 il yoğunluğu markanin kritik saha omurgasini oluşturuyor.'
+        },
+        {
+            eyebrow: 'Portfoy senaryosu',
+            title: topHp ? `${topHp.label} omurgasini yeniden paketle` : 'Portfoy baskısını azalt',
+            value: portfolio?.price_per_hp_usd ? `${fmtNum(portfolio.price_per_hp_usd)} $/HP` : `${fmtNum(portfolio.technical_model_count || 0)} model`,
+            note: featureLead
+                ? `${featureLead.label} tarafindaki fark, teknik argumanin sahaya nasil tasinacagini netlestiriyor.`
+                : 'Teknik mimari ile fiyat koridoru birlikte okunarak teklif yapısı sadelestirilmeli.'
+        }
+    ];
+}
+
+function buildAiRiskCards({ report, compareData, insights }) {
+    const sales = report?.sales || {};
+    const riskCards = [];
+
+    (sales?.province_decliners || []).slice(0, 2).forEach(item => {
+        riskCards.push({
+            title: `${item.province_name} ivme kaybediyor`,
+            value: formatSignedPct(item.yoy_pct, 1),
+            note: `${formatNumber(item.total_sales || 0)} adet mevcut hacim ile savunma gerektiriyor.`,
+            tone: 'is-down'
+        });
+    });
+
+    const losingBattle = (compareData?.provinceBattles || []).find(item => item.leader === 'brand2');
+    if (losingBattle) {
+        riskCards.push({
+            title: `${losingBattle.name} rakip baskisinda`,
+            value: `${formatNumber(losingBattle.gap || 0)} adet`,
+            note: `${compareData?.brand2?.name || 'Rakip'} bu ilde belirgin baski kuruyor.`,
+            tone: 'is-warning'
+        });
+    }
+
+    const pricePressure = (compareData?.scorecard || []).find(item => item.id === 'cost_hp' && item.winner === 'brand2');
+    if (pricePressure) {
+        riskCards.push({
+            title: 'Fiyat / HP baskısı',
+            value: formatAiScoreValue(pricePressure, pricePressure.v1),
+            note: `${compareData?.brand2?.name || 'Rakip'} ayni metrikte daha güçlü gorunuyor.`,
+            tone: 'is-warning'
+        });
+    }
+
+    const warningInsight = (insights || []).find(item => item.insight_type === 'warning');
+    if (warningInsight) {
+        riskCards.push({
+            title: warningInsight.title || 'Makine risk sinyali',
+            value: warningInsight.confidence_score ? `%${Math.round(warningInsight.confidence_score * 100)}` : 'Canlı',
+            note: warningInsight.content || '',
+            tone: 'is-warning'
+        });
+    }
+
+    if (riskCards.length === 0) {
+        riskCards.push({
+            title: 'Kirmizi alarm kaydi yok',
+            value: 'Stabil',
+            note: 'Canlı veride acil bir kayip sinyali gözükmüyor; seçili büyüme alanlarina odaklanilabilir.',
+            tone: 'is-up'
+        });
+    }
+
+    return riskCards.slice(0, 4);
+}
+
+function formatForecastFeatureValue(featureType, value) {
+    if (value == null || value === '') return '-';
+    if (featureType === 'cabin_type') {
+        return String(value).toLowerCase() === 'kabinli' ? 'Kabinli' : 'Rollbar';
+    }
+    if (featureType === 'category') {
+        return String(value).toLowerCase() === 'bahce' ? 'Bahce' : 'Tarla';
+    }
+    if (featureType === 'drive_type') {
+        return String(value).toUpperCase();
+    }
+    return String(value);
+}
+
+function buildAiForecastReadinessNote({ executiveForecast, readiness }) {
+    if (!executiveForecast?.run) {
+        return 'Forecast kosusu henuz olusmadi; tahmin katmani ilk tam kosudan sonra burada akacaktir.';
+    }
+
+    const missingLayers = (readiness?.layers || [])
+        .filter(item => ['soil_data', 'crop_data', 'climate_analysis', 'weather_data'].includes(item.key) && Number(item.row_count || 0) === 0)
+        .map(item => item.label);
+
+    if (executiveForecast?.overview?.reference_mode) {
+        if (missingLayers.length) {
+            return `Forecast su an referans emtia ve iklim serileri ile calisiyor. ${missingLayers.slice(0, 3).join(', ')} katmanlari gercek import bekliyor.`;
+        }
+        return 'Forecast su an referans emtia ve iklim serileri ile calisiyor. Resmi ETL geldikce hassasiyet yukselecek.';
+    }
+
+    if (missingLayers.length) {
+        return `Bazi agro katmanlari henuz bos: ${missingLayers.slice(0, 3).join(', ')}.`;
+    }
+
+    return 'Forecast katmanlari aktif ve marka bazli talep omurgasi calisiyor.';
+}
+
+function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
+    const overview = executiveForecast?.overview || {};
+    const topProvince = executiveForecast?.top_provinces?.[0] || null;
+    const hpShift = (executiveForecast?.feature_shift || []).find(item => item.feature_type === 'hp_range') || null;
+    const driveShift = (executiveForecast?.feature_shift || []).find(item => item.feature_type === 'drive_type') || null;
+    const readinessNote = buildAiForecastReadinessNote({ executiveForecast, readiness });
+
+    let stance = {
+        label: 'Forecast katmani aktif',
+        tone: 'is-forecast',
+        note: 'Markanin gelecek 12 aylık hacmi ile 10 yıllık ürün mimarisi ayni kararda okunuyor.'
+    };
+
+    if (!executiveForecast?.run) {
+        stance = {
+            label: 'Forecast beklemede',
+            tone: 'is-neutral',
+            note: 'Tahmin motoru bu marka için ilk tam kosu veya veri dolumu bekliyor.'
+        };
+    }
+
+    if (executiveForecast?.run && (overview.support_driven_share_pct || 0) >= 45) {
+        stance = {
+            label: 'Destek odakli atak',
+            tone: 'is-opportunity',
+            note: 'Destek kapsami olan iller, tahmin hacminin ana hizlandirici katmani halinde gorunuyor.'
+        };
+    } else if (executiveForecast?.run && (topProvince?.growth_pct || 0) >= 8) {
+        stance = {
+            label: 'Hizlanma penceresi',
+            tone: 'is-up',
+            note: 'Lider illerdeki tahmin büyümesi, sahada simdiden stok ve bayi temposu istemeye başlıyor.'
+        };
+    }
+
+    const headline = overview.next_12m_units
+        ? `${brand?.name || 'Marka'} için önümüzdeki 12 ayda ${formatNumber(overview.next_12m_units)} adetlik tahmin hacmi var; komuta merkezi bu hacmi il, destek ve ürün mimarisi olarak dağıtıyor.`
+        : `${brand?.name || 'Marka'} için forecast kosusu henuz yeterli veriyle dolmadi.`;
+
+    const points = [
+        topProvince
+            ? `${topProvince.province_name} ${formatNumber(topProvince.next_12m_units || 0)} adet ile ilk saldiri ili. ${topProvince.growth_pct != null ? `Beklenen ivme ${formatSignedPct(topProvince.growth_pct, 1)}.` : 'Buyume baz notu olusmadi.'}`
+            : '',
+        overview.support_driven_share_pct != null
+            ? `Tahmin hacminin ${formatDashboardPercent(overview.support_driven_share_pct, 1)} kismi aktif destek kapsami olan illerde birikiyor.`
+            : '',
+        hpShift?.dominant_long_term
+            ? `${hpShift.feature_label} tarafinda ${hpShift.dominant_long_term.horizon_year} ufkunun baskin koridoru ${formatForecastFeatureValue('hp_range', hpShift.dominant_long_term.feature_value)}; bu alan ${formatDashboardPercent(hpShift.dominant_long_term.demand_share_pct, 1)} pay uretiyor.`
+            : '',
+        driveShift?.strongest_gainer
+            ? `${driveShift.feature_label} tarafinda en hızlı kayan kombinasyon ${formatForecastFeatureValue('drive_type', driveShift.strongest_gainer.feature_value)} ve kayma ${formatSignedPoints(driveShift.strongest_gainer.delta_share_pct, 1)}.`
+            : '',
+        readinessNote
+    ].filter(Boolean).slice(0, 4);
+
+    return { stance, headline, points, readinessNote };
+}
+
+function buildAiForecastShiftCards(executiveForecast) {
+    return (executiveForecast?.feature_shift || []).slice(0, 4).map(item => {
+        const nextItem = item.dominant_next_year || null;
+        const longItem = item.dominant_long_term || null;
+        const strongestGainer = item.strongest_gainer || null;
+        const nextValue = formatForecastFeatureValue(item.feature_type, nextItem?.feature_value);
+        const longValue = formatForecastFeatureValue(item.feature_type, longItem?.feature_value);
+        const longYear = longItem?.horizon_year || nextItem?.horizon_year || '-';
+        const note = strongestGainer
+            ? `${nextItem?.horizon_year || '-'} için ${nextValue}, ${longYear} için ${longValue}. En hızlı kayan kombinasyon ${formatForecastFeatureValue(item.feature_type, strongestGainer.feature_value)} ve değişim ${formatSignedPoints(strongestGainer.delta_share_pct, 1)}.`
+            : `${nextItem?.horizon_year || '-'} için ${nextValue}, ${longYear} için ${longValue}.`;
+
+        return {
+            eyebrow: item.feature_label,
+            title: `${longYear} baskin kombinasyonu`,
+            value: longValue,
+            note
+        };
+    });
+}
+
+function onAiInsightsBrandChange() {
+    const nextBrandId = document.getElementById('aiInsightsBrandFilter')?.value || '';
+    aiInsightsState.brand_id = String(nextBrandId || '');
+    aiInsightsState.rival_id = '';
+
+    const brand = findBrandById(aiInsightsState.brand_id);
+    if (brand) {
+        setActiveBrandContext(brand, { persist: true });
+    }
+
+    loadAIInsightsPage();
+}
+
+function onAiInsightsRivalChange() {
+    aiInsightsState.rival_id = document.getElementById('aiInsightsRivalFilter')?.value || '';
+    loadAIInsightsPage();
+}
+
+const AIX_TABS = [
+    { key: 'briefing', label: 'Stratejik Brifing', icon: 'fa-chess-king' },
+    { key: 'rival', label: 'Rakip Cephesi', icon: 'fa-arrows-left-right-to-line' },
+    { key: 'forecast', label: 'Gelecek Mimarisi', icon: 'fa-chart-line' },
+    { key: 'signals', label: 'Sinyaller & Risk', icon: 'fa-satellite-dish' }
+];
+
+function onAiInsightsTabChange(key) {
+    aiInsightsState.tab = key || 'briefing';
+    loadAIInsightsPage();
+}
+
+function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
+    ['aiInsightTrend', 'aiInsightShare', 'aiInsightBattle', 'aiInsightHp', 'aiInsightForecast', 'aiInsightFeatureShift'].forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy?.();
+            delete charts[key];
+        }
+    });
+
+    const monthLabels = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const brand1 = compareData?.brand1 || {};
+    const brand2 = compareData?.brand2 || {};
+    const deep1 = brand1.data || {};
+    const deep2 = brand2.data || {};
+    const primary = brand1.primary_color || getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim() || '#2563eb';
+    const rival = brand2.primary_color || '#f97316';
+
+    const trendEl = document.getElementById('aiInsightsTrendChart');
+    if (trendEl) {
+        const labels = compareData
+            ? Array.from({ length: compareData.max_month || 12 }, (_, index) => monthLabels[index] || String(index + 1))
+            : (report?.sales?.monthly_trend || []).map(item => item.label || monthLabels[(item.month || 1) - 1]);
+
+        const currentSeries = compareData
+            ? labels.map((_, index) => Number(deep1.monthly?.[index + 1] || 0))
+            : (report?.sales?.monthly_trend || []).map(item => Number(item.current_sales || 0));
+
+        const compareSeries = compareData
+            ? labels.map((_, index) => Number(deep2.monthly?.[index + 1] || 0))
+            : (report?.sales?.monthly_trend || []).map(item => Number(item.previous_sales || 0));
+
+        const trendOptions = chartOptions('Adet');
+        charts.aiInsightTrend = new Chart(trendEl, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: brand1?.name || 'Seçili marka',
+                        data: currentSeries,
+                        borderColor: primary,
+                        backgroundColor: `${primary}22`,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        borderWidth: 3
+                    },
+                    {
+                        label: compareData ? (brand2?.name || 'Rakip') : 'Geçen yil ayni dönem',
+                        data: compareSeries,
+                        borderColor: rival,
+                        backgroundColor: 'transparent',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                ...trendOptions,
+                plugins: {
+                    ...trendOptions.plugins,
+                    tooltip: {
+                        ...trendOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const shareEl = document.getElementById('aiInsightsShareChart');
+    if (shareEl) {
+        const labels = compareData
+            ? (compareData.years || []).map(String)
+            : (report?.sales?.yearly_history || []).map(item => String(item.year));
+
+        const primarySeries = compareData
+            ? (compareData.years || []).map(year => Number(brand1.mktShare?.[year] || 0))
+            : (report?.sales?.yearly_history || []).map(item => Number(item.market_share_pct || 0));
+
+        const secondarySeries = compareData
+            ? (compareData.years || []).map(year => Number(brand2.mktShare?.[year] || 0))
+            : [];
+
+        const shareOptions = chartOptions('Pazar payi %');
+        charts.aiInsightShare = new Chart(shareEl, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: brand1?.name || 'Seçili marka',
+                        data: primarySeries,
+                        borderColor: primary,
+                        backgroundColor: `${primary}20`,
+                        fill: false,
+                        tension: 0.25,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        borderWidth: 3
+                    },
+                    ...(secondarySeries.length ? [{
+                        label: brand2?.name || 'Rakip',
+                        data: secondarySeries,
+                        borderColor: rival,
+                        backgroundColor: `${rival}20`,
+                        fill: false,
+                        tension: 0.25,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        borderWidth: 2
+                    }] : [])
+                ]
+            },
+            options: {
+                ...shareOptions,
+                plugins: {
+                    ...shareOptions.plugins,
+                    tooltip: {
+                        ...shareOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${fmtPct(ctx.raw, 1)}`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const battleEl = document.getElementById('aiInsightsBattleChart');
+    if (battleEl) {
+        const rows = compareData
+            ? (compareData.provinceBattles || []).slice(0, 8).reverse()
+            : (report?.sales?.top_provinces || []).slice(0, 8).reverse();
+
+        const battleOptions = chartOptions('Adet');
+        charts.aiInsightBattle = new Chart(battleEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => item.name || item.province_name || '-'),
+                datasets: compareData ? [
+                    {
+                        label: brand1?.name || 'Seçili marka',
+                        data: rows.map(item => Number(item.s1 || 0)),
+                        backgroundColor: `${primary}cc`,
+                        borderRadius: 10,
+                        borderSkipped: false
+                    },
+                    {
+                        label: brand2?.name || 'Rakip',
+                        data: rows.map(item => Number(item.s2 || 0)),
+                        backgroundColor: `${rival}cc`,
+                        borderRadius: 10,
+                        borderSkipped: false
+                    }
+                ] : [
+                    {
+                        label: brand1?.name || 'Seçili marka',
+                        data: rows.map(item => Number(item.total_sales || 0)),
+                        backgroundColor: `${primary}cc`,
+                        borderRadius: 10,
+                        borderSkipped: false
+                    }
+                ]
+            },
+            options: {
+                ...battleOptions,
+                indexAxis: 'y',
+                plugins: {
+                    ...battleOptions.plugins,
+                    tooltip: {
+                        ...battleOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const hpEl = document.getElementById('aiInsightsHpChart');
+    if (hpEl) {
+        const hpLabels = compareData
+            ? (compareData.hp_order || []).slice(0)
+            : (report?.sales?.hp_mix || []).map(item => item.label);
+
+        const primaryHpSeries = compareData
+            ? hpLabels.map(label => Number(brand1.segShare?.[label] || 0))
+            : (report?.sales?.hp_mix || []).map(item => Number(item.share_pct || 0));
+
+        const secondaryHpSeries = compareData
+            ? hpLabels.map(label => Number(brand2.segShare?.[label] || 0))
+            : [];
+
+        const hpOptions = chartOptions('Segment payi %');
+        charts.aiInsightHp = new Chart(hpEl, {
+            type: 'bar',
+            data: {
+                labels: hpLabels,
+                datasets: [
+                    {
+                        label: compareData ? `${brand1?.name || 'Seçili marka'} segment payi` : 'Marka segment agirligi',
+                        data: primaryHpSeries,
+                        backgroundColor: `${primary}cc`,
+                        borderRadius: 10,
+                        borderSkipped: false
+                    },
+                    ...(secondaryHpSeries.length ? [{
+                        label: `${brand2?.name || 'Rakip'} segment payi`,
+                        data: secondaryHpSeries,
+                        backgroundColor: `${rival}cc`,
+                        borderRadius: 10,
+                        borderSkipped: false
+                    }] : [])
+                ]
+            },
+            options: {
+                ...hpOptions,
+                plugins: {
+                    ...hpOptions.plugins,
+                    tooltip: {
+                        ...hpOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${fmtPct(ctx.raw, 1)}`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const forecastEl = document.getElementById('aiInsightsForecastChart');
+    if (forecastEl) {
+        const forecastRows = (executiveForecast?.monthly_curve || []).slice(0, 12);
+        if (forecastRows.length) {
+            const labels = forecastRows.map(item => `${monthLabels[(item.period_month || 1) - 1]} '${String(item.period_year).slice(-2)}`);
+            const forecastOptions = chartOptions('Tahmin adet');
+            charts.aiInsightForecast = new Chart(forecastEl, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Tahmin hacmi',
+                            data: forecastRows.map(item => Number(item.predicted_units_total || 0)),
+                            borderColor: primary,
+                            backgroundColor: `${primary}20`,
+                            fill: true,
+                            tension: 0.28,
+                            pointRadius: 3,
+                            pointHoverRadius: 5,
+                            borderWidth: 3
+                        },
+                        {
+                            label: 'Alt guven bandi',
+                            data: forecastRows.map(item => Number(item.confidence_low_total || 0)),
+                            borderColor: `${primary}88`,
+                            backgroundColor: 'transparent',
+                            fill: false,
+                            tension: 0.22,
+                            pointRadius: 0,
+                            pointHoverRadius: 0,
+                            borderDash: [6, 5],
+                            borderWidth: 1.5
+                        },
+                        {
+                            label: 'Ust guven bandi',
+                            data: forecastRows.map(item => Number(item.confidence_high_total || 0)),
+                            borderColor: `${rival}99`,
+                            backgroundColor: 'transparent',
+                            fill: false,
+                            tension: 0.22,
+                            pointRadius: 0,
+                            pointHoverRadius: 0,
+                            borderDash: [6, 5],
+                            borderWidth: 1.5
+                        }
+                    ]
+                },
+                options: {
+                    ...forecastOptions,
+                    plugins: {
+                        ...forecastOptions.plugins,
+                        tooltip: {
+                            ...forecastOptions.plugins.tooltip,
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    const featureShiftEl = document.getElementById('aiInsightsForecastFeatureChart');
+    if (featureShiftEl) {
+        const featureRows = executiveForecast?.feature_outlook || [];
+        const horizonYears = Array.from(new Set(featureRows.map(item => Number(item.horizon_year || 0)))).sort((a, b) => a - b);
+        const nextYear = horizonYears[0];
+        const longTermYear = horizonYears[horizonYears.length - 1];
+        const nextRows = featureRows.filter(item => item.feature_type === 'hp_range' && Number(item.horizon_year) === nextYear);
+        const longRows = featureRows.filter(item => item.feature_type === 'hp_range' && Number(item.horizon_year) === longTermYear);
+        const labels = Array.from(new Set([
+            ...nextRows.slice(0, 6).map(item => item.feature_value),
+            ...longRows.slice(0, 6).map(item => item.feature_value)
+        ]));
+
+        if (labels.length) {
+            const featureOptions = chartOptions('Pay %');
+            charts.aiInsightFeatureShift = new Chart(featureShiftEl, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: nextYear ? `${nextYear} payi` : 'Yakin ufuk',
+                            data: labels.map(label => Number(nextRows.find(item => item.feature_value === label)?.demand_share_pct || 0)),
+                            backgroundColor: `${primary}cc`,
+                            borderRadius: 10,
+                            borderSkipped: false
+                        },
+                        {
+                            label: longTermYear ? `${longTermYear} payi` : 'Uzun ufuk',
+                            data: labels.map(label => Number(longRows.find(item => item.feature_value === label)?.demand_share_pct || 0)),
+                            backgroundColor: `${rival}cc`,
+                            borderRadius: 10,
+                            borderSkipped: false
+                        }
+                    ]
+                },
+                options: {
+                    ...featureOptions,
+                    plugins: {
+                        ...featureOptions.plugins,
+                        tooltip: {
+                            ...featureOptions.plugins.tooltip,
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${fmtPct(ctx.raw, 1)}`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+}
+
+async function loadAIInsightsPage() {
     try {
-        const [plans, subscription] = await Promise.all([
-            API.getPlans(),
-            API.getSubscription()
+        if (!allBrands || allBrands.length === 0) {
+            allBrands = await API.getBrands();
+        }
+
+        const summary = await API.getBrandSummary();
+        if (!summary) return;
+
+        const state = ensureAiInsightsState(summary);
+        const brandId = String(state.brand_id || '');
+        if (!brandId) throw new Error('Marka seçimi bulunamadi');
+
+        const selectedBrand = findBrandById(brandId) || (summary.brands || []).find(item => String(item.id) === brandId) || allBrands[0];
+        if (selectedBrand) {
+            setActiveBrandContext(selectedBrand, { persist: currentUser?.role === 'admin' });
+        }
+
+        const resolvedRivalId = String(state.rival_id || resolveAiInsightsRivalId(summary, brandId) || '');
+        aiInsightsState.rival_id = resolvedRivalId && resolvedRivalId !== brandId ? resolvedRivalId : '';
+
+        try { await API.seedModels(); } catch (err) {}
+
+        const [portalData, insights, compareData, executiveForecast, readiness] = await Promise.all([
+            API.getBrandPortal(brandId),
+            API.getInsights(brandId).catch(() => []),
+            aiInsightsState.rival_id ? API.getBrandCompare(brandId, aiInsightsState.rival_id).catch(() => null) : Promise.resolve(null),
+            API.getForecastExecutive({ brand_id: brandId }).catch(() => null),
+            API.getFutureIntelligenceReadiness().catch(() => null)
         ]);
 
         const content = document.getElementById('pageContent');
-        content.innerHTML = `
-            ${subscription ? `
-                <div class="card" style="margin-bottom:24px;border-color:var(--brand-primary)">
-                    <div class="card-body" style="display:flex;align-items:center;gap:20px">
-                        <div class="stat-icon" style="background:rgba(59,130,246,0.15);color:var(--brand-primary);width:56px;height:56px;font-size:24px;border-radius:14px;display:flex;align-items:center;justify-content:center">
-                            <i class="fas fa-crown"></i>
+        const report = portalData?.executive_report || {};
+        const sales = report?.sales || {};
+        const portfolio = report?.portfolio || {};
+        const storyline = report?.storyline_cards || [];
+        const automation = report?.automation_roadmap || [];
+        const sourceLinks = report?.source_links || [];
+        const freshness = report?.freshness || [];
+        const selectedBrandTheme = getBrandThemeProfile(portalData?.brand || selectedBrand || activeBrandContext || {});
+        const topOpportunity = compareData?.whitespaceSegments?.[0] || null;
+        const riskCards = buildAiRiskCards({ report, compareData, insights });
+        const scenarioCards = buildAiScenarioCards({ report, compareData });
+        const memo = buildAiExecutiveMemo({
+            brand: portalData?.brand || selectedBrandTheme,
+            report,
+            compareData,
+            insights
+        });
+        const forecastOverview = executiveForecast?.overview || {};
+        const forecastMemo = buildAiForecastMemo({
+            brand: portalData?.brand || selectedBrandTheme,
+            executiveForecast,
+            readiness
+        });
+        const forecastShiftCards = buildAiForecastShiftCards(executiveForecast);
+        const forecastTopProvinces = executiveForecast?.top_provinces || [];
+        const dominantForecastHp = (executiveForecast?.feature_shift || []).find(item => item.feature_type === 'hp_range')?.dominant_long_term || null;
+        const forecastReadinessNote = buildAiForecastReadinessNote({ executiveForecast, readiness });
+
+        const recommendationCount = (insights || []).filter(item => item.insight_type === 'recommendation').length;
+        const warningCount = (insights || []).filter(item => item.insight_type === 'warning').length;
+        const opportunityCount = (insights || []).filter(item => item.insight_type === 'opportunity').length;
+        const latestWarning = (insights || []).find(item => item.insight_type === 'warning');
+        const compareGap = compareData
+            ? Math.abs((compareData.brand1?.data?.currentSales || 0) - (compareData.brand2?.data?.currentSales || 0))
+            : 0;
+
+        const signalCards = [
+            {
+                label: 'Komut durusu',
+                value: memo.stance.label,
+                note: memo.stance.note,
+                tone: memo.stance.tone
+            },
+            {
+                label: 'Marka momentumu',
+                value: sales?.brand_yoy_pct != null ? formatSignedPct(sales.brand_yoy_pct, 1) : '-',
+                note: sales?.market_yoy_pct != null ? `Pazar ${formatSignedPct(sales.market_yoy_pct, 1)}` : 'Pazar karsilastirmasi bekleniyor',
+                tone: (sales?.brand_yoy_pct || 0) >= 0 ? 'is-up' : 'is-down'
+            },
+            {
+                label: 'Pay hareketi',
+                value: sales?.share_delta_pp != null ? formatSignedPoints(sales.share_delta_pp, 2) : '-',
+                note: sales?.market_share_pct != null ? `${formatDashboardPercent(sales.market_share_pct, 1)} guncel pay` : 'Pay verisi yok',
+                tone: (sales?.share_delta_pp || 0) >= 0 ? 'is-up' : 'is-down'
+            },
+            {
+                label: 'Rakip farki',
+                value: compareData ? `${formatNumber(compareGap)} adet` : '-',
+                note: compareData ? `${compareData.brand1?.name} vs ${compareData.brand2?.name}` : 'Rakip secilmediginde acilir',
+                tone: compareData && (compareData.winnerScore?.brand1 || 0) >= (compareData.winnerScore?.brand2 || 0) ? 'is-up' : 'is-warning'
+            },
+            {
+                label: 'Acik segment',
+                value: topOpportunity ? `${topOpportunity.hp}` : '-',
+                note: topOpportunity ? `${formatNumber(topOpportunity.openVolume || 0)} adet açık hacim` : 'Beyaz alan hesabi için rakip verisi gerekli',
+                tone: 'is-opportunity'
+            },
+            {
+                label: 'Makine sinyali',
+                value: `${formatNumber((insights || []).length)}`,
+                note: latestWarning ? `${latestWarning.title}` : 'Canlı insight akışı hazir',
+                tone: latestWarning ? 'is-warning' : 'is-analysis'
+            },
+            {
+                label: '12A forecast',
+                value: forecastOverview?.next_12m_units ? `${formatNumber(forecastOverview.next_12m_units)} adet` : '-',
+                note: executiveForecast?.run ? (forecastOverview?.reference_mode ? 'Referans emtia + iklim modunda' : 'Tahmin omurgasi aktif') : 'Forecast kosusu bekleniyor',
+                tone: 'is-forecast'
+            },
+            {
+                label: '2036 lider HP',
+                value: dominantForecastHp ? formatForecastFeatureValue('hp_range', dominantForecastHp.feature_value) : '-',
+                note: dominantForecastHp ? `${fmtPct(dominantForecastHp.demand_share_pct || 0, 1)} pay beklentisi` : 'Uzun vade ozellik kaymasi bekleniyor',
+                tone: 'is-opportunity'
+            }
+        ];
+
+        const brandOptionsHtml = (summary.brands || [])
+            .map(item => `<option value="${item.id}" ${String(item.id) === brandId ? 'selected' : ''}>${dashboardSafe(item.name)} · ${formatNumber(item.curr_partial || 0)}</option>`)
+            .join('');
+
+        const rivalOptionsHtml = (summary.brands || [])
+            .filter(item => String(item.id) !== brandId)
+            .map(item => `<option value="${item.id}" ${String(item.id) === String(aiInsightsState.rival_id || '') ? 'selected' : ''}>${dashboardSafe(item.name)} · ${formatNumber(item.curr_partial || 0)}</option>`)
+            .join('');
+
+        const stageHtml = buildBrandStageHtml(selectedBrandTheme, {
+            title: `${selectedBrandTheme.name || 'Marka'} için AI savas odasi`,
+            summary: memo.stance.note,
+            compareCopy: topOpportunity
+                ? `${topOpportunity.hp} HP segmentinde ${formatNumber(topOpportunity.openVolume || 0)} adetlik açık hacim gorunuyor.`
+                : forecastTopProvinces[0]
+                    ? `${forecastTopProvinces[0].province_name} önümüzdeki 12 ayda ${formatNumber(forecastTopProvinces[0].next_12m_units || 0)} adetlik tahmin hacmiyle öne çıkıyor.`
+                : `${selectedBrandTheme.name || 'Marka'} verisi rakip ve sektor sinyalleriyle tek executive katmanda bulusturuldu.`
+        });
+
+        const storylineHtml = storyline.length > 0
+            ? storyline.map(item => `
+                <article class="aix-story-card">
+                    <span>${dashboardSafe(item.eyebrow || 'Stratejik katman')}</span>
+                    <h3>${dashboardSafe(item.title || '-')}</h3>
+                    <strong>${dashboardSafe(item.value || '-')}</strong>
+                    <p>${dashboardSafe(item.note || '')}</p>
+                </article>
+            `).join('')
+            : `
+                <article class="aix-story-card">
+                    <span>Stratejik katman</span>
+                    <h3>Executive hikaye hazir değil</h3>
+                    <strong>Beklemede</strong>
+                    <p>Marka verisi geldikce bu alan kritik anlatilarla dolacak.</p>
+                </article>
+            `;
+
+        const scorecardHtml = compareData
+            ? (compareData.scorecard || []).slice(0, 8).map(item => {
+                const winnerLabel = item.winner === 'brand1'
+                    ? compareData.brand1?.name
+                    : item.winner === 'brand2'
+                        ? compareData.brand2?.name
+                        : 'Esit';
+                const winnerTone = item.winner === 'brand1'
+                    ? 'is-up'
+                    : item.winner === 'brand2'
+                        ? 'is-warning'
+                        : 'is-neutral';
+                return `
+                    <div class="aix-score-row ${winnerTone}">
+                        <div>
+                            <span>${dashboardSafe(item.label || '-')}</span>
+                            <small>${dashboardSafe(formatAiScoreValue(item, item.v1))} / ${dashboardSafe(formatAiScoreValue(item, item.v2))}</small>
                         </div>
-                        <div style="flex:1">
-                            <h3>Mevcut Plan: ${subscription.plan_name}</h3>
-                            <p style="color:var(--text-muted);font-size:13px">
-                                ${subscription.current_period_end ? `Bitiş: ${new Date(subscription.current_period_end).toLocaleDateString('tr-TR')}` : 'Aktif'}
-                            </p>
+                        <strong>${dashboardSafe(winnerLabel)}</strong>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="aix-empty-panel">Rakip seçildiğinde skor karti acilir.</div>';
+
+        const memoPointsHtml = memo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
+
+        const scenarioHtml = scenarioCards.map(item => `
+            <article class="aix-scenario-card">
+                <span>${dashboardSafe(item.eyebrow)}</span>
+                <h3>${dashboardSafe(item.title)}</h3>
+                <strong>${dashboardSafe(item.value)}</strong>
+                <p>${dashboardSafe(item.note)}</p>
+            </article>
+        `).join('');
+
+        const opportunityRowsHtml = compareData
+            ? (compareData.whitespaceSegments || []).slice(0, 6).map(item => {
+                const leaderName = item.leader === 'brand1' ? compareData.brand1?.name : compareData.brand2?.name;
+                const move = item.leader === 'brand1'
+                    ? 'Liderligi derinlestir'
+                    : 'Takipten saldiriya gec';
+                return `
+                    <tr>
+                        <td><strong>${dashboardSafe(item.hp)}</strong></td>
+                        <td>${formatNumber(item.marketSales || 0)}</td>
+                        <td>${formatNumber(item.openVolume || 0)}</td>
+                        <td>${dashboardSafe(formatSignedPoints(item.shareGapPp, 1))}</td>
+                        <td>${dashboardSafe(leaderName || '-')}</td>
+                        <td>${dashboardSafe(move)}</td>
+                    </tr>
+                `;
+            }).join('')
+            : `
+                <tr>
+                    <td colspan="6" class="aix-table-empty">Rakip seçildiğinde beyaz alan matrisi acilir.</td>
+                </tr>
+            `;
+
+        const riskCardsHtml = riskCards.map(item => `
+            <article class="aix-risk-card ${dashboardSafe(item.tone || 'is-analysis')}">
+                <span>${dashboardSafe(item.title)}</span>
+                <strong>${dashboardSafe(item.value)}</strong>
+                <p>${dashboardSafe(item.note)}</p>
+            </article>
+        `).join('');
+
+        const streamSource = (insights || []).length > 0
+            ? (insights || []).slice(0, 6).map(item => ({
+                title: item.title,
+                content: item.content,
+                label: translateInsightType(item.insight_type),
+                type: item.insight_type,
+                date: item.created_at,
+                confidence: item.confidence_score,
+                place: item.province_name || item.brand_name || ''
+            }))
+            : (report.news || []).slice(0, 5).map(item => ({
+                title: item.title,
+                content: item.summary,
+                label: 'Kurumsal akis',
+                type: 'analysis',
+                date: item.date,
+                confidence: null,
+                place: ''
+            }));
+
+        const insightStreamHtml = streamSource.length > 0
+            ? streamSource.map(item => {
+                const meta = getAiInsightMeta(item.type);
+                const contentHtml = dashboardSafe(item.content || '').replace(/\n/g, '<br>');
+                const dateLabel = item.date ? new Date(item.date).toLocaleDateString('tr-TR') : 'Canlı';
+                return `
+                    <article class="aix-stream-card ${dashboardSafe(meta.tone)}">
+                        <div class="aix-stream-head">
+                            <div class="aix-stream-tag">
+                                <i class="fas ${dashboardSafe(meta.icon)}"></i>
+                                <span>${dashboardSafe(item.label)}</span>
+                            </div>
+                            <small>${dashboardSafe(dateLabel)}</small>
                         </div>
-                        <span style="padding:6px 12px;background:rgba(34,197,94,0.15);color:#22c55e;border-radius:6px;font-size:12px;font-weight:600">
-                            ${subscription.status === 'active' ? 'Aktif' : subscription.status}
-                        </span>
+                        <h3>${dashboardSafe(item.title || '-')}</h3>
+                        <p>${contentHtml}</p>
+                        <div class="aix-stream-meta">
+                            ${item.place ? `<span>${dashboardSafe(item.place)}</span>` : ''}
+                            ${item.confidence != null ? `<span>Guven %${Math.round(item.confidence * 100)}</span>` : ''}
+                        </div>
+                    </article>
+                `;
+            }).join('')
+            : '<div class="aix-empty-panel">Canlı insight veya kurumsal akis kaydi bulunamadi.</div>';
+
+        const roadmapHtml = (automation || []).slice(0, 4).map(item => `
+            <article class="aix-roadmap-card">
+                <span>${dashboardSafe(item.owner || 'Otomasyon katmani')}</span>
+                <h3>${dashboardSafe(item.title || '-')}</h3>
+                <p>${dashboardSafe(item.summary || '')}</p>
+            </article>
+        `).join('');
+
+        const freshnessHtml = freshness.map(item => `
+            <div class="aix-chip">
+                <strong>${dashboardSafe(item.value || '-')}</strong>
+                <small>${dashboardSafe(item.label || '')}</small>
+            </div>
+        `).join('');
+
+        const sourceLinksHtml = [
+            ...(compareData?.source_stack || []).map(item => ({ label: item, url: '' })),
+            ...(sourceLinks || []).slice(0, 6).map(item => ({ label: item.label || item.platform || item.url || 'Kaynak', url: item.url || '' }))
+        ].map(item => item.url
+            ? `<a class="aix-source-link" href="${dashboardSafe(item.url)}" target="_blank" rel="noreferrer">${dashboardSafe(item.label)}</a>`
+            : `<span class="aix-source-link is-static">${dashboardSafe(item.label)}</span>`).join('');
+
+        const forecastMemoPointsHtml = forecastMemo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
+        const forecastProvinceHtml = forecastTopProvinces.length > 0
+            ? forecastTopProvinces.slice(0, 6).map(item => `
+                <article class="aix-forecast-row ${item.growth_pct != null && item.growth_pct >= 8 ? 'is-up' : item.has_support ? 'is-opportunity' : 'is-forecast'}">
+                    <div class="aix-forecast-head">
+                        <div>
+                            <strong>${dashboardSafe(item.province_name || '-')}</strong>
+                            <small>${dashboardSafe(item.region_name || 'Bölge kaydi yok')}</small>
+                        </div>
+                        <div class="aix-forecast-tags">
+                            ${item.has_support ? '<span>Destek etkisi</span>' : '<span>Organik talep</span>'}
+                            ${item.growth_pct != null ? `<span>${dashboardSafe(formatSignedPct(item.growth_pct, 1))}</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="aix-forecast-metrics">
+                        <div>
+                            <span>12 Ay</span>
+                            <strong>${formatNumber(item.next_12m_units || 0)} adet</strong>
+                        </div>
+                        <div>
+                            <span>24 Ay</span>
+                            <strong>${formatNumber(item.total_horizon_units || 0)} adet</strong>
+                        </div>
+                        <div>
+                            <span>Bugun</span>
+                            <strong>${formatNumber(item.recent_12m_units || 0)} adet</strong>
+                        </div>
+                    </div>
+                </article>
+            `).join('')
+            : '<div class="aix-empty-panel">Forecast kosusu olustugunda once yukselen iller burada acilir.</div>';
+
+        const forecastShiftHtml = forecastShiftCards.length > 0
+            ? forecastShiftCards.map(item => `
+                <article class="aix-future-card">
+                    <span>${dashboardSafe(item.eyebrow || 'Ozellik kaymasi')}</span>
+                    <h3>${dashboardSafe(item.title || '-')}</h3>
+                    <strong>${dashboardSafe(item.value || '-')}</strong>
+                    <p>${dashboardSafe(item.note || '')}</p>
+                </article>
+            `).join('')
+            : '<div class="aix-empty-panel">Ozellik kaymasi hesaplandiginda bu alan gelecek mimarisini acacak.</div>';
+
+        const forecastChartHtml = (executiveForecast?.monthly_curve || []).length > 0
+            ? '<div class="aix-chart-canvas"><canvas id="aiInsightsForecastChart"></canvas></div>'
+            : '<div class="aix-empty-panel">Aylik tahmin egrisi için once forecast kosusu gerekli.</div>';
+
+        const forecastFeatureChartHtml = (executiveForecast?.feature_outlook || []).length > 0
+            ? '<div class="aix-chart-canvas"><canvas id="aiInsightsForecastFeatureChart"></canvas></div>'
+            : '<div class="aix-empty-panel">Ozellik talep modeli doldugunda uzun vade HP grafigi burada acilir.</div>';
+
+        const forecastNoteTone = forecastOverview?.reference_mode ? 'is-forecast' : 'is-analysis';
+
+        const compareSummaryHtml = compareData ? `
+            <div class="aix-compare-summary">
+                <div class="aix-mini-metric">
+                    <span>Skor</span>
+                    <strong>${compareData.winnerScore?.brand1 || 0} - ${compareData.winnerScore?.brand2 || 0}</strong>
+                    <small>${dashboardSafe(compareData.brand1?.name || '-')} / ${dashboardSafe(compareData.brand2?.name || '-')}</small>
+                </div>
+                <div class="aix-mini-metric">
+                    <span>İl üstünlüğü</span>
+                    <strong>${formatNumber(compareData.provinceWins?.brand1 || 0)} / ${formatNumber(compareData.provinceWins?.brand2 || 0)}</strong>
+                    <small>Saha yaygınlığı</small>
+                </div>
+                <div class="aix-mini-metric">
+                    <span>Top 3 il yoğunluğu</span>
+                    <strong>${sales?.top3_share_pct != null ? `${sales.top3_share_pct}%` : '-'}</strong>
+                    <small>${formatNumber(sales?.top3_qty || 0)} adet</small>
+                </div>
+            </div>
+        ` : `
+            <div class="aix-empty-panel">Rakip seçimi yapildiginda rekabet ozeti ve benchmark katmani acilir.</div>
+        `;
+
+        // Sayfa-içi sekme şeridi: 4 odaklı katman
+        const activeTab = AIX_TABS.find(t => t.key === aiInsightsState.tab) ? aiInsightsState.tab : 'briefing';
+        const tabStripHtml = AIX_TABS.map(t => `
+            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" onclick="onAiInsightsTabChange('${t.key}')">
+                <i class="fas ${t.icon}"></i>
+                <span>${dashboardSafe(t.label)}</span>
+            </button>
+        `).join('');
+
+        // Üst stratejik komut başlığı (her sekmede sticky görünüm)
+        const commandHeaderHtml = `
+            <section class="aix-command-header ${dashboardSafe(memo.stance.tone || 'is-neutral')}">
+                <div class="aix-command-pill">${dashboardSafe(memo.stance.label)}</div>
+                <h2 class="aix-command-headline">${dashboardSafe(memo.headline)}</h2>
+                <p class="aix-command-sub">${dashboardSafe(report?.hero_note || `${selectedBrandTheme.name || 'Marka'} için rakip baskısı, forecast omurgası ve canlı sinyaller tek karar katmanında.`)}</p>
+                <div class="aix-command-meta">
+                    <span><i class="fas fa-calendar"></i> ${dashboardSafe(report?.latest_period?.label || '-')}</span>
+                    <span><i class="fas fa-lightbulb"></i> ${recommendationCount} öneri</span>
+                    <span><i class="fas fa-triangle-exclamation"></i> ${warningCount} risk</span>
+                    <span><i class="fas fa-bullseye"></i> ${opportunityCount} fırsat</span>
+                    ${forecastOverview?.next_12m_units ? `<span><i class="fas fa-chart-line"></i> 12 ay: ${formatNumber(forecastOverview.next_12m_units)} adet</span>` : ''}
+                </div>
+            </section>
+        `;
+
+        // KPI bandı 4 kart (8 yerine en kritik 4'ü)
+        const heroKpis = [signalCards[0], signalCards[1], signalCards[2], signalCards[5]];
+        const heroKpiHtml = heroKpis.map(item => `
+            <article class="aix-kpi-card ${dashboardSafe(item.tone || 'is-analysis')}">
+                <span>${dashboardSafe(item.label)}</span>
+                <strong>${dashboardSafe(item.value)}</strong>
+                <small>${dashboardSafe(item.note)}</small>
+            </article>
+        `).join('');
+
+        // SEKME 1: Stratejik Brifing
+        const briefingTabHtml = `
+            <section class="aix-grid aix-grid-wide">
+                <article class="aix-panel aix-panel-feature">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-chess-king"></i> Yönetim kurulu brifi</h3>
+                            <p>Veri, rakip ve makine sinyalini tek paragrafta okutan karar katmanı</p>
+                        </div>
+                    </div>
+                    <div class="aix-memo ${dashboardSafe(memo.stance.tone || 'is-neutral')}">
+                        <div class="aix-memo-pill">${dashboardSafe(memo.stance.label)}</div>
+                        <h3>${dashboardSafe(memo.headline)}</h3>
+                        <ul class="aix-bullet-list">${memoPointsHtml}</ul>
+                    </div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-layer-group"></i> Stratejik katmanlar</h3>
+                            <p>Markanın bu döneme ait sayısal anlatımı</p>
+                        </div>
+                    </div>
+                    <div class="aix-story-grid">${storylineHtml}</div>
+                </article>
+            </section>
+            <section class="aix-grid">
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-flag"></i> Senaryo notları</h3>
+                            <p>Aksiyon kararı için 3 önceliklendirilmiş hat</p>
+                        </div>
+                    </div>
+                    <div class="aix-scenario-grid">${scenarioHtml || '<div class="aix-empty-panel">Senaryo katmanı verisi yok.</div>'}</div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-gauge"></i> İkincil göstergeler</h3>
+                            <p>Brifingi destekleyen ek sinyaller</p>
+                        </div>
+                    </div>
+                    <div class="aix-mini-kpi-grid">
+                        ${[signalCards[3], signalCards[4], signalCards[6], signalCards[7]].map(item => `
+                            <article class="aix-kpi-card ${dashboardSafe(item.tone || 'is-analysis')}">
+                                <span>${dashboardSafe(item.label)}</span>
+                                <strong>${dashboardSafe(item.value)}</strong>
+                                <small>${dashboardSafe(item.note)}</small>
+                            </article>
+                        `).join('')}
+                    </div>
+                </article>
+            </section>
+        `;
+
+        // SEKME 2: Rakip Cephesi
+        const rivalTabHtml = `
+            <section class="aix-rival-toolbar">
+                <label class="aix-field">
+                    <span><i class="fas fa-arrows-left-right-to-line"></i> Rakip seçimi</span>
+                    <select id="aiInsightsRivalFilter" onchange="onAiInsightsRivalChange()">
+                        <option value="">Rakip seç (otomatik en yakın)</option>
+                        ${rivalOptionsHtml}
+                    </select>
+                </label>
+                <div class="aix-rival-context">${compareData ? `${dashboardSafe(compareData.brand1?.name || '-')} vs ${dashboardSafe(compareData.brand2?.name || '-')}` : 'Rakip seçildiğinde karşılaştırma açılır'}</div>
+            </section>
+            <section class="aix-grid aix-grid-wide">
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-trophy"></i> Skor kartı</h3>
+                            <p>Marka ile rakip aynı performans cetvelinde</p>
+                        </div>
+                    </div>
+                    ${compareSummaryHtml}
+                    <div class="aix-score-grid">${scorecardHtml}</div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-square-poll-vertical"></i> Beyaz alan matrisi</h3>
+                            <p>Rakip baskısı ile pazar arasındaki açık hacim cepleri</p>
+                        </div>
+                    </div>
+                    <div class="aix-table-wrap">
+                        <table class="aix-table">
+                            <thead>
+                                <tr><th>HP</th><th>Pazar</th><th>Açık hacim</th><th>Pay farkı</th><th>Lider</th><th>Hamle</th></tr>
+                            </thead>
+                            <tbody>${opportunityRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+            <section class="aix-grid">
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-map-location-dot"></i> İl bazlı savaş alanı</h3>
+                            <p>Rakiple gerçekte kafa kafaya gelinen kritik coğrafyalar</p>
+                        </div>
+                    </div>
+                    <div class="aix-chart-canvas"><canvas id="aiInsightsBattleChart"></canvas></div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-horse-head"></i> HP mimarisi</h3>
+                            <p>Markanın hangi HP bantlarında hakim olduğu veya alan kaybettiği</p>
+                        </div>
+                    </div>
+                    <div class="aix-chart-canvas"><canvas id="aiInsightsHpChart"></canvas></div>
+                </article>
+            </section>
+            <section class="aix-grid">
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-chart-line"></i> Aylık ritim</h3>
+                            <p>Marka ile rakibin aynı dönemdeki saha temposu</p>
+                        </div>
+                    </div>
+                    <div class="aix-chart-canvas"><canvas id="aiInsightsTrendChart"></canvas></div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-chart-area"></i> Pazar payı izi</h3>
+                            <p>Yıllar içinde kim yükseliyor, kim baskıyla ilerliyor</p>
+                        </div>
+                    </div>
+                    <div class="aix-chart-canvas"><canvas id="aiInsightsShareChart"></canvas></div>
+                </article>
+            </section>
+            <section class="aix-action-bar aix-action-bar-flush">
+                <button id="aiRivalBriefBtn" class="ai-btn" ${compareData ? '' : 'disabled'}>
+                    <i class="fas fa-brain"></i><span>AI rakip savaş raporu</span>
+                </button>
+                <button id="aiBenchmarkBriefBtn" class="ai-btn" ${compareData ? '' : 'disabled'}>
+                    <i class="fas fa-microscope"></i><span>AI teknik fiyat baskısı</span>
+                </button>
+                <span class="ai-powered">Marka merkezi + rakip baskısı + forecast omurgası tek katmanda</span>
+            </section>
+            <div id="aiExecutivePanel" class="ai-panel" style="display:none"></div>
+        `;
+
+        // SEKME 3: Gelecek Mimarisi
+        const forecastTabHtml = `
+            <section class="aix-grid aix-grid-wide">
+                <article class="aix-panel aix-panel-feature">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-compass-drafting"></i> Forecast komut notu</h3>
+                            <p>12 aylık hacim, destek etkisi ve uzun vade mimarisi</p>
+                        </div>
+                    </div>
+                    <div class="aix-memo ${dashboardSafe(forecastMemo.stance.tone || 'is-forecast')}">
+                        <div class="aix-memo-pill">${dashboardSafe(forecastMemo.stance.label)}</div>
+                        <h3>${dashboardSafe(forecastMemo.headline)}</h3>
+                        <ul class="aix-bullet-list">${forecastMemoPointsHtml}</ul>
+                        <div class="aix-note-banner ${dashboardSafe(forecastNoteTone)}">${dashboardSafe(forecastReadinessNote)}</div>
+                    </div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-bullseye"></i> Saldırı illeri</h3>
+                            <p>Önümüzdeki 12 ayda saha kapasitesi açılabilecek iller</p>
+                        </div>
+                    </div>
+                    <div class="aix-forecast-list">${forecastProvinceHtml}</div>
+                </article>
+            </section>
+            <section class="aix-grid">
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-wave-square"></i> 12 aylık tahmin eğrisi</h3>
+                            <p>Horizon boyunca beklenen hacim ve güven bandı</p>
+                        </div>
+                    </div>
+                    ${forecastChartHtml}
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-horse-head"></i> HP geleceği</h3>
+                            <p>Yakın ve uzun ufukta hangi HP koridoru baskınlaşıyor</p>
+                        </div>
+                    </div>
+                    ${forecastFeatureChartHtml}
+                </article>
+            </section>
+            <section class="aix-future-grid">${forecastShiftHtml}</section>
+        `;
+
+        // SEKME 4: Sinyaller & Risk
+        const signalsTabHtml = `
+            <section class="aix-grid aix-grid-wide">
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-shield-halved"></i> Risk radarı</h3>
+                            <p>Kayıp, baskı ve fiyat sinyallerini erken fark eden izleme katmanı</p>
+                        </div>
+                    </div>
+                    <div class="aix-risk-grid">${riskCardsHtml || '<div class="aix-empty-panel">Açık risk sinyali yok. Brifingden gelen düşük öncelikli notlar burada görünecek.</div>'}</div>
+                </article>
+                <article class="aix-panel">
+                    <div class="aix-panel-head">
+                        <div>
+                            <h3><i class="fas fa-satellite-dish"></i> Canlı insight akışı</h3>
+                            <p>Makine içgörüleri yoksa kurumsal akış otomatik devreye girer</p>
+                        </div>
+                    </div>
+                    <div class="aix-stream-list">${insightStreamHtml}</div>
+                </article>
+            </section>
+            <section class="aix-panel">
+                <div class="aix-panel-head">
+                    <div>
+                        <h3><i class="fas fa-robot"></i> Otomasyon yol haritası</h3>
+                        <p>Markanın gelecek operasyon katmanları</p>
                     </div>
                 </div>
-            ` : ''}
+                <div class="aix-roadmap-grid">${roadmapHtml || '<div class="aix-empty-panel">Otomasyon yol haritası kaydı bulunamadı.</div>'}</div>
+                <div class="aix-source-wrap">${sourceLinksHtml}</div>
+            </section>
+        `;
 
-            <div class="pricing-grid">
-                ${(plans || []).map((plan, i) => `
-                    <div class="pricing-card ${i === 1 ? 'featured' : ''}">
-                        ${i === 1 ? '<div style="text-align:center;margin-bottom:12px"><span style="padding:4px 12px;background:var(--brand-primary);color:var(--brand-text);border-radius:20px;font-size:11px;font-weight:600">EN POPÜLER</span></div>' : ''}
-                        <div class="plan-name">${plan.name}</div>
-                        <div class="plan-price">₺${formatNumber(plan.price_monthly)} <span>/ ay</span></div>
-                        ${plan.price_yearly ? `<div style="font-size:12px;color:var(--text-muted)">veya ₺${formatNumber(plan.price_yearly)} / yıl</div>` : ''}
-                        <ul class="plan-features">
-                            ${JSON.parse(plan.features || '[]').map(f => `
-                                <li><i class="fas fa-check"></i> ${f}</li>
-                            `).join('')}
-                            <li class="${plan.has_ai_insights ? '' : 'disabled'}"><i class="fas fa-${plan.has_ai_insights ? 'check' : 'times'}"></i> AI Öngörüler</li>
-                            <li class="${plan.has_competitor_analysis ? '' : 'disabled'}"><i class="fas fa-${plan.has_competitor_analysis ? 'check' : 'times'}"></i> Rakip Analizi</li>
-                            <li class="${plan.has_weather_data ? '' : 'disabled'}"><i class="fas fa-${plan.has_weather_data ? 'check' : 'times'}"></i> Hava Durumu</li>
-                            <li class="${plan.has_export ? '' : 'disabled'}"><i class="fas fa-${plan.has_export ? 'check' : 'times'}"></i> Excel Export</li>
-                        </ul>
-                        <button class="btn-subscribe ${i === 1 ? 'primary' : 'outline'}" onclick="alert('Stripe ödeme entegrasyonu yakında aktif olacak')">
-                            ${subscription?.plan_id === plan.id ? 'Mevcut Plan' : 'Planı Seç'}
-                        </button>
-                    </div>
-                `).join('')}
+        const tabContent = activeTab === 'briefing' ? briefingTabHtml
+            : activeTab === 'rival' ? rivalTabHtml
+            : activeTab === 'forecast' ? forecastTabHtml
+            : signalsTabHtml;
+
+        content.innerHTML = `
+            <div class="aix-shell">
+                ${commandHeaderHtml}
+
+                <section class="aix-kpi-grid">${heroKpiHtml}</section>
+
+                <section class="aix-tab-strip">${tabStripHtml}</section>
+
+                <div class="aix-tab-content">${tabContent}</div>
             </div>
         `;
+
+        if (compareData) {
+            const deep1 = compareData.brand1?.data || {};
+            const deep2 = compareData.brand2?.data || {};
+            const rivalBtn = document.getElementById('aiRivalBriefBtn');
+            const benchmarkBtn = document.getElementById('aiBenchmarkBriefBtn');
+
+            if (rivalBtn) {
+                rivalBtn.onclick = () => requestAiAnalysis('brand-compare', {
+                    brand1: compareData.brand1?.name,
+                    brand2: compareData.brand2?.name,
+                    data1: {
+                        currPartial: deep1.currPartial,
+                        prevPartial: deep1.prevPartial,
+                        yoyGrowth: deep1.yoyGrowth,
+                        marketShare: deep1.marketShare,
+                        avgPrice: deep1.avgPrice,
+                        models: deep1.models
+                    },
+                    data2: {
+                        currPartial: deep2.currPartial,
+                        prevPartial: deep2.prevPartial,
+                        yoyGrowth: deep2.yoyGrowth,
+                        marketShare: deep2.marketShare,
+                        avgPrice: deep2.avgPrice,
+                        models: deep2.models
+                    },
+                    maxYear: compareData.max_year
+                }, 'aiExecutivePanel');
+            }
+
+            if (benchmarkBtn) {
+                benchmarkBtn.onclick = () => requestAiAnalysis('benchmark', {
+                    b1: compareData.brand1?.name,
+                    b2: compareData.brand2?.name,
+                    d1: {
+                        avgHp: deep1.avgHp,
+                        costPerHp: Math.round(deep1.costPerHp || 0),
+                        currPartial: deep1.currPartial,
+                        yoyPartial: Number((deep1.yoyPartial || 0).toFixed(1))
+                    },
+                    d2: {
+                        avgHp: deep2.avgHp,
+                        costPerHp: Math.round(deep2.costPerHp || 0),
+                        currPartial: deep2.currPartial,
+                        yoyPartial: Number((deep2.yoyPartial || 0).toFixed(1))
+                    },
+                    year: compareData.max_year
+                }, 'aiExecutivePanel');
+            }
+        }
+
+        renderAiInsightsCharts({ compareData, report, executiveForecast });
     } catch (err) {
         showError(err);
     }
+}
+function mediaWatchParseArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+            return value.split(',').map(item => item.trim()).filter(Boolean);
+        }
+    }
+    return [];
+}
+
+function mediaWatchParseObject(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (err) {
+            return {};
+        }
+    }
+    return {};
+}
+
+function mediaWatchNormalizeText(value = '') {
+    return String(value || '').toLocaleLowerCase('tr-TR');
+}
+
+function mediaWatchStripMarkdown(value = '') {
+    return String(value || '')
+        .replace(/[`*_>#-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+const MEDIA_WATCH_MOJIBAKE_FIXES = [
+    ['Â·', '·'],
+    ['Â', ''],
+    ['Ã¶', 'ö'],
+    ['Ã–', 'Ö'],
+    ['Ã¼', 'ü'],
+    ['Ãœ', 'Ü'],
+    ['Ã§', 'ç'],
+    ['Ã‡', 'Ç'],
+    ['ÄŸ', 'ğ'],
+    ['Äž', 'Ğ'],
+    ['Ä±', 'ı'],
+    ['Ä°', 'İ'],
+    ['ÅŸ', 'ş'],
+    ['Åž', 'Ş'],
+    ['â€™', "'"],
+    ['â€œ', '"'],
+    ['â€', '"'],
+    ['â€“', '-'],
+    ['â€”', '-'],
+    ['â€¦', '...']
+];
+
+const MEDIA_WATCH_DISPLAY_DICTIONARY = [
+    ['acik', 'açık'],
+    ['aciklama', 'açıklama'],
+    ['agirlikli', 'ağırlıklı'],
+    ['akis', 'akış'],
+    ['alarmi', 'alarmı'],
+    ['alinmis', 'alınmış'],
+    ['ariza', 'arıza'],
+    ['basarisiz', 'başarısız'],
+    ['baslat', 'başlat'],
+    ['begeni', 'beğeni'],
+    ['belirgin', 'belirgin'],
+    ['bildirim', 'bildirim'],
+    ['brifi', 'brifi'],
+    ['calisir', 'çalışır'],
+    ['calisiyor', 'çalışıyor'],
+    ['calismasi', 'çalışması'],
+    ['canli', 'canlı'],
+    ['ceviren', 'çeviren'],
+    ['cozum', 'çözüm'],
+    ['dagilim', 'dağılım'],
+    ['detayi', 'detayı'],
+    ['duygu', 'duygu'],
+    ['erisilemedi', 'erişilemedi'],
+    ['eslestiriliyor', 'eşleştiriliyor'],
+    ['etki', 'etki'],
+    ['firsat', 'fırsat'],
+    ['filtrele', 'filtrele'],
+    ['genel', 'genel'],
+    ['gorunur', 'görünür'],
+    ['gorunum', 'görünüm'],
+    ['gorunurluk', 'görünürlük'],
+    ['goruntulenme', 'görüntülenme'],
+    ['gonderildi', 'gönderildi'],
+    ['gore', 'göre'],
+    ['guncel', 'güncel'],
+    ['guncellen', 'güncellen'],
+    ['gundem', 'gündem'],
+    ['gun', 'gün'],
+    ['hazirlaniyor', 'hazırlanıyor'],
+    ['hazir', 'hazır'],
+    ['henuz', 'henüz'],
+    ['icerik', 'içerik'],
+    ['ici', 'içi'],
+    ['iliskili', 'ilişkili'],
+    ['inceleme', 'inceleme'],
+    ['izleme', 'izleme'],
+    ['kaynagi', 'kaynağı'],
+    ['kaydi', 'kaydı'],
+    ['kayit', 'kayıt'],
+    ['karmasi', 'karması'],
+    ['karisimi', 'karışımı'],
+    ['karisik', 'karışık'],
+    ['katmani', 'katmanı'],
+    ['kosesi', 'köşesi'],
+    ['kosu', 'koşu'],
+    ['kurulum', 'kurulum'],
+    ['lansman', 'lansman'],
+    ['metnine', 'metnine'],
+    ['notr', 'nötr'],
+    ['olusmadi', 'oluşmadı'],
+    ['olusturacak', 'oluşturacak'],
+    ['olusturmak', 'oluşturmak'],
+    ['olusturuldu', 'oluşturuldu'],
+    ['olusturur', 'oluşturur'],
+    ['onceliklendirir', 'önceliklendirir'],
+    ['onerilen', 'önerilen'],
+    ['onerilir', 'önerilir'],
+    ['operasyon', 'operasyon'],
+    ['ozet', 'özet'],
+    ['parca', 'parça'],
+    ['pazarlama', 'pazarlama'],
+    ['penceresi', 'penceresi'],
+    ['resmi', 'resmî'],
+    ['sagligi', 'sağlığı'],
+    ['saha', 'saha'],
+    ['satis', 'satış'],
+    ['secili', 'seçili'],
+    ['sektor', 'sektör'],
+    ['servis', 'servis'],
+    ['sikayet', 'şikayet'],
+    ['sinyal', 'sinyal'],
+    ['sirada', 'sırada'],
+    ['sonrasi', 'sonrası'],
+    ['surekli', 'sürekli'],
+    ['taramasi', 'taraması'],
+    ['taraniyor', 'taranıyor'],
+    ['tarim', 'tarım'],
+    ['tasiyan', 'taşıyan'],
+    ['tekrari', 'tekrarı'],
+    ['temizle', 'temizle'],
+    ['toplandi', 'toplandı'],
+    ['toplayicilarin', 'toplayıcıların'],
+    ['toplanmis', 'toplanmış'],
+    ['tum', 'tüm'],
+    ['urun', 'ürün'],
+    ['uret', 'üret'],
+    ['ust', 'üst'],
+    ['uyan', 'uyan'],
+    ['uyari', 'uyarı'],
+    ['uygun', 'uygun'],
+    ['veri', 'veri'],
+    ['yanit', 'yanıt'],
+    ['yayin', 'yayın'],
+    ['yakin', 'yakın'],
+    ['yenile', 'yenile'],
+    ['yenilenebilir', 'yenilenebilir'],
+    ['yenilenemedi', 'yenilenemedi'],
+    ['yenileniyor', 'yenileniyor'],
+    ['yenilendi', 'yenilendi'],
+    ['yonetici', 'yönetici'],
+    ['yonetim', 'yönetim'],
+    ['yogun', 'yoğun'],
+    ['yogunlugu', 'yoğunluğu'],
+    ['yorum', 'yorum'],
+    ['yuksek', 'yüksek']
+];
+
+function mediaWatchPreserveCase(match, replacement) {
+    if (!match) return replacement;
+    if (match.toLocaleUpperCase('tr-TR') === match) return replacement.toLocaleUpperCase('tr-TR');
+    const first = match.charAt(0);
+    if (first && first.toLocaleUpperCase('tr-TR') === first) {
+        return replacement.charAt(0).toLocaleUpperCase('tr-TR') + replacement.slice(1);
+    }
+    return replacement;
+}
+
+function localizeMediaWatchDisplayText(value = '') {
+    if (value == null) return value;
+    let text = String(value);
+
+    MEDIA_WATCH_MOJIBAKE_FIXES.forEach(([search, replacement]) => {
+        text = text.split(search).join(replacement);
+    });
+
+    MEDIA_WATCH_DISPLAY_DICTIONARY.forEach(([ascii, localized]) => {
+        const pattern = new RegExp(`\\b${ascii}\\b`, 'gi');
+        text = text.replace(pattern, match => mediaWatchPreserveCase(match, localized));
+    });
+
+    text = text
+        .replace(/\bAI ust\b/g, 'AI üst')
+        .replace(/\bUst yonetim\b/g, 'Üst yönetim')
+        .replace(/\bYonetici\b/g, 'Yönetici')
+        .replace(/\bYonetim\b/g, 'Yönetim')
+        .replace(/\bn8n kosu\b/g, 'n8n koşu')
+        .replace(/\bkayit ici\b/g, 'kayıt içi')
+        .replace(/\bSatis sonrasi\b/g, 'Satış sonrası')
+        .replace(/\bTarim haberi\b/g, 'Tarım haberi')
+        .replace(/\bSektor raporu\b/g, 'Sektör raporu')
+        .replace(/\bLansman \/ yeni urun\b/g, 'Lansman / yeni ürün')
+        .replace(/\bSikayet \/ ariza\b/g, 'Şikayet / arıza')
+        .replace(/\bServis \/ yedek parca\b/g, 'Servis / yedek parça')
+        .replace(/\bKritik sikayet\b/g, 'Kritik şikayet')
+        .replace(/\bforum yogunlugu\b/gi, match => mediaWatchPreserveCase(match, 'forum yoğunluğu'))
+        .replace(/\bresmi etki\b/gi, match => mediaWatchPreserveCase(match, 'resmî etki'))
+        .replace(/\blansman firsatlarini\b/gi, match => mediaWatchPreserveCase(match, 'lansman fırsatlarını'))
+        .replace(/\bresmi kararlar\b/gi, match => mediaWatchPreserveCase(match, 'resmî kararlar'))
+        .replace(/\bresmi sosyal hesap\b/gi, match => mediaWatchPreserveCase(match, 'resmî sosyal hesap'))
+        .replace(/\byeni urun\b/gi, match => mediaWatchPreserveCase(match, 'yeni ürün'))
+        .replace(/\burun\/model\b/gi, match => mediaWatchPreserveCase(match, 'ürün/model'))
+        .replace(/\bkaynak dagilimi\b/gi, match => mediaWatchPreserveCase(match, 'kaynak dağılımı'))
+        .replace(/\bkosu bekleniyor\b/gi, match => mediaWatchPreserveCase(match, 'koşu bekleniyor'))
+        .replace(/\bkayit yok\b/gi, match => mediaWatchPreserveCase(match, 'kayıt yok'))
+        .replace(/\bHazir blueprint\b/g, 'Hazır blueprint');
+
+    return text;
+}
+
+function mediaWatchSafe(value = '') {
+    return dashboardSafe(localizeMediaWatchDisplayText(value));
+}
+
+function mediaWatchMarkdownToHtml(value = '') {
+    return mdToHtml(localizeMediaWatchDisplayText(value));
+}
+
+function mediaWatchPercent(value, total, digits = 0) {
+    const numerator = Number(value || 0);
+    const denominator = Number(total || 0);
+    if (!denominator) return digits > 0 ? `0.${'0'.repeat(digits)}%` : '0%';
+    return `${((numerator / denominator) * 100).toFixed(digits)}%`;
+}
+
+function formatMediaWatchDate(value, includeTime = false) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString('tr-TR', includeTime
+        ? { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }
+        : { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatMediaWatchRelative(value) {
+    if (!value) return 'güncel veri yok';
+    const date = new Date(value).getTime();
+    if (!Number.isFinite(date)) return 'güncel veri yok';
+    const diffMs = Date.now() - date;
+    const diffMin = Math.max(0, Math.round(diffMs / 60000));
+    if (diffMin < 60) return `${diffMin} dk önce`;
+    const diffHour = Math.round(diffMin / 60);
+    if (diffHour < 24) return `${diffHour} saat önce`;
+    const diffDay = Math.round(diffHour / 24);
+    if (diffDay < 30) return `${diffDay} gün önce`;
+    const diffMonth = Math.round(diffDay / 30);
+    return `${diffMonth} ay önce`;
+}
+
+function buildMediaWatchCountRows(items = [], picker, limit = 6) {
+    const counts = new Map();
+    (items || []).forEach(item => {
+        const value = picker(item);
+        if (!value) return;
+        counts.set(value, (counts.get(value) || 0) + 1);
+    });
+    return [...counts.entries()]
+        .sort((left, right) => right[1] - left[1] || String(left[0]).localeCompare(String(right[0]), 'tr'))
+        .slice(0, limit)
+        .map(([label, count]) => ({ label, count }));
+}
+
+function mediaWatchWithTimeout(promise, label, timeoutMs = 8000) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+            setTimeout(() => reject(new Error(`${label} yanıt vermedi`)), timeoutMs);
+        })
+    ]);
+}
+
+function getMediaWatchChannelMeta(channel = '') {
+    const map = {
+        social: { label: 'Sosyal medya', icon: 'fa-share-nodes', tone: 'is-opportunity' },
+        forum: { label: 'Forum', icon: 'fa-comments', tone: 'is-analysis' },
+        complaint: { label: 'Şikayet', icon: 'fa-triangle-exclamation', tone: 'is-warning' },
+        official: { label: 'Resmî karar', icon: 'fa-building-columns', tone: 'is-official' },
+        video: { label: 'Video', icon: 'fa-play-circle', tone: 'is-analysis' },
+        report: { label: 'Sektör raporu', icon: 'fa-file-lines', tone: 'is-analysis' },
+        news: { label: 'Tarım haberi', icon: 'fa-newspaper', tone: 'is-neutral' }
+    };
+    return map[channel] || map.news;
+}
+
+function getMediaWatchTypeMeta(type = '') {
+    const map = {
+        launch: { label: 'Lansman / yeni ürün', icon: 'fa-rocket', tone: 'is-opportunity' },
+        complaint: { label: 'Şikayet / arıza', icon: 'fa-screwdriver-wrench', tone: 'is-warning' },
+        regulation: { label: 'Karar / destek', icon: 'fa-gavel', tone: 'is-official' },
+        review: { label: 'İnceleme / yorum', icon: 'fa-magnifying-glass-chart', tone: 'is-analysis' },
+        campaign: { label: 'Kampanya', icon: 'fa-bullhorn', tone: 'is-opportunity' },
+        service: { label: 'Servis / yedek parça', icon: 'fa-toolbox', tone: 'is-warning' },
+        discussion: { label: 'Tartışma', icon: 'fa-comments', tone: 'is-analysis' },
+        news: { label: 'Gündem', icon: 'fa-signal', tone: 'is-neutral' }
+    };
+    return map[type] || map.news;
+}
+
+function getMediaWatchSentimentMeta(sentiment = '') {
+    const map = {
+        positive: { label: 'Pozitif', tone: 'is-positive' },
+        negative: { label: 'Negatif', tone: 'is-negative' },
+        mixed: { label: 'Karışık', tone: 'is-mixed' },
+        neutral: { label: 'Nötr', tone: 'is-neutral' }
+    };
+    return map[sentiment] || map.neutral;
+}
+
+function getMediaWatchRiskMeta(level = '') {
+    const map = {
+        critical: { label: 'Kritik', tone: 'is-negative' },
+        warning: { label: 'Yakından izlenmeli', tone: 'is-warning' },
+        watch: { label: 'İzleme modunda', tone: 'is-analysis' },
+        stable: { label: 'Dengeli', tone: 'is-positive' }
+    };
+    return map[level] || map.watch;
+}
+
+function getMediaWatchAlertTypeMeta(type = '') {
+    const map = {
+        'complaint-pressure': { label: 'Toplam şikayet baskısı', tone: 'is-negative' },
+        'complaint-cluster': { label: 'Şikayet kümesi', tone: 'is-warning' },
+        'service-backlog': { label: 'Servis baskısı', tone: 'is-negative' },
+        'forum-buzz': { label: 'Forum dalgası', tone: 'is-analysis' },
+        'launch-buzz': { label: 'Lansman fırsatı', tone: 'is-opportunity' },
+        'official-impact': { label: 'Resmî etki', tone: 'is-official' }
+    };
+    return map[type] || { label: type || 'Alarm', tone: 'is-neutral' };
+}
+
+function getMediaWatchRunMeta(status = '') {
+    const normalized = mediaWatchNormalizeText(status);
+    if (normalized.includes('recommend')) return { label: 'Blueprint', tone: 'is-official' };
+    if (normalized.includes('fail') || normalized.includes('error')) return { label: 'Hata', tone: 'is-negative' };
+    if (normalized.includes('run') || normalized.includes('process')) return { label: 'Çalışıyor', tone: 'is-analysis' };
+    if (normalized.includes('queue') || normalized.includes('wait')) return { label: 'Sırada', tone: 'is-warning' };
+    if (normalized.includes('complete') || normalized.includes('success')) return { label: 'Tamamlandı', tone: 'is-positive' };
+    return { label: status || 'Bekliyor', tone: 'is-neutral' };
+}
+
+function formatMediaWatchEngagement(value) {
+    const engagement = mediaWatchParseObject(value);
+    const parts = [];
+    if (engagement.views) parts.push(`${formatNumber(engagement.views)} görüntülenme`);
+    if (engagement.likes) parts.push(`${formatNumber(engagement.likes)} beğeni`);
+    if (engagement.comments) parts.push(`${formatNumber(engagement.comments)} yorum`);
+    if (engagement.shares) parts.push(`${formatNumber(engagement.shares)} paylaşım`);
+    return parts.join(' · ');
+}
+
+function getMediaWatchBrandId() {
+    if (currentUser?.role !== 'admin') {
+        return String(currentUser?.brand_id || activeBrandContext?.id || '');
+    }
+    return String(mediaWatchState.brand_id || activeBrandContext?.id || allBrands?.[0]?.id || '');
+}
+
+function ensureMediaWatchState() {
+    if (!mediaWatchState || typeof mediaWatchState !== 'object') {
+        mediaWatchState = { brand_id: '', channel: '', type: '', sentiment: '', search: '', limit: 80, window_days: 14, category: 'all', rival_brand_id: '', country: 'all' };
+    }
+    mediaWatchState.brand_id = String(mediaWatchState.brand_id || getMediaWatchBrandId() || '');
+    mediaWatchState.channel = String(mediaWatchState.channel || '');
+    mediaWatchState.type = String(mediaWatchState.type || '');
+    mediaWatchState.sentiment = String(mediaWatchState.sentiment || '');
+    mediaWatchState.search = String(mediaWatchState.search || '');
+    mediaWatchState.limit = Number(mediaWatchState.limit || 80);
+    mediaWatchState.window_days = Number(mediaWatchState.window_days || 14);
+    mediaWatchState.category = String(mediaWatchState.category || 'all');
+    mediaWatchState.rival_brand_id = String(mediaWatchState.rival_brand_id || '');
+    mediaWatchState.country = String(mediaWatchState.country || 'all');
+    return mediaWatchState;
+}
+
+function onMediaWatchBrandChange() {
+    const nextBrandId = String(document.getElementById('mediaWatchBrandSelect')?.value || '');
+    mediaWatchState.brand_id = nextBrandId;
+    mediaWatchState.channel = '';
+    mediaWatchState.type = '';
+    mediaWatchState.sentiment = '';
+    mediaWatchState.search = '';
+    syncActiveBrandContextById(nextBrandId, { persist: true });
+    loadMediaWatchPage();
+}
+
+function onMediaWatchWindowChange() {
+    mediaWatchState.window_days = Number(document.getElementById('mediaWatchWindowSelect')?.value || 14);
+}
+
+function onMediaWatchFilterChange() {
+    mediaWatchState.channel = String(document.getElementById('mediaWatchChannelSelect')?.value || '');
+    mediaWatchState.type = String(document.getElementById('mediaWatchTypeSelect')?.value || '');
+    mediaWatchState.sentiment = String(document.getElementById('mediaWatchSentimentSelect')?.value || '');
+    mediaWatchState.search = String(document.getElementById('mediaWatchSearchInput')?.value || '').trim();
+    loadMediaWatchPage();
+}
+
+function clearMediaWatchFilters() {
+    mediaWatchState.channel = '';
+    mediaWatchState.type = '';
+    mediaWatchState.sentiment = '';
+    mediaWatchState.search = '';
+    loadMediaWatchPage();
+}
+
+function onMediaWatchSearchKeydown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        onMediaWatchFilterChange();
+    }
+}
+
+function jumpMediaWatchSection(sectionId) {
+    if (!sectionId) return;
+    const target = document.getElementById(sectionId);
+    if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+    }
+    mediaWatchState.pending_scroll = sectionId;
+}
+
+function flushMediaWatchPendingScroll() {
+    const sectionId = String(mediaWatchState?.pending_scroll || '');
+    if (!sectionId) return;
+    mediaWatchState.pending_scroll = '';
+    requestAnimationFrame(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+}
+
+function applyMediaWatchPreset(preset = 'all', sectionId = 'mediaWatchFeedSection') {
+    ensureMediaWatchState();
+    mediaWatchState.search = '';
+
+    switch (preset) {
+    case 'complaint':
+        mediaWatchState.channel = '';
+        mediaWatchState.type = 'complaint';
+        mediaWatchState.sentiment = '';
+        break;
+    case 'official':
+        mediaWatchState.channel = '';
+        mediaWatchState.type = 'regulation';
+        mediaWatchState.sentiment = '';
+        break;
+    case 'launch':
+        mediaWatchState.channel = '';
+        mediaWatchState.type = 'launch';
+        mediaWatchState.sentiment = '';
+        break;
+    case 'negative':
+        mediaWatchState.channel = '';
+        mediaWatchState.type = '';
+        mediaWatchState.sentiment = 'negative';
+        break;
+    case 'social':
+        mediaWatchState.channel = 'social';
+        mediaWatchState.type = '';
+        mediaWatchState.sentiment = '';
+        break;
+    case 'forum':
+        mediaWatchState.channel = 'forum';
+        mediaWatchState.type = '';
+        mediaWatchState.sentiment = '';
+        break;
+    case 'video':
+        mediaWatchState.channel = 'video';
+        mediaWatchState.type = '';
+        mediaWatchState.sentiment = '';
+        break;
+    default:
+        mediaWatchState.channel = '';
+        mediaWatchState.type = '';
+        mediaWatchState.sentiment = '';
+        break;
+    }
+
+    if (sectionId) {
+        mediaWatchState.pending_scroll = sectionId;
+    }
+
+    loadMediaWatchPage();
+}
+
+async function markMediaWatchNotificationRead(notificationId) {
+    if (!notificationId) return;
+    try {
+        await API.markNotificationRead(notificationId);
+        API.clearCache();
+        await loadMediaWatchPage();
+    } catch (err) {
+        const statusEl = document.getElementById('mediaWatchStatus');
+        if (statusEl) statusEl.textContent = `Bildirim güncellenemedi: ${localizeMediaWatchDisplayText(err.message || 'Bilinmeyen hata')}`;
+    }
+}
+
+async function refreshMediaWatchBrief() {
+    const brandId = getMediaWatchBrandId();
+    if (!brandId) return;
+
+    const button = document.getElementById('mediaWatchBriefBtn');
+    const statusEl = document.getElementById('mediaWatchStatus');
+    const originalHtml = button?.innerHTML || '';
+
+    try {
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>AI brifi üretiliyor</span>';
+        }
+        if (statusEl) statusEl.textContent = 'n8n akışı sonrası üst yönetim brifi yeniden üretiliyor...';
+        await API.generateMediaWatchBrief(brandId, mediaWatchState.window_days || 14);
+        API.clearCache();
+        await loadMediaWatchPage();
+        if (statusEl) statusEl.textContent = 'AI brifi güncellendi.';
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `Brif üretilemedi: ${localizeMediaWatchDisplayText(err.message || 'Bilinmeyen hata')}`;
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function rebuildMediaWatchAlerts() {
+    const brandId = getMediaWatchBrandId();
+    if (!brandId) return;
+
+    const button = document.getElementById('mediaWatchAlertBtn');
+    const statusEl = document.getElementById('mediaWatchStatus');
+    const originalHtml = button?.innerHTML || '';
+
+    try {
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-bell fa-spin"></i><span>Alarm katmanı yenileniyor</span>';
+        }
+        if (statusEl) statusEl.textContent = 'Alarm katmanı son 30 günlük medya kayıtlarıyla yeniden eşleştiriliyor...';
+        await API.rebuildMediaWatchAlerts(brandId, 30);
+        API.clearCache();
+        await loadMediaWatchPage();
+        if (statusEl) statusEl.textContent = 'Alarm katmanı güncellendi.';
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `Alarm katmanı yenilenemedi: ${localizeMediaWatchDisplayText(err.message || 'Bilinmeyen hata')}`;
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function runMediaWatchCollection() {
+    const brandId = getMediaWatchBrandId();
+    if (!brandId) return;
+
+    const button = document.getElementById('mediaWatchCollectBtn');
+    const statusEl = document.getElementById('mediaWatchStatus');
+    const originalHtml = button?.innerHTML || '';
+
+    try {
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Kaynak taranıyor</span>';
+        }
+        if (statusEl) statusEl.textContent = 'Host bridge üzerinden pack-1, pack-2 ve pack-3 kaynak taraması n8n akışına itiliyor...';
+        const result = await API.triggerMediaWatchBridgeAll({
+            brand_id: brandId
+        });
+        API.clearCache();
+        await loadMediaWatchPage();
+        if (statusEl) {
+            statusEl.textContent = `Kaynak taraması tamamlandı. ${formatNumber(result.item_count || 0)} kayıt, ${formatNumber(result.payload_count || 0)} payload n8n akışına gönderildi.`;
+        }
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `Kaynak taraması başarısız: ${localizeMediaWatchDisplayText(err.message || 'Bridge erişilemedi')}`;
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
+function buildMediaWatchSolutionCopy(item = {}) {
+    const bag = mediaWatchNormalizeText([
+        item.complaint_area,
+        item.issue_type,
+        item.title,
+        item.summary,
+        item.content_text,
+        item.ai_summary
+    ].filter(Boolean).join(' '));
+
+    const suggested = mediaWatchParseObject(item.recommendations_json);
+    if (suggested.solution) return suggested.solution;
+    if (suggested.aftersales) return suggested.aftersales;
+
+    if (bag.includes('hidrolik') || bag.includes('kaldirma') || bag.includes('lift')) {
+        return 'Hidrolik basınç, yağ sirkülasyonu, kontrol valfi ve kaldırma sensörleri için servis checklist açın; tekrar eden vakalarda parça lot analizi yapın.';
+    }
+    if (bag.includes('sanziman') || bag.includes('vites') || bag.includes('transmisyon') || bag.includes('powershift')) {
+        return 'Şanzıman kalibrasyonu, debriyaj geçişi ve operatör kullanım senaryoları birlikte incelensin; servis bülteni ve kullanıcı eğitimi aynı dosyada ilerlesin.';
+    }
+    if (bag.includes('motor') || bag.includes('hararet') || bag.includes('isitma') || bag.includes('yakit') || bag.includes('performans')) {
+        return 'Motor soğutma, filtre, yakıt akışı ve ECU hata logları kontrol edilsin; saha koşulu ile kullanım profili eşleştirilerek kök neden analizi açılsın.';
+    }
+    if (bag.includes('elektrik') || bag.includes('sensor') || bag.includes('ekran') || bag.includes('tesisat')) {
+        return 'Elektrik tesisatı, sensör soketleri ve akü/alternatör akışı için hızlı kontrol seti uygulayın; tekrar eden vaka varsa tedarik ve montaj kalitesini izole edin.';
+    }
+    if (bag.includes('servis') || bag.includes('parca') || bag.includes('yedek') || bag.includes('garanti') || bag.includes('bayi')) {
+        return 'Servis SLA, parça bulunurluğu ve bayi cevap süresi için vakayı önce operasyon, sonra kurumsal iletişim akışı üzerinden kapatın.';
+    }
+    if (bag.includes('fiyat') || bag.includes('kampanya') || bag.includes('teslimat') || bag.includes('stok')) {
+        return 'Pazarlama ve satış ekibiyle ortak cevap seti hazırlayın; fiyatlama, kampanya ve teslimat beklentilerini aynı referans notuyla standardize edin.';
+    }
+    return 'Kaydı ürün, kullanım, servis ve parça başlıklarına ayırıp 24 saat içinde kapatma aksiyonu, müşteri cevabı ve kök neden sahibi atayın.';
+}
+
+function buildMediaWatchHeroSummary(brand, overview, brief) {
+    const risk = getMediaWatchRiskMeta(brief?.risk_level || 'watch');
+    const summaryText = localizeMediaWatchDisplayText(mediaWatchStripMarkdown(brief?.executive_summary_md || ''));
+    if (summaryText) return summaryText.slice(0, 260);
+    return `${brand?.name || 'Marka'} için ${overview.mentions_total || 0} medya kaydı, ${overview.complaint_count || 0} şikayet, ${overview.launch_count || 0} lansman ve ${overview.regulation_count || 0} resmî karar sinyali ${risk.label.toLocaleLowerCase('tr-TR')} modunda toplandı.`;
+}
+
+async function loadMediaWatchPageLegacy() {
+    try {
+        if (!allBrands || allBrands.length === 0) {
+            allBrands = await API.getBrands();
+        }
+
+        const state = ensureMediaWatchState();
+        const brandId = String(state.brand_id || getMediaWatchBrandId() || '');
+        if (!brandId) throw new Error('Marka secimi bulunamadi');
+
+        const selectedBrand = findBrandById(brandId) || allBrands.find(item => String(item.id) === brandId) || currentUser?.brand || null;
+        if (selectedBrand) {
+            setActiveBrandContext(selectedBrand, { persist: currentUser?.role === 'admin' });
+        }
+
+        const [overviewPayload, briefPayload, alertPayload, itemPayload, notificationPayload] = await Promise.all([
+            mediaWatchWithTimeout(API.getMediaWatchOverview(brandId), 'Medya Takip omurgasi'),
+            mediaWatchWithTimeout(API.getMediaWatchBrief(brandId), 'Medya Takip brifi').catch(() => null),
+            mediaWatchWithTimeout(API.getMediaWatchAlerts({
+                brand_id: brandId,
+                limit: 8
+            }), 'Medya Takip alarmlari').catch(() => []),
+            mediaWatchWithTimeout(API.getMediaWatchItems({
+                brand_id: brandId,
+                channel: state.channel,
+                type: state.type,
+                sentiment: state.sentiment,
+                search: state.search,
+                limit: state.limit
+            }), 'Medya Takip kayitlari').catch(() => []),
+            mediaWatchWithTimeout(API.getNotifications(), 'Medya Takip bildirimleri').catch(() => [])
+        ]);
+
+        const overview = overviewPayload?.overview || {};
+        const allItems = Array.isArray(overviewPayload?.items) ? overviewPayload.items : [];
+        const items = Array.isArray(itemPayload) && itemPayload.length
+            ? itemPayload
+            : (!state.channel && !state.type && !state.sentiment && !state.search ? allItems.slice(0, state.limit) : []);
+        const workflows = Array.isArray(overviewPayload?.workflows) ? overviewPayload.workflows : [];
+        const runs = Array.isArray(overviewPayload?.runs) ? overviewPayload.runs : [];
+        const latestBrief = briefPayload || overviewPayload?.latest_brief || null;
+        const alerts = Array.isArray(alertPayload) && alertPayload.length
+            ? alertPayload
+            : (Array.isArray(overviewPayload?.alerts) ? overviewPayload.alerts : []);
+        const briefSections = mediaWatchParseObject(latestBrief?.sections_json);
+        const briefSourceMix = mediaWatchParseObject(latestBrief?.source_mix_json);
+        const riskMeta = getMediaWatchRiskMeta(latestBrief?.risk_level || 'watch');
+        const theme = getBrandThemeProfile(overviewPayload?.brand || selectedBrand || activeBrandContext || {});
+        const hasCollectedData = Number(overview.mentions_total || 0) > 0;
+        const hasActiveFilter = Boolean(state.search || state.channel || state.type || state.sentiment);
+        const mediaNotifications = (Array.isArray(notificationPayload) ? notificationPayload : [])
+            .filter(item => item && item.type === 'media_watch_alert')
+            .filter(item => !item.brand_id || String(item.brand_id) === String(brandId))
+            .slice(0, 8);
+
+        const complaintItems = items.filter(item => item.item_type === 'complaint' || item.channel_type === 'complaint');
+        const launchItems = items.filter(item => ['launch', 'review', 'campaign'].includes(item.item_type));
+        const officialItems = items.filter(item => item.item_type === 'regulation' || ['official', 'report'].includes(item.channel_type));
+        const criticalItems = items.filter(item => Number(item.severity_score || 0) >= 0.75);
+        const filteredTopicMix = buildMediaWatchCountRows(items.flatMap(item => mediaWatchParseArray(item.topics_json).map(topic => ({ topic }))), item => item.topic, 8);
+        const filteredProductMix = buildMediaWatchCountRows(items, item => item.product_name || item.model_name, 6);
+        const filteredComplaintMix = buildMediaWatchCountRows(complaintItems, item => item.complaint_area || item.issue_type || item.product_name || item.model_name, 6);
+        const channelMix = (overview.channel_mix || []).length ? overview.channel_mix : buildMediaWatchCountRows(allItems, item => item.channel_type, 6);
+        const sourceMix = (overview.source_mix || []).length ? overview.source_mix : buildMediaWatchCountRows(allItems, item => item.source_name || item.source_domain, 6);
+        const productMix = (overview.product_mix || []).length ? overview.product_mix : filteredProductMix;
+        const complaintMix = (overview.complaint_mix || []).length ? overview.complaint_mix : filteredComplaintMix;
+        const topicMix = (overview.topic_mix || []).length ? overview.topic_mix : filteredTopicMix;
+        const alertMix = (overview.alert_mix || []).length ? overview.alert_mix : buildMediaWatchCountRows(alerts, item => item.alert_type, 6);
+
+        const heroSummary = buildMediaWatchHeroSummary(selectedBrand, overview, latestBrief);
+        const filterHelperText = !hasCollectedData
+            ? 'Arama butonu çalışıyor; ancak bu alan internette canlı tarama yapmaz. Sadece sisteme alınmış medya kayıtlarını filtreler. Şu an veri tabanında medya kaydı yok, önce n8n ingest akışı veri toplamalıdır.'
+            : hasActiveFilter
+                ? `Filtreler ${formatNumber(items.length || 0)} kaydı gösteriyor. Arama sadece toplanmış kayıtlar üzerinde çalışır.`
+                : 'Arama alanı sisteme alınmış medya kayıtlarını başlık, özet ve içerik metnine göre filtreler.';
+
+        const emptyDataMessage = !hasCollectedData
+            ? 'Sistemde henüz medya kaydı yok. Arama alanı yalnızca toplanmış kayıtlarda çalışır; ilk sonuç için n8n veri akışı gereklidir.'
+            : hasActiveFilter
+                ? 'Seçili filtre veya arama metnine uyan kayıt bulunamadı.'
+                : 'Bu katman için gösterilecek kayıt bulunamadı.';
+
+        const stageHtml = buildBrandStageHtml(theme, {
+            title: `${theme.name || selectedBrand?.name || 'Marka'} medya takip komuta merkezi`,
+            summary: localizeMediaWatchDisplayText(heroSummary),
+            compareCopy: `${overview.active_source_count || 0} aktif kaynak · ${overview.open_alert_count || 0} açık alarm · ${formatMediaWatchRelative(overview.last_published_at)} son yayın`
+        });
+
+        const channelOptions = [
+            { value: '', label: 'Tüm kanallar' },
+            { value: 'social', label: 'Sosyal medya' },
+            { value: 'news', label: 'Tarım haberi' },
+            { value: 'forum', label: 'Forum' },
+            { value: 'complaint', label: 'Şikayet' },
+            { value: 'official', label: 'Resmî karar' },
+            { value: 'video', label: 'Video' },
+            { value: 'report', label: 'Sektör raporu' }
+        ].map(item => `<option value="${item.value}" ${item.value === state.channel ? 'selected' : ''}>${item.label}</option>`).join('');
+
+        const typeOptions = [
+            { value: '', label: 'Tüm sinyaller' },
+            { value: 'launch', label: 'Lansman / yeni ürün' },
+            { value: 'complaint', label: 'Şikayet / arıza' },
+            { value: 'regulation', label: 'Karar / destek' },
+            { value: 'review', label: 'İnceleme / yorum' },
+            { value: 'campaign', label: 'Kampanya' },
+            { value: 'service', label: 'Servis / yedek parça' },
+            { value: 'discussion', label: 'Tartışma' },
+            { value: 'news', label: 'Gündem' }
+        ].map(item => `<option value="${item.value}" ${item.value === state.type ? 'selected' : ''}>${item.label}</option>`).join('');
+
+        const sentimentOptions = [
+            { value: '', label: 'Tüm duygu durumları' },
+            { value: 'negative', label: 'Negatif' },
+            { value: 'mixed', label: 'Karışık' },
+            { value: 'neutral', label: 'Nötr' },
+            { value: 'positive', label: 'Pozitif' }
+        ].map(item => `<option value="${item.value}" ${item.value === state.sentiment ? 'selected' : ''}>${item.label}</option>`).join('');
+
+        const brandOptions = (currentUser?.role === 'admin'
+            ? allBrands
+            : [findBrandById(currentUser?.brand_id) || currentUser?.brand].filter(Boolean)
+        ).map(item => `<option value="${item.id}" ${String(item.id) === brandId ? 'selected' : ''}>${dashboardSafe(item.name)}</option>`).join('');
+
+        const chipRows = [
+            { label: 'Risk seviyesi', value: riskMeta.label },
+            { label: 'Son yayın', value: formatMediaWatchDate(overview.last_published_at) },
+            { label: 'Son koşu', value: runs[0]?.started_at ? formatMediaWatchRelative(runs[0].started_at) : 'Koşu bekleniyor' },
+            { label: 'AI modeli', value: latestBrief?.ai_model || 'rule-based' },
+            { label: 'Filtrelenen kayıt', value: `${formatNumber(items.length || 0)}` },
+            { label: 'Aktif kaynak', value: `${formatNumber(overview.active_source_count || 0)}` }
+        ];
+
+        const kpiCards = [
+            {
+                label: '24 saat görünürlük',
+                value: `${formatNumber(overview.mentions_24h || 0)}`,
+                note: 'Geçen 24 saatte toplanan marka kaydı',
+                tone: 'is-analysis'
+            },
+            {
+                label: 'Toplam medya izi',
+                value: `${formatNumber(overview.mentions_total || 0)}`,
+                note: `${formatNumber(overview.active_source_count || 0)} kaynakta dağılım`,
+                tone: 'is-neutral'
+            },
+            {
+                label: 'Açık alarm',
+                value: `${formatNumber(overview.open_alert_count || 0)}`,
+                note: `${formatNumber(overview.critical_alert_count || 0)} kritik · ${formatNumber(overview.warning_alert_count || 0)} yakın izleme`,
+                tone: (overview.critical_alert_count || 0) > 0 ? 'is-negative' : (overview.warning_alert_count || 0) > 0 ? 'is-warning' : 'is-positive'
+            },
+            {
+                label: 'Şikayet / arıza',
+                value: `${formatNumber(overview.complaint_count || 0)}`,
+                note: mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1),
+                tone: (overview.complaint_count || 0) >= 8 ? 'is-warning' : 'is-analysis'
+            },
+            {
+                label: 'Lansman / inceleme',
+                value: `${formatNumber(overview.launch_count || 0)}`,
+                note: 'Yeni ürün, inceleme ve kampanya akışı',
+                tone: 'is-opportunity'
+            },
+            {
+                label: 'Resmî karar / destek',
+                value: `${formatNumber(overview.regulation_count || 0)}`,
+                note: 'Bakanlık ve mevzuat sinyalleri',
+                tone: 'is-official'
+            },
+            {
+                label: 'Kritik kayıt',
+                value: `${formatNumber(overview.critical_count || 0)}`,
+                note: 'Yüksek etki skoru taşıyan başlıklar',
+                tone: (overview.critical_count || 0) > 0 ? 'is-negative' : 'is-positive'
+            },
+            {
+                label: 'Canlı feed',
+                value: items[0]?.source_name || items[0]?.source_domain || '-',
+                note: items[0]?.published_at ? formatMediaWatchDate(items[0].published_at, true) : 'Kayıt bekleniyor',
+                tone: 'is-analysis'
+            },
+            {
+                label: 'n8n koşu sağlığı',
+                value: runs[0] ? getMediaWatchRunMeta(runs[0].status).label : 'Kurulum bekliyor',
+                note: runs[0]?.item_count ? `${formatNumber(runs[0].item_count)} kayıt` : 'Akış bağlantısı kontrol edilmeli',
+                tone: runs[0] ? getMediaWatchRunMeta(runs[0].status).tone : 'is-warning'
+            }
+        ];
+
+        const barListHtml = (rows, total) => rows.length > 0
+            ? rows.map(item => `
+                <div class="mtw-bar-row">
+                    <div class="mtw-bar-copy">
+                        <strong>${dashboardSafe(item.label || '-')}</strong>
+                        <small>${formatNumber(item.count || 0)} kayıt</small>
+                    </div>
+                    <div class="mtw-bar-track">
+                        <div class="mtw-bar-fill" style="width:${Math.max(8, Math.min(100, Math.round(((item.count || 0) / Math.max(1, total || 1)) * 100)))}%"></div>
+                    </div>
+                </div>
+            `).join('')
+            : '<div class="mtw-empty">Henüz sinyal kaydı bulunmuyor.</div>';
+
+        const executiveSummaryHtml = latestBrief?.executive_summary_md
+            ? mediaWatchMarkdownToHtml(latestBrief.executive_summary_md)
+            : '<div class="mtw-empty">Bu marka için henüz yönetici brifi üretilmedi. n8n akışı kayıt toplamaya başladığında AI brifini üretebilirsiniz.</div>';
+
+        const sectionCards = [
+            { key: 'board_brief_md', title: 'Üst yönetim', icon: 'fa-building-columns' },
+            { key: 'marketing_md', title: 'Pazarlama', icon: 'fa-bullhorn' },
+            { key: 'arge_md', title: 'Ar-Ge', icon: 'fa-gears' },
+            { key: 'aftersales_md', title: 'Satış sonrası', icon: 'fa-headset' },
+            { key: 'issue_solutions_md', title: 'Arıza çözümleri', icon: 'fa-screwdriver-wrench' },
+            { key: 'monitoring_gaps_md', title: 'İzleme açıkları', icon: 'fa-satellite-dish' }
+        ].map(section => `
+            <article class="mtw-section-card">
+                <div class="mtw-section-head">
+                    <span><i class="fas ${section.icon}"></i>${section.title}</span>
+                </div>
+                <div class="mtw-section-body">
+                    ${briefSections[section.key] ? mediaWatchMarkdownToHtml(briefSections[section.key]) : '<div class="mtw-empty">Bu katman için AI notu henüz oluşmadı.</div>'}
+                </div>
+            </article>
+        `).join('');
+
+        const topAlert = alerts[0] || null;
+        const latestItem = items[0] || allItems[0] || null;
+        const latestItemTypeMeta = latestItem ? getMediaWatchTypeMeta(latestItem.item_type) : getMediaWatchTypeMeta('news');
+        const topComplaintLabel = complaintMix[0]?.label || complaintItems[0]?.complaint_area || complaintItems[0]?.issue_type || 'Belirgin sikayet ekseni yok';
+        const topSourceLabel = sourceMix[0]?.label || latestItem?.source_name || latestItem?.source_domain || 'Kaynak bekleniyor';
+        const topTopicLabel = topicMix[0]?.label || 'Belirgin konu yok';
+        const latestSignalText = overview.last_published_at ? formatMediaWatchRelative(overview.last_published_at) : 'Guncel yayin bekleniyor';
+        const latestSignalNote = latestItem
+            ? `${latestItem.source_name || latestItem.source_domain || '-'} · ${latestItemTypeMeta.label}`
+            : 'Yeni medya kaydi bekleniyor';
+
+        const heroChipRows = [
+            { label: 'Risk seviyesi', value: riskMeta.label },
+            { label: 'Son yayin', value: formatMediaWatchDate(overview.last_published_at) },
+            { label: 'Son kosu', value: runs[0]?.started_at ? formatMediaWatchRelative(runs[0].started_at) : 'Kosu bekleniyor' },
+            { label: 'Aktif kaynak', value: `${formatNumber(overview.active_source_count || 0)}` }
+        ];
+
+        const focusCards = [
+            {
+                label: 'Acik alarm',
+                value: `${formatNumber(overview.open_alert_count || 0)}`,
+                note: `${formatNumber(overview.critical_alert_count || 0)} kritik · ${formatNumber(overview.warning_alert_count || 0)} yakin izleme`,
+                tone: (overview.critical_alert_count || 0) > 0 ? 'is-negative' : (overview.warning_alert_count || 0) > 0 ? 'is-warning' : 'is-positive'
+            },
+            {
+                label: '24 saat hareket',
+                value: `${formatNumber(overview.mentions_24h || 0)}`,
+                note: overview.last_published_at ? `${formatMediaWatchRelative(overview.last_published_at)} son yayin` : 'Son 24 saatte yeni yayin yok',
+                tone: (overview.mentions_24h || 0) > 0 ? 'is-analysis' : 'is-neutral'
+            },
+            {
+                label: 'Sikayet baskisi',
+                value: `${formatNumber(overview.complaint_count || 0)}`,
+                note: `${mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1)} · ${topComplaintLabel}`,
+                tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-positive'
+            },
+            {
+                label: 'Aktif kaynak',
+                value: `${formatNumber(overview.active_source_count || 0)}`,
+                note: `${topSourceLabel} en yogun kaynak`,
+                tone: 'is-analysis'
+            }
+        ];
+
+        const decisionSectionCards = [
+            { key: 'board_brief_md', title: 'Ust yonetim', icon: 'fa-building-columns' },
+            { key: 'marketing_md', title: 'Pazarlama', icon: 'fa-bullhorn' },
+            { key: 'arge_md', title: 'Ar-Ge', icon: 'fa-gears' },
+            { key: 'aftersales_md', title: 'Satis sonrasi', icon: 'fa-headset' }
+        ].map(section => `
+            <article class="mtw-section-card">
+                <div class="mtw-section-head">
+                    <span><i class="fas ${section.icon}"></i>${mediaWatchSafe(section.title)}</span>
+                </div>
+                <div class="mtw-section-body">
+                    ${briefSections[section.key] ? mediaWatchMarkdownToHtml(briefSections[section.key]) : '<div class="mtw-empty">Bu katman icin AI notu henuz olusmadi.</div>'}
+                </div>
+            </article>
+        `).join('');
+
+        const priorityCardsHtml = [
+            {
+                label: 'Risk fotografi',
+                value: riskMeta.label,
+                note: topAlert
+                    ? `${getMediaWatchAlertTypeMeta(topAlert.alert_type).label}: ${String(topAlert.title || topAlert.summary || '').slice(0, 120)}`
+                    : 'Su an acik kritik alarm baskisi yok.',
+                tone: topAlert ? getMediaWatchRiskMeta(topAlert.alert_level).tone : riskMeta.tone
+            },
+            {
+                label: 'En yogun geri bildirim',
+                value: topComplaintLabel,
+                note: `${formatNumber(overview.complaint_count || 0)} sikayet kaydi · ${mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1)} pay`,
+                tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-positive'
+            },
+            {
+                label: 'Son guncel sinyal',
+                value: latestSignalText,
+                note: latestSignalNote,
+                tone: latestItem ? 'is-analysis' : 'is-neutral'
+            },
+            {
+                label: 'Markaya etki eden konu',
+                value: topTopicLabel,
+                note: `${formatNumber(overview.mentions_total || 0)} toplam kayit icinde en cok tekrar eden eksen`,
+                tone: 'is-neutral'
+            }
+        ].map(item => `
+            <article class="mtw-story-card mtw-priority-item ${item.tone}">
+                <div class="mtw-priority-head">
+                    <span class="mtw-badge ${item.tone}">${mediaWatchSafe(item.label)}</span>
+                    <strong>${mediaWatchSafe(item.value)}</strong>
+                </div>
+                <p>${mediaWatchSafe(item.note)}</p>
+            </article>
+        `).join('');
+
+        const quickAccessCardsHtml = [
+            {
+                label: 'Acik alarmlar',
+                value: `${formatNumber(overview.open_alert_count || 0)}`,
+                note: topAlert
+                    ? `${getMediaWatchAlertTypeMeta(topAlert.alert_type).label}: ${String(topAlert.title || '').slice(0, 110)}`
+                    : 'Alarm listesinde acil baslik yok.',
+                cta: 'Alarm listesine git',
+                action: `jumpMediaWatchSection('mediaWatchAlertsSection')`,
+                tone: (overview.critical_alert_count || 0) > 0 ? 'is-negative' : 'is-warning'
+            },
+            {
+                label: 'Sikayet / ariza',
+                value: `${formatNumber(overview.complaint_count || 0)}`,
+                note: `${topComplaintLabel} · ${mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1)}`,
+                cta: 'Sikayet radarini ac',
+                action: `jumpMediaWatchSection('mediaWatchComplaintSection')`,
+                tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-neutral'
+            },
+            {
+                label: 'Resmi karar / destek',
+                value: `${formatNumber(overview.regulation_count || 0)}`,
+                note: officialItems[0] ? String(officialItems[0].title || '').slice(0, 110) : 'Su an resmi karar sinyali yok.',
+                cta: 'Resmi kayitlari ac',
+                action: `jumpMediaWatchSection('mediaWatchOfficialSection')`,
+                tone: (overview.regulation_count || 0) > 0 ? 'is-official' : 'is-neutral'
+            },
+            {
+                label: 'Lansman / inceleme',
+                value: `${formatNumber(launchItems.length || 0)}`,
+                note: launchItems[0] ? String(launchItems[0].title || '').slice(0, 110) : 'Su an yeni urun veya inceleme sinyali yok.',
+                cta: 'Urun gundemini ac',
+                action: `jumpMediaWatchSection('mediaWatchLaunchSection')`,
+                tone: (launchItems.length || 0) > 0 ? 'is-opportunity' : 'is-neutral'
+            }
+        ].map(item => `
+            <article class="mtw-story-card mtw-quick-card ${item.tone}">
+                <div class="mtw-quick-top">
+                    <span>${mediaWatchSafe(item.label)}</span>
+                    <strong>${mediaWatchSafe(item.value)}</strong>
+                </div>
+                <p>${mediaWatchSafe(item.note)}</p>
+                <button type="button" class="btn-filter" onclick="${item.action}">${mediaWatchSafe(item.cta)}</button>
+            </article>
+        `).join('');
+
+        const filterPresetButtonsHtml = [
+            { label: 'Tum kayitlar', preset: 'all' },
+            { label: 'Sadece sikayet', preset: 'complaint' },
+            { label: 'Resmi kararlar', preset: 'official' },
+            { label: 'Lansmanlar', preset: 'launch' },
+            { label: 'Negatif duygu', preset: 'negative' },
+            { label: 'Sosyal medya', preset: 'social' },
+            { label: 'Forum', preset: 'forum' },
+            { label: 'Video', preset: 'video' }
+        ].map(item => `
+            <button type="button" class="btn-filter" onclick="applyMediaWatchPreset('${item.preset}', 'mediaWatchFeedSection')">${mediaWatchSafe(item.label)}</button>
+        `).join('');
+
+        const opsBriefCardsHtml = [
+            { key: 'issue_solutions_md', title: 'Ariza cozumu notu', icon: 'fa-screwdriver-wrench' },
+            { key: 'monitoring_gaps_md', title: 'Izleme aciklari', icon: 'fa-satellite-dish' }
+        ].map(section => `
+            <article class="mtw-section-card">
+                <div class="mtw-section-head">
+                    <span><i class="fas ${section.icon}"></i>${mediaWatchSafe(section.title)}</span>
+                </div>
+                <div class="mtw-section-body">
+                    ${briefSections[section.key] ? mediaWatchMarkdownToHtml(briefSections[section.key]) : '<div class="mtw-empty">Bu operasyon notu icin AI cikti henuz olusmadi.</div>'}
+                </div>
+            </article>
+        `).join('');
+
+        const complaintTableHtml = complaintItems.length > 0
+            ? complaintItems.slice(0, 8).map(item => {
+                const sentimentMeta = getMediaWatchSentimentMeta(item.sentiment_label);
+                return `
+                    <tr>
+                        <td>
+                            <strong>${mediaWatchSafe(item.title || item.issue_type || 'Şikayet kaydı')}</strong>
+                            <small>${mediaWatchSafe(item.complaint_area || item.issue_type || item.product_name || item.model_name || 'Genel eksen')}</small>
+                        </td>
+                        <td>${mediaWatchSafe(item.product_name || item.model_name || '-')}</td>
+                        <td>${mediaWatchSafe(item.platform_name || item.source_domain || item.channel_type || '-')}</td>
+                        <td><span class="mtw-badge ${sentimentMeta.tone}">${sentimentMeta.label}</span></td>
+                        <td>${item.severity_score != null ? `${Math.round(Number(item.severity_score || 0) * 100)}/100` : '-'}</td>
+                    </tr>
+                `;
+            }).join('')
+            : `<tr><td colspan="5" class="mtw-table-empty">${mediaWatchSafe(!hasCollectedData ? 'Şikayet veya arıza kaydı henüz toplanmadı.' : 'Filtreye uygun şikayet veya arıza kaydı bulunamadı.')}</td></tr>`;
+
+        const launchCardsHtml = launchItems.length > 0
+            ? launchItems.slice(0, 6).map(item => {
+                const typeMeta = getMediaWatchTypeMeta(item.item_type);
+                return `
+                    <article class="mtw-story-card ${typeMeta.tone}">
+                        <div class="mtw-story-head">
+                            <span class="mtw-badge ${typeMeta.tone}">${typeMeta.label}</span>
+                            <small>${formatMediaWatchDate(item.published_at)}</small>
+                        </div>
+                        <h4>${mediaWatchSafe(item.title || 'Lansman kaydı')}</h4>
+                        <p>${mediaWatchSafe(item.summary || item.ai_summary || item.content_text || 'Özet bekleniyor.').slice(0, 220)}</p>
+                        <div class="mtw-story-meta">
+                            <span>${mediaWatchSafe(item.product_name || item.model_name || item.source_name || '-')}</span>
+                            <span>${mediaWatchSafe(item.platform_name || item.source_domain || '-')}</span>
+                        </div>
+                        <a class="mtw-link" href="${dashboardSafe(item.source_url)}" target="_blank" rel="noreferrer">Kaynağı aç</a>
+                    </article>
+                `;
+            }).join('')
+            : `<div class="mtw-empty">${mediaWatchSafe(!hasCollectedData ? 'Yeni ürün, inceleme veya kampanya kaydı henüz toplanmadı.' : 'Yeni ürün, inceleme veya kampanya kaydı bulunamadı.')}</div>`;
+
+        const officialCardsHtml = officialItems.length > 0
+            ? officialItems.slice(0, 6).map(item => `
+                <article class="mtw-story-card is-official">
+                    <div class="mtw-story-head">
+                        <span class="mtw-badge is-official">${getMediaWatchChannelMeta(item.channel_type).label}</span>
+                        <small>${formatMediaWatchDate(item.published_at)}</small>
+                    </div>
+                    <h4>${mediaWatchSafe(item.title || 'Resmî gündem')}</h4>
+                    <p>${mediaWatchSafe(item.summary || item.ai_summary || item.content_text || 'Özet bekleniyor.').slice(0, 220)}</p>
+                    <div class="mtw-story-meta">
+                        <span>${mediaWatchSafe(item.source_name || item.source_domain || '-')}</span>
+                        <span>${mediaWatchSafe(item.country_code || 'TR')}</span>
+                    </div>
+                    <a class="mtw-link" href="${dashboardSafe(item.source_url)}" target="_blank" rel="noreferrer">Detayı aç</a>
+                </article>
+            `).join('')
+            : `<div class="mtw-empty">${mediaWatchSafe(!hasCollectedData ? 'Resmî karar, destek veya sektör raporu kaydı henüz toplanmadı.' : 'Resmî karar, destek veya sektör raporu kaydı bulunamadı.')}</div>`;
+
+        const alertCardsHtml = alerts.length > 0
+            ? alerts.slice(0, 6).map(item => {
+                const levelMeta = getMediaWatchRiskMeta(item.alert_level);
+                const typeMeta = getMediaWatchAlertTypeMeta(item.alert_type);
+                return `
+                    <article class="mtw-story-card ${levelMeta.tone}">
+                        <div class="mtw-story-head">
+                            <span class="mtw-badge ${levelMeta.tone}">${levelMeta.label}</span>
+                            <small>${formatMediaWatchDate(item.last_seen_at || item.updated_at, true)}</small>
+                        </div>
+                        <h4>${mediaWatchSafe(item.title || 'Medya alarmı')}</h4>
+                        <p>${mediaWatchSafe(item.summary || 'Alarm özeti hazırlanıyor.').slice(0, 240)}</p>
+                        <div class="mtw-story-meta">
+                            <span>${mediaWatchSafe(typeMeta.label)}</span>
+                            <span>${mediaWatchSafe(item.action_owner || 'Üst yönetim')}</span>
+                        </div>
+                        <div class="mtw-alert-meta">
+                            <span>${formatNumber(item.item_count || 0)} kayıt</span>
+                            <span>${formatNumber(item.source_count || 0)} kaynak</span>
+                            <span>${Math.round(Number(item.average_severity || 0) * 100)}/100 etki</span>
+                        </div>
+                    </article>
+                `;
+            }).join('')
+            : '<div class="mtw-empty">Açık alarm kaydı yok. Alarm katmanı ingest geldikçe otomatik güncellenir.</div>';
+
+        const feedHtml = items.length > 0
+            ? items.slice(0, 14).map(item => {
+                const channelMeta = getMediaWatchChannelMeta(item.channel_type);
+                const typeMeta = getMediaWatchTypeMeta(item.item_type);
+                const sentimentMeta = getMediaWatchSentimentMeta(item.sentiment_label);
+                const engagementLabel = formatMediaWatchEngagement(item.engagement_json);
+                const tagRows = [
+                    ...(mediaWatchParseArray(item.tags_json).slice(0, 3)),
+                    ...(mediaWatchParseArray(item.topics_json).slice(0, 2))
+                ].slice(0, 4);
+
+                return `
+                    <article class="mtw-feed-card">
+                        <div class="mtw-feed-head">
+                            <div class="mtw-feed-badges">
+                                <span class="mtw-badge ${channelMeta.tone}">${channelMeta.label}</span>
+                                <span class="mtw-badge ${typeMeta.tone}">${typeMeta.label}</span>
+                                <span class="mtw-badge ${sentimentMeta.tone}">${sentimentMeta.label}</span>
+                            </div>
+                            <small>${formatMediaWatchDate(item.published_at, true)}</small>
+                        </div>
+                        <h4>${mediaWatchSafe(item.title || '-')}</h4>
+                        <p>${mediaWatchSafe(item.ai_summary || item.summary || item.content_text || 'Özet bekleniyor.').slice(0, 320)}</p>
+                        <div class="mtw-feed-meta">
+                            <span>${mediaWatchSafe(item.source_name || item.source_domain || '-')}</span>
+                            ${item.product_name || item.model_name ? `<span>${mediaWatchSafe(item.product_name || item.model_name)}</span>` : ''}
+                            ${item.complaint_area || item.issue_type ? `<span>${mediaWatchSafe(item.complaint_area || item.issue_type)}</span>` : ''}
+                            ${engagementLabel ? `<span>${mediaWatchSafe(engagementLabel)}</span>` : ''}
+                        </div>
+                        ${tagRows.length ? `<div class="mtw-tag-row">${tagRows.map(tag => `<span class="mtw-tag">${mediaWatchSafe(tag)}</span>`).join('')}</div>` : ''}
+                        <div class="mtw-feed-actions">
+                            <span>${formatMediaWatchRelative(item.published_at || item.created_at)}</span>
+                            <a class="mtw-link" href="${dashboardSafe(item.source_url)}" target="_blank" rel="noreferrer">Kaynağı aç</a>
+                        </div>
+                    </article>
+                `;
+            }).join('')
+            : `<div class="mtw-empty">${mediaWatchSafe(emptyDataMessage)}</div>`;
+
+        const solutionCardsHtml = complaintItems.length > 0
+            ? complaintItems.slice(0, 6).map(item => `
+                <article class="mtw-solution-card">
+                    <div class="mtw-story-head">
+                        <span class="mtw-badge is-warning">${mediaWatchSafe(item.complaint_area || item.issue_type || 'Saha geri bildirimi')}</span>
+                        <small>${mediaWatchSafe(item.product_name || item.model_name || 'Marka geneli')}</small>
+                    </div>
+                    <h4>${mediaWatchSafe(item.title || 'Servis çözüm kartı')}</h4>
+                    <p>${mediaWatchSafe(buildMediaWatchSolutionCopy(item))}</p>
+                </article>
+            `).join('')
+            : `<div class="mtw-empty">${mediaWatchSafe(!hasCollectedData ? 'Çözüm kartı üretecek servis veya arıza verisi henüz toplanmadı.' : 'Çözüm kartı oluşturacak servis veya arıza kaydı bulunamadı.')}</div>`;
+
+        const workflowCards = workflows.length > 0 ? workflows : [
+            { title: 'Tarım haber ağı', description: 'RSS, haber siteleri ve tarım gündemi kaynakları', schedule: 'Saatlik', status: 'recommended' },
+            { title: 'Sosyal medya mention', description: 'X, Instagram, Facebook, YouTube ve video yorum akışı', schedule: '15 dakikada bir', status: 'recommended' },
+            { title: 'Forum + şikayet takibi', description: 'Forum başlıkları, şikayet platformları ve servis geri bildirimleri', schedule: '30 dakikada bir', status: 'recommended' },
+            { title: 'Resmî karar monitörü', description: 'Bakanlık kararları, destek programları, tebliğ ve raporlar', schedule: 'Günlük', status: 'recommended' }
+        ];
+
+        const workflowHtml = workflowCards.map(item => {
+            const runMeta = getMediaWatchRunMeta(item.status || 'recommended');
+            return `
+                <article class="mtw-workflow-card">
+                    <div class="mtw-story-head">
+                        <span class="mtw-badge ${runMeta.tone}">${runMeta.label}</span>
+                        <small>${mediaWatchSafe(item.schedule || 'Plan yok')}</small>
+                    </div>
+                    <h4>${mediaWatchSafe(item.title || 'n8n akışı')}</h4>
+                    <p>${mediaWatchSafe(item.description || 'Açıklama bulunamadı.')}</p>
+                    <div class="mtw-feed-meta">
+                        ${item.n8n_workflow_id ? `<span>Workflow #${dashboardSafe(item.n8n_workflow_id)}</span>` : '<span>Hazır blueprint</span>'}
+                        ${item.last_run ? `<span>${formatMediaWatchDate(item.last_run, true)}</span>` : '<span>İlk koşu bekleniyor</span>'}
+                    </div>
+                </article>
+            `;
+        }).join('');
+
+        const runRowsHtml = runs.length > 0
+            ? runs.slice(0, 8).map(item => {
+                const runMeta = getMediaWatchRunMeta(item.status);
+                return `
+                    <div class="mtw-run-row">
+                        <div>
+                            <strong>${dashboardSafe(item.workflow_code || item.run_key || 'media-watch')}</strong>
+                            <small>${formatMediaWatchDate(item.started_at, true)}</small>
+                        </div>
+                        <div>
+                            <span class="mtw-badge ${runMeta.tone}">${runMeta.label}</span>
+                            <small>${item.item_count ? `${formatNumber(item.item_count)} kayıt` : 'Kayıt yok'}</small>
+                        </div>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="mtw-empty">Henüz kayıtlı n8n koşusu bulunmuyor.</div>';
+
+        const unreadNotificationCount = mediaNotifications.filter(item => !item.is_read).length;
+        const notificationCardsHtml = mediaNotifications.length > 0
+            ? mediaNotifications.map(item => {
+                const data = mediaWatchParseObject(item.data_json);
+                const notificationLevel = data.alert_level || ((item.title || '').includes('Kritik') ? 'critical' : 'warning');
+                const levelMeta = getMediaWatchRiskMeta(notificationLevel);
+                return `
+                    <article class="mtw-story-card ${item.is_read ? 'is-neutral' : levelMeta.tone}">
+                        <div class="mtw-story-head">
+                            <span class="mtw-badge ${item.is_read ? 'is-neutral' : levelMeta.tone}">${item.is_read ? 'Okundu' : 'Yeni bildirim'}</span>
+                            <small>${formatMediaWatchDate(item.created_at, true)}</small>
+                        </div>
+                        <h4>${mediaWatchSafe(item.title || 'Medya alarm bildirimi')}</h4>
+                        <p>${mediaWatchSafe(item.body || 'Bildirim detayı hazırlanıyor.').slice(0, 260)}</p>
+                        <div class="mtw-story-meta">
+                            <span>${mediaWatchSafe(data.action_owner || 'Aksiyon sahibi bekleniyor')}</span>
+                            <span>${data.item_count ? `${formatNumber(data.item_count)} kayıt` : 'Kayıt sayısı yok'}</span>
+                        </div>
+                        ${item.is_read ? '' : `<button type="button" class="btn-filter" onclick="markMediaWatchNotificationRead(${Number(item.id)})">Okundu olarak işaretle</button>`}
+                    </article>
+                `;
+            }).join('')
+            : '<div class="mtw-empty">Bu marka için medya alarm bildirimi bulunmuyor.</div>';
+
+        const content = document.getElementById('pageContent');
+        content.innerHTML = `
+            <div class="mtw-shell">
+                <section class="mtw-hero">
+                    <div class="mtw-hero-shell">
+                        <div class="mtw-copy">
+                            <div class="mtw-overline">Brand Media Intelligence</div>
+                            <h2>${dashboardSafe(selectedBrand?.name || 'Marka')} medya takip merkezi</h2>
+                            <p>${mediaWatchSafe(heroSummary)}</p>
+
+                            <div class="mtw-control-grid">
+                                <label class="mtw-field">
+                                    <span>Marka</span>
+                                    <select id="mediaWatchBrandSelect" onchange="onMediaWatchBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
+                                        ${brandOptions}
+                                    </select>
+                                </label>
+                                <label class="mtw-field">
+                                    <span>Brif penceresi</span>
+                                    <select id="mediaWatchWindowSelect" onchange="onMediaWatchWindowChange()">
+                                        <option value="7" ${Number(state.window_days) === 7 ? 'selected' : ''}>Son 7 gün</option>
+                                        <option value="14" ${Number(state.window_days) === 14 ? 'selected' : ''}>Son 14 gün</option>
+                                        <option value="30" ${Number(state.window_days) === 30 ? 'selected' : ''}>Son 30 gün</option>
+                                    </select>
+                                </label>
+                                <label class="mtw-field">
+                                    <span>Kanal</span>
+                                    <select id="mediaWatchChannelSelect" onchange="onMediaWatchFilterChange()">
+                                        ${channelOptions}
+                                    </select>
+                                </label>
+                                <label class="mtw-field">
+                                    <span>Sinyal tipi</span>
+                                    <select id="mediaWatchTypeSelect" onchange="onMediaWatchFilterChange()">
+                                        ${typeOptions}
+                                    </select>
+                                </label>
+                                <label class="mtw-field">
+                                    <span>Duygu durumu</span>
+                                    <select id="mediaWatchSentimentSelect" onchange="onMediaWatchFilterChange()">
+                                        ${sentimentOptions}
+                                    </select>
+                                </label>
+                                <label class="mtw-field mtw-field-search">
+                                    <span>Kayıt içi filtre</span>
+                                    <div class="mtw-search-row">
+                                        <input id="mediaWatchSearchInput" type="text" value="${dashboardSafe(state.search)}" placeholder="ürün, model, şikayet, haber..." onkeydown="onMediaWatchSearchKeydown(event)">
+                                        <button type="button" class="btn-filter" onclick="onMediaWatchFilterChange()"><i class="fas fa-search"></i>Filtrele</button>
+                                    </div>
+                                    <small class="mtw-field-help">${mediaWatchSafe(filterHelperText)}</small>
+                                </label>
+                            </div>
+
+                            <div class="mtw-action-row">
+                                <button type="button" class="btn-filter" id="mediaWatchCollectBtn" onclick="runMediaWatchCollection()">
+                                    <i class="fas fa-satellite-dish"></i><span>Kaynak taramasını başlat</span>
+                                </button>
+                                <button type="button" class="btn-filter" id="mediaWatchBriefBtn" onclick="refreshMediaWatchBrief()">
+                                    <i class="fas fa-brain"></i><span>AI üst yönetim brifi üret</span>
+                                </button>
+                                <button type="button" class="btn-filter" id="mediaWatchAlertBtn" onclick="rebuildMediaWatchAlerts()" style="background:rgba(239,68,68,0.1);color:#fecaca;">
+                                    <i class="fas fa-bell"></i><span>Alarm katmanını yenile</span>
+                                </button>
+                                <button type="button" class="btn-filter" onclick="clearMediaWatchFilters()" style="background:rgba(255,255,255,0.08);color:var(--text-primary);">
+                                    <i class="fas fa-rotate-left"></i><span>Filtreleri temizle</span>
+                                </button>
+                                <span class="mtw-status-text" id="mediaWatchStatus">n8n, webhook ve AI brif katmanı aynı merkezde çalışıyor.</span>
+                            </div>
+
+                            ${!hasCollectedData ? `
+                                <div class="mtw-setup-note">
+                                    <strong>Şu an veri yok</strong>
+                                    <p>Bu ekrandaki arama ve filtreler, yalnızca <code>media_watch_items</code> tablosuna düşen kayıtlarda çalışır. Şu anda toplam medya kaydı <b>0</b>. Canlı sonuç görmek için n8n tarafında kaynak toplayıcıların ve <code>/api/media-watch/ingest</code> akışının çalışması gerekiyor.</p>
+                                </div>
+                            ` : ''}
+
+                            <div class="mtw-chip-row">
+                                ${heroChipRows.map(item => `
+                                    <div class="mtw-chip">
+                                        <strong>${mediaWatchSafe(item.value || '-')}</strong>
+                                        <small>${mediaWatchSafe(item.label)}</small>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        ${stageHtml}
+                    </div>
+                </section>
+
+                <section class="mtw-kpi-grid">
+                    ${kpiCards.map(item => `
+                        <article class="mtw-kpi ${dashboardSafe(item.tone)}">
+                            <span>${mediaWatchSafe(item.label)}</span>
+                            <strong>${mediaWatchSafe(item.value)}</strong>
+                            <small>${mediaWatchSafe(item.note)}</small>
+                        </article>
+                        `).join('')}
+                </section>
+
+                <section class="mtw-grid mtw-grid-main">
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Alarm komuta katmanı</h3>
+                                <p>Kritik şikayet, forum yoğunluğu, resmî etki ve lansman fırsatlarını tek listede önceliklendirir.</p>
+                            </div>
+                            <span class="mtw-badge ${(overview.critical_alert_count || 0) > 0 ? 'is-negative' : (overview.warning_alert_count || 0) > 0 ? 'is-warning' : 'is-positive'}">${formatNumber(overview.open_alert_count || 0)} açık alarm</span>
+                        </div>
+                        <div class="mtw-alert-grid">${alertCardsHtml}</div>
+                    </article>
+
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Sinyal paketleri</h3>
+                                <p>Pack-1 haber, resmî karar ve video; Pack-2 ise şikayet, forum ve sosyal web izlerini n8n akışına iter.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-side-stack">
+                            <div class="mtw-subpanel">
+                                <h4>Alarm karması</h4>
+                                <div class="mtw-tag-row">
+                                    ${alertMix.map(item => {
+                                        const meta = getMediaWatchAlertTypeMeta(item.label);
+                                        return `<span class="mtw-tag">${mediaWatchSafe(meta.label)} · ${formatNumber(item.count)}</span>`;
+                                    }).join('') || '<span class="mtw-tag">Alarm etiketi bekleniyor</span>'}
+                                </div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>Kaynak paketleri</h4>
+                                <div class="mtw-tag-row">
+                                    <span class="mtw-tag">Pack-1 · haber · resmî karar · video</span>
+                                    <span class="mtw-tag">Pack-2 · şikayet · forum · sosyal web</span>
+                                    <span class="mtw-tag">Pack-3 · resmî sosyal hesap · marka web</span>
+                                    <span class="mtw-tag">n8n · ingest · brief · alarm</span>
+                                </div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>Operasyon notu</h4>
+                                <p>Kaynak taramasını başlat butonu host bridge üzerinden pack-1, pack-2 ve pack-3 akışını birlikte tetikler. Ingest tamamlanınca alarm katmanı, bildirimler ve AI brifi aynı oturumda yenilenebilir.</p>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="mtw-grid mtw-grid-main">
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Yönetici brifi</h3>
+                                <p>Genel durum, üst yönetim, pazarlama, Ar-Ge ve satış sonrası için tek merkez karar notu.</p>
+                            </div>
+                            <span class="mtw-badge ${riskMeta.tone}">${riskMeta.label}</span>
+                        </div>
+                        <div class="mtw-brief-body">${executiveSummaryHtml}</div>
+                        <div class="mtw-section-grid">${sectionCards}</div>
+                    </article>
+
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>İzleme omurgası</h3>
+                                <p>Kanal karışımı, konu yoğunluğu ve n8n toplama akışının sağlık panosu.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-side-stack">
+                            <div class="mtw-subpanel">
+                                <h4>Kanal dağılımı</h4>
+                                <div class="mtw-bar-list">${barListHtml(channelMix, overview.mentions_total || 1)}</div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>Konu ve ürün radarı</h4>
+                                <div class="mtw-tag-row">
+                                    ${(topicMix.slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Konu etiketi bekleniyor</span>'}
+                                </div>
+                                <div class="mtw-tag-row">
+                                    ${(productMix.slice(0, 6)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Ürün / model yoğunluğu yok</span>'}
+                                </div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>n8n koşuları</h4>
+                                <div class="mtw-run-list">${runRowsHtml}</div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>Webhook sözleşmesi</h4>
+                                <p><code>/api/media-watch/ingest</code> üzerinden normalize edilmiş tüm marka kayıtları bu merkeze akar. Header: <code>x-media-watch-key</code>.</p>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="mtw-grid mtw-grid-main">
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Bildirim ve aksiyon kuyruğu</h3>
+                                <p>Açık medya alarm bildirimlerini, aksiyon sahibini ve okunma durumunu aynı katmanda toplar.</p>
+                            </div>
+                            <span class="mtw-badge ${unreadNotificationCount > 0 ? 'is-warning' : 'is-positive'}">${formatNumber(unreadNotificationCount)} okunmamış</span>
+                        </div>
+                        <div class="mtw-story-list">${notificationCardsHtml}</div>
+                    </article>
+
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Brif kaynak karışımı</h3>
+                                <p>Üst yönetime giden brifin hangi kanal, ürün ve sorun kümeleriyle beslendiğini özetler.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-side-stack">
+                            <div class="mtw-subpanel">
+                                <h4>Kanal karması</h4>
+                                <div class="mtw-tag-row">
+                                    ${(mediaWatchParseArray(briefSourceMix.channels).slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Brif kanal etiketi bekleniyor</span>'}
+                                </div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>Ürün / model kümesi</h4>
+                                <div class="mtw-tag-row">
+                                    ${(mediaWatchParseArray(briefSourceMix.products).slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Brif ürün etiketi bekleniyor</span>'}
+                                </div>
+                            </div>
+                            <div class="mtw-subpanel">
+                                <h4>Sorun ekseni</h4>
+                                <div class="mtw-tag-row">
+                                    ${(mediaWatchParseArray(briefSourceMix.issues).slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Sorun etiketi bekleniyor</span>'}
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="mtw-grid mtw-grid-triple">
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Şikayet radarı</h3>
+                                <p>Arıza, servis ve forum kaynaklı geri bildirimleri filtrelenmiş görünümde okur.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-tag-row">
+                            ${(complaintMix.slice(0, 6)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Şikayet ekseni yok</span>'}
+                        </div>
+                        <div class="mtw-table-wrap">
+                            <table class="mtw-table">
+                                <thead>
+                                    <tr>
+                                        <th>Konu</th>
+                                        <th>Ürün/model</th>
+                                        <th>Kanal</th>
+                                        <th>Duygu</th>
+                                        <th>Etki</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${complaintTableHtml}</tbody>
+                            </table>
+                        </div>
+                    </article>
+
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Yeni ürün ve pazar sesi</h3>
+                                <p>Lansman, inceleme, influencer yorumları ve kampanya akışlarını birleştirir.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-story-list">${launchCardsHtml}</div>
+                    </article>
+
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Resmî kararlar ve sektör raporları</h3>
+                                <p>Bakanlık, destek, mevzuat ve resmî açıklamaları markaya bağlı olarak ayıklar.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-story-list">${officialCardsHtml}</div>
+                    </article>
+                </section>
+
+                <section class="mtw-grid mtw-grid-main">
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Canlı gündem akışı</h3>
+                                <p>Tarım haberi, sosyal medya, forum ve şikayet kanallarından gelen tüm filtrelenmiş kayıtlar.</p>
+                            </div>
+                            <span class="mtw-badge is-analysis">${formatNumber(items.length || 0)} kayıt</span>
+                        </div>
+                        <div class="mtw-feed-list">${feedHtml}</div>
+                    </article>
+
+                    <article class="mtw-panel">
+                        <div class="mtw-panel-head">
+                            <div>
+                                <h3>Servis ve çözüm kartları</h3>
+                                <p>Arıza ve şikayet dilini satış sonrası aksiyona çeviren operasyon özetleri.</p>
+                            </div>
+                        </div>
+                        <div class="mtw-solution-grid">${solutionCardsHtml}</div>
+                        <div class="mtw-subpanel" style="margin-top:18px;">
+                            <h4>Kaynak dağılımı</h4>
+                            <div class="mtw-bar-list">${barListHtml(sourceMix, overview.mentions_total || 1)}</div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="mtw-panel">
+                    <div class="mtw-panel-head">
+                        <div>
+                            <h3>n8n bağlantı katmanı</h3>
+                            <p>Sürekli izleme, webhook ingest ve otomatik executive brief üretimi için önerilen akış omurgası.</p>
+                        </div>
+                    </div>
+                    <div class="mtw-workflow-grid">${workflowHtml}</div>
+                </section>
+            </div>
+        `;
+    } catch (err) {
+        if (/Medya Takip .*yanit vermedi/i.test(String(err.message || ''))) {
+            err = new Error('Medya Takip servisi yanıt vermedi. Lokal app backend güncel değilse container rebuild/restart gerekebilir.');
+        }
+        showError(err);
+    }
+}
+
+// ============================================
+// MARKA MEDYA RADARI (yeni tasarım)
+// Sürekli akış, kategori chip'leri, rakip karşılaştırma, ülke kapsamı, otomatik yenileme
+// ============================================
+let _mwxRefreshTimer = null;
+
+const MWX_CATEGORIES = [
+    { key: 'all', label: 'Tümü', icon: 'fa-globe', color: '#60a5fa' },
+    { key: 'risk', label: 'Risk Radarı', icon: 'fa-shield-halved', color: '#f43f5e' },
+    { key: 'launch', label: 'Lansman', icon: 'fa-rocket', color: '#22c55e' },
+    { key: 'praise', label: 'Övgü / Başarı', icon: 'fa-thumbs-up', color: '#10b981' },
+    { key: 'complaint', label: 'Şikayet / Arıza', icon: 'fa-triangle-exclamation', color: '#ef4444' },
+    { key: 'official', label: 'Resmî / Mevzuat', icon: 'fa-landmark', color: '#a78bfa' },
+    { key: 'international', label: 'Uluslararası', icon: 'fa-earth-americas', color: '#f59e0b' },
+    { key: 'campaign', label: 'Kampanya', icon: 'fa-bullhorn', color: '#fb923c' },
+    { key: 'service', label: 'Bayi / Servis', icon: 'fa-headset', color: '#06b6d4' },
+    { key: 'news', label: 'Sektör Gündemi', icon: 'fa-newspaper', color: '#94a3b8' }
+];
+
+function classifyMediaWatchItem(item) {
+    const t = String(item.item_type || '').toLowerCase();
+    const c = String(item.channel_type || '').toLowerCase();
+    const sent = String(item.sentiment_label || '').toLowerCase();
+    const sev = Number(item.severity_score || 0);
+    const country = String(item.country_code || 'TR').toUpperCase();
+    if (country && country !== 'TR') return 'international';
+    if (t === 'launch' || t === 'review' || c === 'launch') return 'launch';
+    if (t === 'complaint' || c === 'complaint' || sev >= 0.75) return 'complaint';
+    if (sent === 'positive') return 'praise';
+    if (t === 'regulation' || c === 'official') return 'official';
+    if (t === 'campaign') return 'campaign';
+    if (t === 'service') return 'service';
+    return 'news';
+}
+
+function getMediaWatchCategoryMeta(key) {
+    return MWX_CATEGORIES.find(c => c.key === key) || MWX_CATEGORIES[MWX_CATEGORIES.length - 1];
+}
+
+function flagFor(country) {
+    const map = { TR: '🇹🇷', US: '🇺🇸', DE: '🇩🇪', FR: '🇫🇷', IT: '🇮🇹', GB: '🇬🇧', UK: '🇬🇧', RU: '🇷🇺', UA: '🇺🇦', PL: '🇵🇱', NL: '🇳🇱', ES: '🇪🇸', JP: '🇯🇵', CN: '🇨🇳', IN: '🇮🇳', BR: '🇧🇷', AR: '🇦🇷', AU: '🇦🇺', CA: '🇨🇦', MX: '🇲🇽', RO: '🇷🇴', BG: '🇧🇬', GR: '🇬🇷', AZ: '🇦🇿', GE: '🇬🇪', KZ: '🇰🇿', UZ: '🇺🇿', IR: '🇮🇷', IQ: '🇮🇶', SY: '🇸🇾', SA: '🇸🇦', AE: '🇦🇪', EG: '🇪🇬', MA: '🇲🇦' };
+    return map[String(country || 'TR').toUpperCase()] || '🌍';
+}
+
+function onMwxCategoryClick(key) {
+    mediaWatchState.category = key;
+    loadMediaWatchPage();
+}
+
+function onMwxRivalChange(value) {
+    mediaWatchState.rival_brand_id = String(value || '');
+    loadMediaWatchPage();
+}
+
+function onMwxBrandSwitch(value) {
+    mediaWatchState.brand_id = String(value || '');
+    mediaWatchState.category = 'all';
+    loadMediaWatchPage();
+}
+
+async function onMwxRunNow() {
+    const btn = event?.target?.closest('button');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Tarama başlatıldı...'; }
+    try {
+        const r = await API.runMediaWatchNow({ brand_id: mediaWatchState.brand_id || null });
+        const total = r?.item_count || r?.payload_count || 0;
+        if (btn) btn.innerHTML = `<i class="fas fa-check"></i> Tamamlandı (${total} kayıt)`;
+        setTimeout(() => loadMediaWatchPage(), 1500);
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-satellite-dish"></i> Şimdi Tara'; }
+        if (err?.message?.includes('ENTERPRISE')) {
+            alert('Manuel tarama Enterprise pakette. Aboneliğinizi yükseltin.');
+        } else {
+            alert('Tarama başlatılamadı: ' + (err.message || 'bilinmeyen hata'));
+        }
+    }
+}
+
+async function onMwxTranslate(itemId, btnEl) {
+    if (btnEl) { btnEl.disabled = true; btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+    try {
+        const r = await API.translateMediaWatchItem(itemId);
+        if (r?.skipped) { alert('Bu içerik zaten Türkçe.'); return; }
+        if (r?.translated_title || r?.translated_summary) {
+            // DOM'da kart başlığı ve özetini değiştir
+            const card = document.querySelector(`[data-mwx-item-id="${itemId}"]`);
+            if (card) {
+                const titleEl = card.querySelector('.mwx-feed-title a');
+                const summaryEl = card.querySelector('.mwx-feed-summary');
+                if (titleEl && r.translated_title) titleEl.textContent = r.translated_title;
+                if (summaryEl && r.translated_summary) summaryEl.textContent = r.translated_summary;
+            }
+        }
+    } catch (err) {
+        alert('Çeviri hatası: ' + (err.message || 'bilinmeyen'));
+    } finally {
+        if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = '<i class="fas fa-language"></i>'; }
+    }
+}
+
+function startMwxAutoRefresh() {
+    if (_mwxRefreshTimer) clearInterval(_mwxRefreshTimer);
+    _mwxRefreshTimer = setInterval(() => {
+        if (currentPage === 'media-watch') loadMediaWatchPage(true);
+    }, 60000);
+}
+
+function stopMwxAutoRefresh() {
+    if (_mwxRefreshTimer) { clearInterval(_mwxRefreshTimer); _mwxRefreshTimer = null; }
+}
+
+async function loadMediaWatchPage(silent = false) {
+    try {
+        if (!allBrands || allBrands.length === 0) allBrands = await API.getBrands();
+
+        const state = ensureMediaWatchState();
+        const brandId = String(state.brand_id || getMediaWatchBrandId() || '');
+        if (!brandId) throw new Error('Marka seçimi bulunamadı');
+
+        // Coğrafi kapsam ve kaynak istatistikleri (paralel, hata durumunda boş düşer)
+        const [coverage, sources] = await Promise.all([
+            API.getMediaWatchCoverage(brandId).catch(() => null),
+            API.getMediaWatchSources().catch(() => null)
+        ]);
+        window._mwxCoverage = coverage; window._mwxSources = sources;
+
+        const selectedBrand = findBrandById(brandId) || allBrands.find(b => String(b.id) === brandId) || currentUser?.brand || null;
+        if (selectedBrand) setActiveBrandContext(selectedBrand, { persist: currentUser?.role === 'admin' });
+
+        // Veri çek (paralel) — rakip karşılaştırması artık yok
+        const [overviewPayload, itemPayload, alertPayload, briefPayload] = await Promise.all([
+            mediaWatchWithTimeout(API.getMediaWatchOverview(brandId), 'Medya Takip omurgası').catch(() => null),
+            mediaWatchWithTimeout(API.getMediaWatchItems({ brand_id: brandId, limit: 120 }), 'Medya Takip kayıtları').catch(() => []),
+            mediaWatchWithTimeout(API.getMediaWatchAlerts({ brand_id: brandId, limit: 12 }), 'Medya Takip alarmları').catch(() => []),
+            mediaWatchWithTimeout(API.getMediaWatchBrief(brandId), 'Medya Takip brifi').catch(() => null)
+        ]);
+
+        const overview = overviewPayload?.overview || {};
+        const items = Array.isArray(overviewPayload?.items) && overviewPayload.items.length ? overviewPayload.items : (Array.isArray(itemPayload) ? itemPayload : []);
+        const alerts = Array.isArray(alertPayload) && alertPayload.length ? alertPayload : (overviewPayload?.alerts || []);
+        const runs = Array.isArray(overviewPayload?.runs) ? overviewPayload.runs : [];
+        const latestBrief = briefPayload || overviewPayload?.latest_brief || null;
+        const briefSections = mediaWatchParseObject(latestBrief?.sections_json);
+
+        // Kategori sınıflama + sayım
+        const categorized = items.map(it => ({ ...it, _category: classifyMediaWatchItem(it) }));
+        const counts = MWX_CATEGORIES.reduce((acc, c) => {
+            if (c.key === 'all') acc[c.key] = categorized.length;
+            else if (c.key === 'risk') acc[c.key] = alerts.length;
+            else acc[c.key] = categorized.filter(i => i._category === c.key).length;
+            return acc;
+        }, {});
+
+        // Filter (kategori) — risk sekmesi alarmları gösterir, diğerleri item akışını
+        const isRiskView = state.category === 'risk';
+        const filtered = (state.category === 'all' || isRiskView) ? categorized : categorized.filter(i => i._category === state.category);
+        const filteredSorted = filtered.slice().sort((a, b) => new Date(b.published_at || b.created_at || 0) - new Date(a.published_at || a.created_at || 0));
+
+        // Sentiment / kapsam
+        const positiveCount = categorized.filter(i => String(i.sentiment_label || '').toLowerCase() === 'positive').length;
+        const negativeCount = categorized.filter(i => String(i.sentiment_label || '').toLowerCase() === 'negative').length;
+        const neutralCount = categorized.length - positiveCount - negativeCount;
+        const sentimentRatio = (positiveCount + negativeCount) > 0 ? Math.round((positiveCount / (positiveCount + negativeCount)) * 100) : 50;
+        const internationalCount = categorized.filter(i => i._category === 'international').length;
+        const countriesSet = new Set(categorized.map(i => String(i.country_code || 'TR').toUpperCase()).filter(Boolean));
+        const countries = Array.from(countriesSet);
+
+        // Top kaynaklar
+        const sourceCounts = {};
+        categorized.forEach(it => {
+            const k = it.source_name || it.source_domain || '-';
+            sourceCounts[k] = (sourceCounts[k] || 0) + 1;
+        });
+        const topSources = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+        // Trend tags (en yoğun konular)
+        const tagCounts = {};
+        categorized.forEach(it => {
+            mediaWatchParseArray(it.topics_json).forEach(tag => { if (tag) tagCounts[tag] = (tagCounts[tag] || 0) + 1; });
+            mediaWatchParseArray(it.tags_json).forEach(tag => { if (tag) tagCounts[tag] = (tagCounts[tag] || 0) + 1; });
+        });
+        const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+
+        // n8n run sağlığı
+        const lastRun = runs[0] || null;
+        const runMeta = lastRun ? getMediaWatchRunMeta(lastRun.status) : { label: 'Akış bekleniyor', tone: 'is-warning' };
+
+        // KPI bantı
+        const kpiCards = [
+            { label: '24 saat görünürlük', value: formatNumber(overview.mentions_24h || 0), note: `${formatNumber(overview.mentions_total || 0)} toplam kayıt`, tone: (overview.mentions_24h || 0) > 0 ? 'is-up' : 'is-neutral' },
+            { label: 'Aktif kaynak', value: formatNumber(overview.active_source_count || 0), note: `${countries.length} farklı ülke kapsamı`, tone: 'is-analysis' },
+            { label: 'Pozitif / Negatif', value: `%${sentimentRatio}`, note: `${formatNumber(positiveCount)} pozitif · ${formatNumber(negativeCount)} negatif`, tone: sentimentRatio >= 60 ? 'is-up' : sentimentRatio <= 40 ? 'is-down' : 'is-neutral' },
+            { label: 'Açık alarm', value: formatNumber(overview.open_alert_count || 0), note: `${formatNumber(overview.critical_alert_count || 0)} kritik`, tone: (overview.critical_alert_count || 0) > 0 ? 'is-down' : (overview.open_alert_count || 0) > 0 ? 'is-warning' : 'is-up' },
+            { label: 'Şikayet / Arıza', value: formatNumber(overview.complaint_count || counts.complaint || 0), note: `${formatNumber(counts.praise)} övgü kaydı`, tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-up' },
+            { label: 'Uluslararası iz', value: formatNumber(internationalCount), note: countries.length > 1 ? `${countries.filter(c => c !== 'TR').slice(0, 4).map(c => flagFor(c)).join(' ')}` : 'Sadece TR kapsamı', tone: internationalCount > 0 ? 'is-up' : 'is-neutral' }
+        ];
+
+        const kpiHtml = kpiCards.map(k => `
+            <article class="mwx-kpi ${k.tone}">
+                <span>${dashboardSafe(k.label)}</span>
+                <strong>${dashboardSafe(k.value)}</strong>
+                <small>${k.note}</small>
+            </article>
+        `).join('');
+
+        // Kategori chip'leri (yatay filter)
+        const categoryChipsHtml = MWX_CATEGORIES.map(cat => {
+            const count = counts[cat.key] || 0;
+            const active = state.category === cat.key;
+            return `
+                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" onclick="onMwxCategoryClick('${cat.key}')" style="--cat-color:${cat.color}">
+                    <i class="fas ${cat.icon}"></i>
+                    <span>${dashboardSafe(cat.label)}</span>
+                    <em>${formatNumber(count)}</em>
+                </button>
+            `;
+        }).join('');
+
+        // Akış kartları (haber/sinyal)
+        const itemsHtml = filteredSorted.length > 0
+            ? filteredSorted.slice(0, 40).map(item => {
+                const cat = getMediaWatchCategoryMeta(item._category);
+                const sentMeta = getMediaWatchSentimentMeta(item.sentiment_label);
+                const country = String(item.country_code || 'TR').toUpperCase();
+                const flag = flagFor(country);
+                const sourceUrl = item.source_url || '#';
+                const tags = mediaWatchParseArray(item.topics_json).slice(0, 3);
+                const lang = String(item.language || 'tr').toLowerCase();
+                const isForeign = lang !== 'tr';
+                const displayTitle = item.translated_title || item.title || '-';
+                const displaySummary = item.translated_summary || item.ai_summary || item.summary || item.content_text || 'Özet bekleniyor.';
+                return `
+                    <article class="mwx-feed-card mwx-cat-${cat.key}" style="--feed-color:${cat.color}" data-mwx-item-id="${item.id || ''}">
+                        <div class="mwx-feed-spine"></div>
+                        <div class="mwx-feed-body">
+                            <div class="mwx-feed-top">
+                                <span class="mwx-feed-cat" style="background:${cat.color}22;color:${cat.color};border-color:${cat.color}55"><i class="fas ${cat.icon}"></i>${dashboardSafe(cat.label)}</span>
+                                <span class="mwx-feed-flag" title="${dashboardSafe(country)}">${flag} ${dashboardSafe(country)}</span>
+                                ${isForeign ? `<span class="mwx-feed-lang" title="Orijinal dil">${dashboardSafe(lang.toUpperCase())}</span>` : ''}
+                                <span class="mwx-feed-sent ${sentMeta.tone}">${dashboardSafe(sentMeta.label)}</span>
+                                <span class="mwx-feed-time">${formatMediaWatchRelative(item.published_at || item.created_at)}</span>
+                                ${isForeign && !item.translated_title ? `<button class="mwx-feed-translate" onclick="onMwxTranslate(${item.id || 0}, this)" title="Türkçe'ye çevir"><i class="fas fa-language"></i></button>` : ''}
+                                ${item.translated_title ? `<span class="mwx-feed-translated" title="AI çevrildi"><i class="fas fa-check-double"></i> TR</span>` : ''}
+                            </div>
+                            <h3 class="mwx-feed-title"><a href="${dashboardSafe(sourceUrl)}" target="_blank" rel="noreferrer">${mediaWatchSafe(displayTitle)}</a></h3>
+                            <p class="mwx-feed-summary">${mediaWatchSafe(displaySummary).slice(0, 320)}</p>
+                            <div class="mwx-feed-foot">
+                                <span class="mwx-feed-source"><i class="fas fa-broadcast-tower"></i>${mediaWatchSafe(item.source_name || item.source_domain || '-')}</span>
+                                ${item.product_name || item.model_name ? `<span class="mwx-feed-product"><i class="fas fa-tractor"></i>${mediaWatchSafe(item.product_name || item.model_name)}</span>` : ''}
+                                ${tags.length ? `<div class="mwx-feed-tags">${tags.map(t => `<span class="mwx-tag">#${mediaWatchSafe(t)}</span>`).join('')}</div>` : ''}
+                                <a class="mwx-feed-link" href="${dashboardSafe(sourceUrl)}" target="_blank" rel="noreferrer">Kaynağa git <i class="fas fa-arrow-up-right-from-square"></i></a>
+                            </div>
+                        </div>
+                    </article>
+                `;
+            }).join('')
+            : `<div class="mwx-empty"><i class="fas fa-satellite-dish"></i><p>Bu kategoride güncel kayıt yok. Kategori filtresini "Tümü" yapabilir veya n8n akışının taze veri toplamasını bekleyebilirsiniz.</p></div>`;
+
+        // Risk Radarı görünümü (full-width kart ızgarası)
+        const riskCriticalCount = alerts.filter(a => String(a.alert_level || '').toLowerCase() === 'critical').length;
+        const riskHighCount = alerts.filter(a => String(a.alert_level || '').toLowerCase() === 'high').length;
+        const riskMedCount = alerts.length - riskCriticalCount - riskHighCount;
+        const riskHtml = alerts.length > 0
+            ? `
+                <div class="mwx-risk-summary">
+                    <div class="mwx-risk-stat is-critical"><span>Kritik</span><strong>${formatNumber(riskCriticalCount)}</strong></div>
+                    <div class="mwx-risk-stat is-high"><span>Yüksek</span><strong>${formatNumber(riskHighCount)}</strong></div>
+                    <div class="mwx-risk-stat is-med"><span>Orta / Düşük</span><strong>${formatNumber(riskMedCount)}</strong></div>
+                    <div class="mwx-risk-stat is-total"><span>Toplam Açık Alarm</span><strong>${formatNumber(alerts.length)}</strong></div>
+                </div>
+                <div class="mwx-risk-grid">
+                    ${alerts.map(a => {
+                        const lvl = getMediaWatchRiskMeta(a.alert_level);
+                        return `
+                            <article class="mwx-risk-card ${lvl.tone}">
+                                <header>
+                                    <span class="mwx-risk-badge">${dashboardSafe(lvl.label)}</span>
+                                    <span class="mwx-risk-time">${formatMediaWatchRelative(a.created_at || a.updated_at)}</span>
+                                </header>
+                                <h4>${mediaWatchSafe(a.title || 'Alarm')}</h4>
+                                <p>${mediaWatchSafe((a.summary || a.description || '').slice(0, 260) || 'Detay özeti bulunmuyor.')}</p>
+                                <footer>
+                                    <span><i class="fas fa-file-lines"></i> ${formatNumber(a.item_count || 0)} kayıt</span>
+                                    <span><i class="fas fa-tower-broadcast"></i> ${formatNumber(a.source_count || 0)} kaynak</span>
+                                    ${a.window_hours ? `<span><i class="fas fa-clock"></i> ${formatNumber(a.window_hours)}sa pencere</span>` : ''}
+                                </footer>
+                            </article>
+                        `;
+                    }).join('')}
+                </div>
+            `
+            : `<div class="mwx-empty"><i class="fas fa-shield-halved"></i><p>Açık risk alarmı yok. Sistem markaya ait şikayet, arıza ve kriz sinyallerini yakaladığında burada belirir.</p></div>`;
+
+        // Alt strip için kompakt kartlar
+        const stripSourcesHtml = topSources.length ? `
+            <article class="mwx-strip-card">
+                <header><i class="fas fa-tower-broadcast"></i> En yoğun kaynaklar</header>
+                <div class="mwx-source-list">
+                    ${topSources.map(([name, count]) => {
+                        const max = topSources[0][1];
+                        const pct = Math.round((count / Math.max(max, 1)) * 100);
+                        return `
+                            <div class="mwx-source-row">
+                                <div class="mwx-source-copy"><strong>${dashboardSafe(name)}</strong><small>${formatNumber(count)}</small></div>
+                                <div class="mwx-source-bar"><span style="width:${pct}%"></span></div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </article>
+        ` : '';
+
+        const stripTagsHtml = topTags.length ? `
+            <article class="mwx-strip-card">
+                <header><i class="fas fa-hashtag"></i> Gündem etiketleri</header>
+                <div class="mwx-tag-cloud">
+                    ${topTags.map(([tag, count]) => `<span class="mwx-tag-pill">#${dashboardSafe(tag)}<em>${count}</em></span>`).join('')}
+                </div>
+            </article>
+        ` : '';
+
+        const stripCountriesHtml = countries.length > 1 ? `
+            <article class="mwx-strip-card">
+                <header><i class="fas fa-earth-americas"></i> Coğrafi kapsam</header>
+                <div class="mwx-country-grid">
+                    ${countries.slice(0, 12).map(c => {
+                        const cnt = categorized.filter(i => String(i.country_code || 'TR').toUpperCase() === c).length;
+                        return `<div class="mwx-country-pill">${flagFor(c)} <strong>${dashboardSafe(c)}</strong><em>${cnt}</em></div>`;
+                    }).join('')}
+                </div>
+            </article>
+        ` : '';
+
+        const stripN8nHtml = `
+            <article class="mwx-strip-card mwx-n8n-card">
+                <header><i class="fas fa-bolt"></i> n8n akış sağlığı</header>
+                <div class="mwx-n8n-row ${runMeta.tone}">
+                    <span class="mwx-n8n-dot"></span>
+                    <div>
+                        <strong>${dashboardSafe(runMeta.label)}</strong>
+                        <small>${lastRun?.started_at ? `Son koşu ${formatMediaWatchRelative(lastRun.started_at)}` : 'Koşu bekleniyor'}${lastRun?.item_count ? ` · ${formatNumber(lastRun.item_count)} yeni kayıt` : ''}</small>
+                    </div>
+                </div>
+                <div class="mwx-n8n-actions">
+                    <button class="mwx-mini-btn" onclick="runMediaWatchCollection()"><i class="fas fa-satellite-dish"></i> Tarama başlat</button>
+                    <button class="mwx-mini-btn" onclick="refreshMediaWatchBrief()"><i class="fas fa-brain"></i> AI brif üret</button>
+                </div>
+                <small class="mwx-n8n-tip">Sayfa 60 saniyede bir otomatik tazelenir.</small>
+            </article>
+        `;
+
+        // AI yönetici brifi (varsa)
+        const briefHtml = latestBrief?.executive_summary_md
+            ? `
+                <section class="mwx-brief-panel">
+                    <div class="mwx-brief-head">
+                        <div>
+                            <span class="mwx-brief-eyebrow">AI Yönetici Brifi</span>
+                            <h3>${dashboardSafe(selectedBrand?.name || 'Marka')} medya istihbaratı sentezi</h3>
+                        </div>
+                        <span class="mwx-brief-meta">${dashboardSafe(latestBrief.ai_model || 'rule-based')} · ${formatMediaWatchRelative(latestBrief.created_at || latestBrief.updated_at)}</span>
+                    </div>
+                    <div class="mwx-brief-body">${mediaWatchMarkdownToHtml(latestBrief.executive_summary_md)}</div>
+                    ${briefSections.board_brief_md || briefSections.marketing_md || briefSections.aftersales_md ? `
+                        <div class="mwx-brief-grid">
+                            ${briefSections.board_brief_md ? `<div class="mwx-brief-section"><h5><i class="fas fa-building-columns"></i> Üst yönetim</h5>${mediaWatchMarkdownToHtml(briefSections.board_brief_md)}</div>` : ''}
+                            ${briefSections.marketing_md ? `<div class="mwx-brief-section"><h5><i class="fas fa-bullhorn"></i> Pazarlama</h5>${mediaWatchMarkdownToHtml(briefSections.marketing_md)}</div>` : ''}
+                            ${briefSections.aftersales_md ? `<div class="mwx-brief-section"><h5><i class="fas fa-headset"></i> Satış sonrası</h5>${mediaWatchMarkdownToHtml(briefSections.aftersales_md)}</div>` : ''}
+                            ${briefSections.arge_md ? `<div class="mwx-brief-section"><h5><i class="fas fa-gears"></i> Ar-Ge</h5>${mediaWatchMarkdownToHtml(briefSections.arge_md)}</div>` : ''}
+                        </div>
+                    ` : ''}
+                </section>
+            `
+            : '';
+
+        const activeMeta = getMediaWatchCategoryMeta(state.category);
+        const feedHeadCount = isRiskView ? alerts.length : filteredSorted.length;
+        const feedHeadHint = isRiskView ? 'açık alarm · en kritikten başlayarak' : 'sinyal · en yenisi en üstte';
+
+        // Render
+        const content = document.getElementById('pageContent');
+        content.innerHTML = `
+            <div class="mwx-shell">
+                <!-- Üst durum şeridi: CANLI göstergesi -->
+                <section class="mwx-status-strip">
+                    <div class="mwx-live-indicator ${runMeta.tone}">
+                        <span class="mwx-pulse"></span>
+                        <strong>CANLI</strong>
+                        <small>${overview.last_published_at ? `son yayın ${formatMediaWatchRelative(overview.last_published_at)}` : 'veri bekleniyor'}</small>
+                    </div>
+                    <div class="mwx-status-hint">
+                        <i class="fas fa-globe"></i>
+                        ${sources ? `${formatNumber(sources.total || 0)} kaynak · ${(sources.languages || []).length} dil · ${(sources.countries || []).length} ülke kapsamı taranıyor` : 'Kaynak listesi yükleniyor...'}
+                    </div>
+                    <button class="mwx-mini-btn" onclick="onMwxRunNow()" title="Yeni kayıtları manuel çek (Enterprise)">
+                        <i class="fas fa-satellite-dish"></i> Şimdi Tara
+                    </button>
+                </section>
+
+                <!-- Coğrafi Kapsam Şeridi -->
+                ${coverage && coverage.totals ? `
+                    <section class="mwx-coverage-strip">
+                        <div class="mwx-coverage-stat is-info">
+                            <span>30 gün toplam</span>
+                            <strong>${formatNumber(coverage.totals.total || 0)}</strong>
+                            <small>tüm kaynaklardan</small>
+                        </div>
+                        <div class="mwx-coverage-stat is-up">
+                            <span>Son 24 saat</span>
+                            <strong>${formatNumber(coverage.totals.last_24h || 0)}</strong>
+                            <small>yeni kayıt</small>
+                        </div>
+                        <div class="mwx-coverage-stat">
+                            <span>Ülke</span>
+                            <strong>${formatNumber(coverage.totals.country_count || 0)}</strong>
+                            <small>${(coverage.by_country || []).slice(0, 5).map(c => flagFor(c.country)).join(' ')}</small>
+                        </div>
+                        <div class="mwx-coverage-stat">
+                            <span>Dil</span>
+                            <strong>${formatNumber(coverage.totals.language_count || 0)}</strong>
+                            <small>${(coverage.by_language || []).map(l => l.language.toUpperCase()).join(' · ')}</small>
+                        </div>
+                        <div class="mwx-coverage-stat">
+                            <span>Kaynak</span>
+                            <strong>${formatNumber(coverage.totals.source_count || 0)}</strong>
+                            <small>aktif domain</small>
+                        </div>
+                    </section>
+                ` : ''}
+
+                <!-- 6'lı KPI bandı -->
+                <section class="mwx-kpi-grid">${kpiHtml}</section>
+
+                <!-- Yatay kategori chip filtreleri -->
+                <section class="mwx-category-bar">${categoryChipsHtml}</section>
+
+                <!-- Ana akış: tam genişlik -->
+                <section class="mwx-feed-fullwidth">
+                    <div class="mwx-feed-head-row">
+                        <h3><i class="fas ${activeMeta.icon}" style="color:${activeMeta.color}"></i> ${dashboardSafe(activeMeta.label)} ${isRiskView ? 'paneli' : 'akışı'}</h3>
+                        <small>${formatNumber(feedHeadCount)} ${feedHeadHint}</small>
+                    </div>
+                    <div class="mwx-feed-body-${isRiskView ? 'risk' : 'items'}">
+                        ${isRiskView ? riskHtml : itemsHtml}
+                    </div>
+                </section>
+
+                <!-- Alt analiz şeridi: 4 kompakt kart -->
+                <section class="mwx-strip-grid">
+                    ${stripSourcesHtml}
+                    ${stripTagsHtml}
+                    ${stripCountriesHtml}
+                    ${stripN8nHtml}
+                </section>
+
+                ${briefHtml}
+            </div>
+        `;
+
+        // Auto refresh
+        if (!silent) startMwxAutoRefresh();
+    } catch (err) {
+        if (/Medya Takip .*yan[ıi]t vermedi/i.test(String(err.message || ''))) {
+            err = new Error('Medya Takip servisi yanıt vermedi. n8n akışı veya backend kontrol edilmeli.');
+        }
+        showError(err);
+    }
+}
+
+// ============================================
+// SUBSCRIPTION & BILLING (Basic / Pro / Elite)
+// ============================================
+let subscriptionState = { period: 'monthly', selectedPlan: null, selectedProvider: null };
+
+function subParseFeatures(plan) {
+    try {
+        const raw = plan.features;
+        return typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch (e) { return []; }
+}
+
+function subEscape(str) {
+    return String(str || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function getSubBillingFlash() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('billing') || '';
+}
+
+async function loadSubscriptionPage() {
+    const content = document.getElementById('pageContent');
+    try {
+        // 2 aşamalı yükleme: kritik veri (3sn timeout) önce render — kullanım/fatura arka planda
+        const settle = (p, fallback, ms = 3000) => Promise.race([
+            p,
+            new Promise(resolve => setTimeout(() => resolve(fallback), ms))
+        ]).catch(() => fallback);
+
+        // Aşama 1: SADECE planlar + abonelik + sağlayıcılar (paralel, 3sn timeout)
+        const [plans, subscription, providers] = await Promise.all([
+            settle(API.getPlans().catch(() => []), [], 3000),
+            settle(API.getSubscription().catch(() => null), null, 3000),
+            settle(API.getPaymentProviders().catch(() => []), [], 3000)
+        ]);
+
+        // Aşama 2: Kullanım ve faturalar arka planda — sayfa render edildikten sonra patch'lenir
+        let invoices = [];
+        let usage = null;
+        const lateData = Promise.all([
+            API.getInvoices().catch(() => []),
+            API.getUsage().catch(() => null)
+        ]);
+
+        // Backend yanıt veriyor ama plan seed yoksa fallback statik plan listesi
+        let safePlans = Array.isArray(plans) ? plans : [];
+        if (safePlans.length === 0) {
+            safePlans = [
+                { id: 0, name: 'Starter', slug: 'starter', tier_rank: 1, price_monthly: 990, price_yearly: 9990, currency: 'TRY', description: 'Kendi markanızın saha verisini tek panoda izleyin', features: '["Kendi marka satış ve pazar payı","İl analizi ve harita","Son 12 ay tarihsel veri","HP segment dağılımı","Model kataloğu","Aylık tescil güncellemesi","Aylık 50 satır export"]', max_users: 2, has_ai_insights: false, has_competitor_analysis: false, has_weather_data: false, has_export: true },
+                { id: 0, name: 'Growth', slug: 'growth', tier_rank: 2, price_monthly: 2990, price_yearly: 29990, currency: 'TRY', description: 'Rakip baskısını izleyin, AI ile derinleşin', features: '["Tüm Starter özellikleri","Rakip analizi (5 rakipe kadar)","Marka ve model karşılaştırma","İl liderlik merkezi","Marka Medya Radarı","İklim Komuta Merkezi","Sınırsız export","Son 36 ay veri","AI Öngörüler (ayda 50 sorgu)","Aylık yönetici brifi"]', max_users: 8, has_ai_insights: true, has_competitor_analysis: true, has_weather_data: true, has_export: true },
+                { id: 0, name: 'Enterprise', slug: 'enterprise', tier_rank: 3, price_monthly: 9990, price_yearly: 99990, currency: 'TRY', description: 'Sınırsız rakip, AI savaş odası, WhatsApp ve API', features: '["Tüm Growth özellikleri","Sınırsız rakip","Sınırsız AI Öngörüler","12 aylık + uzun vade tahmin","WhatsApp sorgu kanalı (3 telefon)","API erişimi (10K istek/ay)","Otomasyon yol haritası","Zamanlanmış raporlar","İl bazlı diff alarmları","Tüm tarihsel veri","Öncelikli destek (4 saat SLA)"]', max_users: 25, has_ai_insights: true, has_competitor_analysis: true, has_weather_data: true, has_export: true }
+            ];
+        }
+        let safeProviders = Array.isArray(providers) ? providers : [];
+        if (safeProviders.length === 0) {
+            safeProviders = [
+                { code: 'stripe', name: 'Stripe (Uluslararası Kart)', icon: 'fa-credit-card', description: 'Visa / Mastercard / Amex — anında aktivasyon', is_mock: true, instant: true },
+                { code: 'iyzico', name: 'iyzico (Türkiye Kart)', icon: 'fa-money-check-dollar', description: '3D Secure ile yerel kart ödemesi — anında aktivasyon', is_mock: true, instant: true },
+                { code: 'bank_transfer', name: 'Banka Havalesi / EFT', icon: 'fa-university', description: 'Manuel onay — IBAN ve referans kodu', is_mock: false, instant: false }
+            ];
+        }
+        const safeInvoices = Array.isArray(invoices) ? invoices : [];
+
+        const flash = getSubBillingFlash();
+        const period = subscriptionState.period || 'monthly';
+        const sortedPlans = safePlans.slice().sort((a, b) => (a.tier_rank || 0) - (b.tier_rank || 0));
+
+        if (!subscriptionState.selectedPlan) {
+            subscriptionState.selectedPlan = subscription?.plan_slug || (sortedPlans.find(p => p.tier_rank === 2)?.slug || sortedPlans[0]?.slug || null);
+        }
+        if (!subscriptionState.selectedProvider) {
+            subscriptionState.selectedProvider = safeProviders.find(p => !p.is_mock)?.code || safeProviders[0]?.code || null;
+        }
+        const flashHtml = flash === 'success'
+            ? `<div class="sub-flash sub-flash-success"><i class="fas fa-circle-check"></i> Aboneliğiniz başarıyla aktive edildi.</div>`
+            : flash === 'cancelled'
+                ? `<div class="sub-flash sub-flash-warn"><i class="fas fa-circle-info"></i> Ödeme akışı kullanıcı tarafından iptal edildi.</div>`
+                : flash === 'error'
+                    ? `<div class="sub-flash sub-flash-err"><i class="fas fa-triangle-exclamation"></i> Ödeme onaylanırken hata oluştu. Lütfen tekrar deneyin.</div>`
+                    : flash === 'start'
+                        ? `<div class="sub-flash sub-flash-info"><i class="fas fa-bolt"></i> Hesabınız oluşturuldu. Ödeme yöntemini seçip aboneliği başlatın.</div>`
+                        : '';
+
+        const periodSwitchHtml = `
+            <div class="sub-period-switch">
+                <button class="sub-period-btn ${period === 'monthly' ? 'is-active' : ''}" onclick="subSetPeriod('monthly')">Aylık</button>
+                <button class="sub-period-btn ${period === 'yearly' ? 'is-active' : ''}" onclick="subSetPeriod('yearly')">Yıllık <small>2 ay hediye</small></button>
+            </div>
+        `;
+
+        const planCardsHtml = sortedPlans.map(plan => {
+            const features = subParseFeatures(plan);
+            const price = period === 'yearly' ? plan.price_yearly : plan.price_monthly;
+            const isCurrent = subscription?.plan_slug === plan.slug && (subscription?.status === 'active' || subscription?.status === 'trialing');
+            const isSelected = subscriptionState.selectedPlan === plan.slug;
+            return `
+                <article class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan('${plan.slug}')">
+                    ${plan.tier_rank === 2 ? '<div class="sub-plan-badge">EN POPÜLER</div>' : ''}
+                    ${isCurrent ? '<div class="sub-plan-current">MEVCUT PLAN</div>' : ''}
+                    <div class="sub-plan-tier">Tier ${plan.tier_rank || 1}</div>
+                    <h3 class="sub-plan-name">${subEscape(plan.name)}</h3>
+                    <p class="sub-plan-desc">${subEscape(plan.description || '')}</p>
+                    <div class="sub-plan-price">
+                        <strong>₺${formatNumber(price)}</strong>
+                        <span>/ ${period === 'yearly' ? 'yıl' : 'ay'}</span>
+                    </div>
+                    ${period === 'yearly' && plan.price_monthly ? `<small class="sub-plan-equiv">Aylık: ₺${formatNumber(Math.round((plan.price_yearly || 0) / 12))}</small>` : ''}
+                    <ul class="sub-feature-list">
+                        ${features.map(f => `<li><i class="fas fa-check-circle"></i><span>${subEscape(f)}</span></li>`).join('')}
+                    </ul>
+                    <div class="sub-plan-meta">
+                        <span><i class="fas fa-users"></i> ${plan.max_users >= 999 ? 'Sınırsız kullanıcı' : `${plan.max_users} kullanıcı`}</span>
+                    </div>
+                </article>
+            `;
+        }).join('');
+
+        const providerHtml = safeProviders.map(p => {
+            const isSelected = subscriptionState.selectedProvider === p.code;
+            return `
+                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" onclick="subSelectProvider('${p.code}')">
+                    <i class="fas ${p.icon || 'fa-credit-card'}"></i>
+                    <div>
+                        <strong>${subEscape(p.name)}</strong>
+                        <small>${subEscape(p.description)}</small>
+                        <div class="sub-provider-flags">
+                            ${p.instant ? '<span class="sub-flag is-up">Anında aktivasyon</span>' : '<span class="sub-flag is-warn">Manuel onay</span>'}
+                            ${p.is_mock ? '<span class="sub-flag is-info">Sandbox</span>' : ''}
+                        </div>
+                    </div>
+                </button>
+            `;
+        }).join('');
+
+        const selectedPlan = sortedPlans.find(p => p.slug === subscriptionState.selectedPlan);
+        const selectedProvider = safeProviders.find(p => p.code === subscriptionState.selectedProvider);
+        const checkoutPrice = selectedPlan ? (period === 'yearly' ? selectedPlan.price_yearly : selectedPlan.price_monthly) : 0;
+
+        const activeSubBlock = subscription ? `
+            <section class="sub-active-card">
+                <div class="sub-active-left">
+                    <i class="fas fa-crown"></i>
+                    <div>
+                        <span class="sub-active-eyebrow">Mevcut Aboneliğiniz</span>
+                        <h3>${subEscape(subscription.plan_name)}</h3>
+                        <small>
+                            ${subscription.status === 'active' ? 'Aktif' : (subscription.status === 'pending' ? 'Ödeme bekleniyor' : subEscape(subscription.status))}
+                            ${subscription.current_period_end ? ` · ${new Date(subscription.current_period_end).toLocaleDateString('tr-TR')} tarihine kadar geçerli` : ''}
+                        </small>
+                    </div>
+                </div>
+                <div class="sub-active-actions">
+                    ${subscription.cancel_at_period_end
+                        ? '<span class="sub-flag is-warn">Dönem sonunda iptal edilecek</span>'
+                        : `<button class="sub-btn-secondary" onclick="subCancelSubscription()"><i class="fas fa-ban"></i> Aboneliği iptal et</button>`
+                    }
+                </div>
+            </section>
+        ` : '';
+
+        // safeInvoices artık aşama-2'de yükleniyor; ilk render'da kullanılmıyor
+        const invoicesHtml = safeInvoices.slice(0, 8).map(inv => `
+            <tr>
+                <td>${new Date(inv.created_at).toLocaleDateString('tr-TR')}</td>
+                <td>${subEscape(inv.plan_name || '-')}</td>
+                <td>${subEscape(inv.provider || '-')}</td>
+                <td>₺${formatNumber(inv.amount)}</td>
+                <td><span class="sub-flag ${inv.status === 'completed' ? 'is-up' : inv.status === 'failed' ? 'is-down' : 'is-warn'}">${subEscape(inv.status)}</span></td>
+                <td>${inv.bank_reference ? `<code>${subEscape(inv.bank_reference)}</code>` : (inv.invoice_url ? `<a href="${subEscape(inv.invoice_url)}" target="_blank">PDF</a>` : '-')}</td>
+            </tr>
+        `).join('');
+
+        content.innerHTML = `
+            <div class="sub-shell">
+                ${flashHtml}
+                ${activeSubBlock}
+                <div id="subUsageHost"></div>
+
+                <section class="sub-hero">
+                    <div>
+                        <span class="sub-hero-pill"><i class="fas fa-bolt"></i> 3 paket · 3 ödeme yöntemi</span>
+                        <h2>İhtiyacınıza uygun paketi seçin</h2>
+                        <p>Starter ile kendi markanızı, Growth ile rakipleri ve AI'ı, Enterprise ile sınırsız rakip + WhatsApp + API katmanını açın. Yıllık ödemede yaklaşık 2,4 ay hediye.</p>
+                    </div>
+                    ${periodSwitchHtml}
+                </section>
+
+                <section class="sub-plans-grid">${planCardsHtml}</section>
+
+                <section class="sub-checkout">
+                    <header><h3><i class="fas fa-credit-card"></i> Ödeme yöntemi</h3></header>
+                    <div class="sub-providers-grid">${providerHtml}</div>
+
+                    <div class="sub-summary">
+                        <div class="sub-summary-row">
+                            <span>Plan</span><strong>${subEscape(selectedPlan?.name || '-')}</strong>
+                        </div>
+                        <div class="sub-summary-row">
+                            <span>Dönem</span><strong>${period === 'yearly' ? 'Yıllık' : 'Aylık'}</strong>
+                        </div>
+                        <div class="sub-summary-row">
+                            <span>Sağlayıcı</span><strong>${subEscape(selectedProvider?.name || '-')}</strong>
+                        </div>
+                        <div class="sub-summary-row sub-summary-total">
+                            <span>Toplam</span><strong>₺${formatNumber(checkoutPrice)}</strong>
+                        </div>
+                        <button class="sub-btn-primary" id="subCheckoutBtn" onclick="subStartCheckout()" ${!selectedPlan || !selectedProvider ? 'disabled' : ''}>
+                            <i class="fas fa-arrow-right"></i>
+                            ${selectedProvider?.instant ? 'Ödemeyi tamamla' : 'IBAN bilgilerini al'}
+                        </button>
+                        <small class="sub-summary-hint">Banka havalesi seçerseniz, transfer onayından sonra abonelik aktive edilir.</small>
+                    </div>
+                </section>
+
+                <section class="sub-invoices" id="subInvoicesSection">
+                    <header><h3><i class="fas fa-file-invoice"></i> Ödeme geçmişi</h3></header>
+                    <div class="sub-empty"><i class="fas fa-spinner fa-spin"></i> Fatura geçmişi yükleniyor...</div>
+                </section>
+            </div>
+        `;
+
+        // Aşama 2 sonuçları geldikçe DOM'u patch'le (sayfa beklemez)
+        lateData.then(([lateInvoices, lateUsage]) => {
+            const invSec = document.getElementById('subInvoicesSection');
+            if (invSec) {
+                const lateInvList = Array.isArray(lateInvoices) ? lateInvoices : [];
+                if (lateInvList.length > 0) {
+                    const rowsHtml = lateInvList.slice(0, 8).map(inv => `
+                        <tr>
+                            <td>${new Date(inv.created_at).toLocaleDateString('tr-TR')}</td>
+                            <td>${subEscape(inv.plan_name || '-')}</td>
+                            <td>${subEscape(inv.provider || '-')}</td>
+                            <td>₺${formatNumber(inv.amount)}</td>
+                            <td><span class="sub-flag ${inv.status === 'completed' ? 'is-up' : inv.status === 'failed' ? 'is-down' : 'is-warn'}">${subEscape(inv.status)}</span></td>
+                            <td>${inv.bank_reference ? `<code>${subEscape(inv.bank_reference)}</code>` : (inv.invoice_url ? `<a href="${subEscape(inv.invoice_url)}" target="_blank">PDF</a>` : '-')}</td>
+                        </tr>
+                    `).join('');
+                    invSec.innerHTML = `
+                        <header><h3><i class="fas fa-file-invoice"></i> Ödeme geçmişi</h3></header>
+                        <div class="sub-table-wrap"><table class="sub-table">
+                            <thead><tr><th>Tarih</th><th>Plan</th><th>Sağlayıcı</th><th>Tutar</th><th>Durum</th><th>Referans</th></tr></thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table></div>
+                    `;
+                } else {
+                    invSec.innerHTML = `
+                        <header><h3><i class="fas fa-file-invoice"></i> Ödeme geçmişi</h3></header>
+                        <div class="sub-empty">Henüz fatura kaydı yok.</div>
+                    `;
+                }
+            }
+            // Kullanım kartını üst kısma yerleştir
+            if (lateUsage && lateUsage.usage) {
+                const u = lateUsage.usage; const lim = lateUsage.limits || {};
+                const fmt = (used, limit, label) => {
+                    if (limit === -1) return `<div class="sub-usage-row"><span>${label}</span><strong>${formatNumber(used)}</strong><small>sınırsız</small></div>`;
+                    if (limit === 0) return `<div class="sub-usage-row is-disabled"><span>${label}</span><strong>—</strong><small>pakette yok</small></div>`;
+                    const pct = Math.min(100, Math.round((used / limit) * 100));
+                    const tone = pct >= 100 ? 'is-down' : pct >= 80 ? 'is-warn' : 'is-up';
+                    return `<div class="sub-usage-row ${tone}"><span>${label}</span><strong>${formatNumber(used)} / ${formatNumber(limit)}</strong><div class="sub-usage-bar"><span style="width:${pct}%"></span></div></div>`;
+                };
+                const warningsHtml = (lateUsage.warnings || []).map(w => `
+                    <div class="sub-flash sub-flash-${w.level === 'critical' ? 'err' : 'warn'}">
+                        <i class="fas fa-${w.level === 'critical' ? 'circle-exclamation' : 'triangle-exclamation'}"></i>
+                        ${subEscape(w.message)}
+                    </div>
+                `).join('');
+                const host = document.getElementById('subUsageHost');
+                if (host) {
+                    host.outerHTML = `
+                        <section class="sub-usage-card">
+                            <header><h3><i class="fas fa-gauge-high"></i> Bu ayki kullanımınız</h3></header>
+                            ${warningsHtml}
+                            <div class="sub-usage-grid">
+                                ${fmt(u.ai_queries, lim.ai_queries_monthly, 'AI sorgu')}
+                                ${fmt(u.exports, lim.export_rows_monthly, 'Export satırı')}
+                                ${fmt(u.api_requests, lim.api_requests_monthly, 'API isteği')}
+                                ${fmt(u.whatsapp_queries, -1, 'WhatsApp sorgusu')}
+                            </div>
+                        </section>
+                    `;
+                }
+            }
+        });
+    } catch (err) {
+        // Loading döngüsünü kesinlikle kır — kullanıcıya hata UI göster
+        if (content) {
+            content.innerHTML = `
+                <div class="sub-shell">
+                    <div class="sub-flash sub-flash-err">
+                        <i class="fas fa-triangle-exclamation"></i>
+                        Abonelik verileri yüklenemedi: ${subEscape(err?.message || 'Bilinmeyen hata')}
+                    </div>
+                    <button class="sub-btn-primary" onclick="loadSubscriptionPage()">
+                        <i class="fas fa-rotate"></i> Yeniden dene
+                    </button>
+                </div>
+            `;
+        }
+        try { showError(err); } catch (e) {}
+    }
+}
+
+function subSetPeriod(p) {
+    subscriptionState.period = p === 'yearly' ? 'yearly' : 'monthly';
+    loadSubscriptionPage();
+}
+
+function subSelectPlan(slug) {
+    subscriptionState.selectedPlan = slug;
+    loadSubscriptionPage();
+}
+
+function subSelectProvider(code) {
+    subscriptionState.selectedProvider = code;
+    loadSubscriptionPage();
+}
+
+async function subStartCheckout() {
+    const btn = document.getElementById('subCheckoutBtn');
+    if (!subscriptionState.selectedPlan || !subscriptionState.selectedProvider) return;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Hazırlanıyor...'; }
+    try {
+        const session = await API.startCheckout({
+            plan_slug: subscriptionState.selectedPlan,
+            provider: subscriptionState.selectedProvider,
+            period: subscriptionState.period
+        });
+        if (session?.redirect_url) {
+            window.location.href = session.redirect_url;
+        } else {
+            alert('Ödeme oturumu açılamadı.');
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-arrow-right"></i> Ödemeyi tamamla'; }
+        }
+    } catch (err) {
+        alert(err.message || 'Ödeme başlatılamadı');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-arrow-right"></i> Ödemeyi tamamla'; }
+    }
+}
+
+async function subCancelSubscription() {
+    if (!confirm('Aboneliğinizi iptal etmek istediğinize emin misiniz? Mevcut dönem sonuna kadar erişiminiz devam eder.')) return;
+    try {
+        await API.cancelSubscription();
+        alert('Aboneliğiniz dönem sonunda iptal edilecek.');
+        API.clearCache();
+        loadSubscriptionPage();
+    } catch (err) {
+        alert(err.message || 'İptal işlemi başarısız');
+    }
+}
+
+// Plan-locked sayfa overlay'i (premium gating)
+async function ensureFeatureAccess(featureKeys, page) {
+    try {
+        if (!Array.isArray(featureKeys)) featureKeys = [featureKeys];
+        if (window._myFeaturesCache && (Date.now() - window._myFeaturesCacheT) < 60000) {
+            return checkFeatureAgainst(window._myFeaturesCache, featureKeys);
+        }
+        const me = await API.getMyFeatures();
+        window._myFeaturesCache = me;
+        window._myFeaturesCacheT = Date.now();
+        return checkFeatureAgainst(me, featureKeys);
+    } catch (err) {
+        return { allowed: false, reason: 'unknown' };
+    }
+}
+
+function checkFeatureAgainst(me, featureKeys) {
+    if (!me) return { allowed: false, reason: 'no_subscription', me: null };
+    if (me.role === 'admin') return { allowed: true, me };
+    if (!me.has_active_subscription) return { allowed: false, reason: 'no_subscription', me };
+    const userKeys = me.feature_keys || [];
+    const hasAny = featureKeys.some(k => userKeys.includes(k));
+    return { allowed: hasAny, reason: hasAny ? 'ok' : 'feature_locked', me };
+}
+
+function renderPaywallOverlay(featureKeys, pageLabel) {
+    const featureNames = featureKeys.join(', ');
+    return `
+        <div class="paywall-overlay">
+            <div class="paywall-card">
+                <i class="fas fa-lock paywall-icon"></i>
+                <h2>Bu sekme premium pakette</h2>
+                <p>${subEscape(pageLabel || 'Bu özellik')} için planınızı yükseltmeniz gerekiyor.</p>
+                <small class="paywall-keys">Gerekli özellik: <code>${subEscape(featureNames)}</code></small>
+                <div class="paywall-actions">
+                    <button class="sub-btn-primary" onclick="navigateTo('subscription')">
+                        <i class="fas fa-arrow-up-right-from-square"></i> Paketi yükselt
+                    </button>
+                    <button class="sub-btn-secondary" onclick="navigateTo('dashboard')">
+                        <i class="fas fa-house"></i> Dashboard'a dön
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 // ============================================
@@ -3049,6 +13489,7 @@ async function loadSubscriptionPage() {
 // ============================================
 async function loadSettingsPage() {
     const content = document.getElementById('pageContent');
+    const showDeployTools = currentUser?.role === 'admin' && isLocalAppHost();
     content.innerHTML = `
         <div class="grid-2">
             <div class="card">
@@ -3094,7 +13535,42 @@ async function loadSettingsPage() {
                 </div>
             </div>
         </div>
+        ${showDeployTools ? `
+            <div class="card" id="deployStatusCard" style="margin-top:24px;">
+                <div class="card-header">
+                    <h3><i class="fas fa-rocket"></i> Railway Güncelleme</h3>
+                </div>
+                <div class="card-body">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+                        <div>
+                            <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">Lokal uygulamadan production deploy tetikleme</div>
+                            <div id="deployStatusBadge" style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#64748b22;color:#64748b;border:1px solid #64748b55;">Hazır</div>
+                        </div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button class="btn-filter" id="deployRailwayBtn" onclick="triggerRailwayDeploy()" style="background:#22c55e;">
+                                <i class="fas fa-rocket"></i> Railway'e Güncelle
+                            </button>
+                            <button class="btn-filter" onclick="refreshDeployStatus()" style="background:var(--bg-card-hover);color:var(--text-primary);">
+                                <i class="fas fa-rotate-right"></i> Durumu Yenile
+                            </button>
+                        </div>
+                    </div>
+                    <div id="deployActionMessage" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">
+                        Deploy bridge durumu kontrol ediliyor...
+                    </div>
+                    <div id="deployStatusDetails" style="font-size:13px;line-height:1.6;color:var(--text-muted);margin-bottom:14px;">
+                        Henüz deploy bilgisi alınmadı.
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Son çıktı</div>
+                    <pre id="deployStatusOutput" style="margin:0;padding:14px;border-radius:12px;background:#0f172a;color:#cbd5e1;max-height:260px;overflow:auto;font-size:12px;line-height:1.5;white-space:pre-wrap;">Yükleniyor...</pre>
+                </div>
+            </div>
+        ` : ''}
     `;
+
+    if (showDeployTools) {
+        refreshDeployStatus(true);
+    }
 }
 
 // ============================================
@@ -3138,6 +13614,137 @@ function translateLabel(label) {
     return map[label] || label || '-';
 }
 
+const AGRONOMY_DISPLAY_REPLACEMENTS = [
+    [/\bBugday\b/g, 'Buğday'],
+    [/\bMisir\b/g, 'Mısır'],
+    [/\bAycicegi\b/g, 'Ayçiçeği'],
+    [/\bSeker pancari\b/g, 'Şeker pancarı'],
+    [/\bFindik\b/g, 'Fındık'],
+    [/\bCay\b/g, 'Çay'],
+    [/\bUzum\b/g, 'Üzüm'],
+    [/\bAcik alan sebze\b/g, 'Açık alan sebze'],
+    [/\bBahce-parsel\b/g, 'Bahçe-parsel'],
+    [/\bBag-bahce\b/g, 'Bağ-bahçe'],
+    [/\bBahce\b/g, 'Bahçe'],
+    [/\bKirecli\b/g, 'Kireçli'],
+    [/\bSulamali\b/g, 'Sulamalı'],
+    [/\bKuru tarim\b/g, 'Kuru tarım'],
+    [/\bYamac\b/g, 'Yamaç'],
+    [/\bYuksek\b/g, 'Yüksek'],
+    [/\bYillik\b/g, 'Yıllık'],
+    [/\bAgu\b/g, 'Ağu'],
+    [/\bSub\b/g, 'Şub'],
+    [/\bAkici\b/g, 'Akıcı'],
+    [/\btarim\b/g, 'tarım'],
+    [/\bTarim\b/g, 'Tarım'],
+    [/\bmakina\b/g, 'makine'],
+    [/\bMakina\b/g, 'Makine'],
+    [/\btraktor\b/g, 'traktör'],
+    [/\bTraktor\b/g, 'Traktör'],
+    [/\bgerekce\b/g, 'gerekçe'],
+    [/\bGerekçe\b/g, 'Gerekçe'],
+    [/\bbagli\b/g, 'bağlı'],
+    [/\bBagli\b/g, 'Bağlı'],
+    [/\buretim\b/g, 'üretim'],
+    [/\bÜretim\b/g, 'Üretim'],
+    [/\bgunluk\b/g, 'günlük'],
+    [/\bGunluk\b/g, 'Günlük'],
+    [/\bkiyas\b/g, 'kıyas'],
+    [/\bKiyas\b/g, 'Kıyas'],
+    [/\byakin\b/g, 'yakın'],
+    [/\bYakin\b/g, 'Yakın'],
+    [/\bsecin\b/g, 'seçin'],
+    [/\bSecin\b/g, 'Seçin'],
+    [/\bsecimi\b/g, 'seçimi'],
+    [/\bSecimi\b/g, 'Seçimi'],
+    [/\bsecilen\b/g, 'seçilen'],
+    [/\bSecilen\b/g, 'Seçilen'],
+    [/\bdosyasi\b/g, 'dosyası'],
+    [/\bDosyasi\b/g, 'Dosyası'],
+    [/\bcagdirdigi\b/g, 'çağırdığı'],
+    [/\bCagdirdigi\b/g, 'Çağırdığı'],
+    [/\bnasil\b/g, 'nasıl'],
+    [/\bNasil\b/g, 'Nasıl'],
+    [/\bcevrilen\b/g, 'çevrilen'],
+    [/\bCevrilen\b/g, 'Çevrilen'],
+    [/\bYağış\b/g, 'Yağış'],
+    [/\byagis\b/g, 'yağış'],
+    [/\bKuraklık\b/g, 'Kuraklık'],
+    [/\bkuraklik\b/g, 'kuraklık'],
+    [/\bSicaklik\b/g, 'Sıcaklık'],
+    [/\bsicaklik\b/g, 'sıcaklık'],
+    [/\bÇekiş\b/g, 'Çekiş'],
+    [/\bcekis\b/g, 'çekiş'],
+    [/\bSanziman\b/g, 'Şanzıman'],
+    [/\bsanziman\b/g, 'şanzıman'],
+    [/\bdurusu\b/g, 'duruşu'],
+    [/\bdurus\b/g, 'duruş'],
+    [/\bagir\b/g, 'ağır'],
+    [/\bguc\b/g, 'güç'],
+    [/\bihtiyaci\b/g, 'ihtiyacı'],
+    [/\bon plana cikar\b/g, 'ön plana çıkar'],
+    [/\bkilinmali\b/g, 'kılınmalı'],
+    [/\bIc Anadolu\b/g, 'İç Anadolu'],
+    [/\bic Anadolu\b/g, 'iç Anadolu'],
+    [/\bkurak ic bolge\b/g, 'kurak iç bölge'],
+    [/\bKurak ic bolge\b/g, 'Kurak iç bölge'],
+    [/\bRakim\b/g, 'Rakım'],
+    [/\brakim\b/g, 'rakım'],
+    [/\bVeri yili\b/g, 'Veri yılı'],
+    [/\bveri yili\b/g, 'veri yılı'],
+    [/\bTarim alani\b/g, 'Tarım alanı'],
+    [/\btarim alani\b/g, 'tarım alanı'],
+    [/\bAgirlikli\b/g, 'Ağırlıklı'],
+    [/\bagirlikli\b/g, 'ağırlıklı'],
+    [/\bbandi\b/g, 'bandı'],
+    [/\bSektor\b/g, 'Sektör'],
+    [/\bsektor\b/g, 'sektör'],
+    [/\bAyni\b/g, 'Aynı'],
+    [/\bayni\b/g, 'aynı'],
+    [/\bSatin\b/g, 'Satın'],
+    [/\bsatin\b/g, 'satın'],
+    [/\bBuyudukce\b/g, 'Büyüdükçe'],
+    [/\bbuyudukce\b/g, 'büyüdükçe'],
+    [/\bAraliklari\b/g, 'Aralıkları'],
+    [/\baraliklari\b/g, 'aralıkları'],
+    [/\bbazli\b/g, 'bazlı'],
+    [/\bBazli\b/g, 'Bazlı'],
+    [/\bsiniflari\b/g, 'sınıfları'],
+    [/\btoplanmis\b/g, 'toplanmış'],
+    [/\bKaliyor\b/g, 'Kalıyor'],
+    [/\bkaliyor\b/g, 'kalıyor'],
+    [/\bBaglantisi\b/g, 'Bağlantısı'],
+    [/\bbaglantisi\b/g, 'bağlantısı'],
+    [/\bSatirda\b/g, 'Satırda'],
+    [/\bsatirda\b/g, 'satırda'],
+    [/\bOne alinmasi\b/g, 'Öne alınması'],
+    [/\bone alinmasi\b/g, 'öne alınması'],
+    [/\bNetlestirildi\b/g, 'Netleştirildi'],
+    [/\bnetlestirildi\b/g, 'netleştirildi'],
+    [/\bYonetecek\b/g, 'Yönetecek'],
+    [/\byonetecek\b/g, 'yönetecek'],
+    [/\bKatmanlari\b/g, 'Katmanları'],
+    [/\bkatmanlari\b/g, 'katmanları'],
+    [/\bGucu\b/g, 'Gücü'],
+    [/\bgucu\b/g, 'gücü'],
+    [/\bbeygir gucu\b/g, 'beygir gücü'],
+    [/\bsinirli\b/g, 'sınırlı'],
+    [/\bSinirli\b/g, 'Sınırlı']
+];
+
+function localizeAgronomyDisplayText(value = '') {
+    if (value == null) return value;
+    let text = String(value);
+    AGRONOMY_DISPLAY_REPLACEMENTS.forEach(([pattern, replacement]) => {
+        text = text.replace(pattern, replacement);
+    });
+    return text;
+}
+
+function agronomySafe(value) {
+    return dashboardSafe(localizeAgronomyDisplayText(value));
+}
+
 function chartOptions(yLabel) {
     return {
         responsive: true,
@@ -3160,7 +13767,7 @@ function chartOptions(yLabel) {
 let riMapInstance = null;
 let riGeoJsonLayer = null;
 
-async function loadRegionalIndexPage() {
+async function loadRegionalIndexPageLegacy() {
     try {
         const data = await API.getRegionalIndex(selectedYear);
         if (!data) return;
@@ -3341,10 +13948,1556 @@ async function loadRegionalIndexPage() {
     }
 }
 
+function getRegionalIndexFocusBrandId() {
+    if (currentUser?.role !== 'admin') return String(currentUser?.brand_id || '');
+    return String(document.getElementById('mapBrandFilter')?.value || activeBrandContext?.id || '');
+}
+
+function resolveRegionalIndexDefaultProvinceId(provinceSales = [], metrics = []) {
+    if (regionalIndexState.province_id) return String(regionalIndexState.province_id);
+    const topFilteredProvince = (provinceSales || []).find(item => item.province_id);
+    if (topFilteredProvince?.province_id) return String(topFilteredProvince.province_id);
+    const topMetricProvince = (metrics || []).find(item => item.id);
+    if (topMetricProvince?.id) return String(topMetricProvince.id);
+    return String(allProvinces?.[0]?.id || '');
+}
+
+function renderRegionalIndexReportPlaceholder(message = '') {
+    const reportHost = document.getElementById('regionalIndexReportHost');
+    if (!reportHost) return;
+
+    const visibleProvinceCount = (regionalIndexState.sales_cache || []).filter(item => item.province_id).length;
+    const visibleTotal = (regionalIndexState.sales_cache || []).reduce((sum, item) => sum + Number(item.total_sales || 0), 0);
+    const note = message || (visibleProvinceCount > 0
+        ? `Haritada görünen ${fmtNum(visibleProvinceCount)} il içinden birini seçin. Mevcut filtrelerle okunabilen hacim ${fmtNum(visibleTotal)} adet.`
+        : 'Mevcut filtrelerle gösterilebilecek il bulunamadı. Filtreleri genişletip yeniden deneyin.');
+
+    reportHost.innerHTML = `
+        <div class="rix-empty-state">
+            <strong>Haritadan bir il seçin.</strong>
+            <p>${agronomySafe(note)}</p>
+        </div>
+    `;
+}
+
+function buildRegionalIndexNarrative({ dossier, provinceMetric, climateSummary, forecastSummary, rankedModels, cropRows, soilRows, focusProvinceSales, regionPeers }) {
+    const prov = dossier?.province || {};
+    const overview = dossier?.overview || {};
+    const topBrand = dossier?.top_brands?.[0] || null;
+    const focusBrand = dossier?.focus_brand || null;
+    const topModel = rankedModels?.[0] || null;
+    const dominantCrop = cropRows?.[0] || {};
+    const dominantSoil = soilRows?.[0] || {};
+    const climateSignal = getProvinceClimateSignal(climateSummary, forecastSummary, prov);
+    const regionRank = Math.max(1, (regionPeers || []).findIndex(item => String(item.id) === String(prov.id || '')) + 1);
+    const regionLeader = regionPeers?.[0] || provinceMetric || null;
+
+    let stance = {
+        label: 'Saha dosyası',
+        tone: climateSignal.tone || 'is-analysis'
+    };
+
+    if ((provinceMetric?.mechIndex || 0) >= 6 && (overview.market_total_sales || provinceMetric?.total || 0) >= 350) {
+        stance = { label: 'Mekanizasyon üssü', tone: 'is-up' };
+    } else if (focusBrand && (focusBrand.share_pct || 0) < 12 && (overview.market_total_sales || 0) >= 250) {
+        stance = { label: 'Açık saha', tone: 'is-opportunity' };
+    } else if ((climateSignal.tone || '') === 'is-warning') {
+        stance = { label: 'Zorlu operasyon', tone: 'is-warning' };
+    }
+
+    const lead = `${prov?.name || 'İl'} ili için bölgesel mekanizasyon, ürün deseni, iklim hafızası ve saha tercihleri tek dosyada toplandı. Harita üzerinden seçilen bu il artık bir nokta değil; doğrudan saha stratejisine dönüşen karar dosyasıdır.`;
+
+    const paragraphs = [
+        `${prov?.name || 'İl'} ${prov?.region || 'Türkiye'} ekseninde ${fmtNum(overview.market_total_sales || provinceMetric?.total || 0)} adetlik hacim ve ${provinceMetric?.mechIndex != null ? provinceMetric.mechIndex.toFixed(1) : '-'} mekanizasyon endeksiyle okunuyor. Aynı bölgedeki iller içinde ${regionRank}. sırada yer alırken ${topBrand?.brand_name || overview.top_brand_name || 'lider marka'} ${fmtPct(topBrand?.share_pct || overview.top_brand_share_pct || 0, 1)} payla alanın referans oyuncusu durumunda.`,
+        `${localizeAgronomyDisplayText(dominantCrop.crop_name || 'Ana ürün deseni')} ile ${localizeAgronomyDisplayText(dominantSoil.soil_type || 'toprak yapısı')} birlikte okunduğunda ilin ana makine omurgası ${overview.dominant_hp || provinceMetric?.dominantHp || '-'} HP koridorunda yoğunlaşıyor. ${(provinceMetric?.ratio4wd || 0).toFixed(0)}% 4WD ve ${(provinceMetric?.cabinRatio || 0).toFixed(0)}% kabinli oranları, bu ilin sadece hacim değil operasyon zorluğu ve konfor ihtiyacı da taşıdığını gösteriyor.`,
+        `${topModel ? `${topModel.brand_name} ${topModel.model_name} ${topModel.fit_score}/100 uyum skoruyla il sahasına en yakın tercih paketlerinden biri olarak ayrışıyor.` : 'Model tercihleri henüz tam kristalize olmamış olsa da saha deseni net.'} ${focusBrand ? `${focusBrand.brand_name} bu ilde ${fmtPct(focusBrand.share_pct || 0, 1)} pay ve ${focusBrand.rank}. sıra ile izleniyor.` : 'Bu ilde marka yarışı yoğun ama kırılabilir cepler barındırıyor.'} ${localizeAgronomyDisplayText(climateSignal.note)}`
+    ];
+
+    const keyMoves = [
+        dominantCrop.crop_name
+            ? `${localizeAgronomyDisplayText(dominantCrop.crop_name)} ekseninde ekipman paketleri ve HP bandı tek teklif diliyle sunulmalı.`
+            : 'Ürün deseni netleştikçe teklif dili ekipman bazında derinleştirilmeli.',
+        topModel
+            ? `${topModel.model_name} etrafında demo ve saha günü kurgusu yapılıp fit avantajı görünür kılınmalı.`
+            : 'Lider model referansı geldikçe il bazlı ana ürün vitrini güçlendirilmeli.',
+        focusProvinceSales?.share_pct != null
+            ? `Seçili marka için il içi pay ${fmtPct(focusProvinceSales.share_pct || 0, 1)} seviyesinde; ticari plan il toplamından değil saha ceplerinden kurulmalıdır.`
+            : `${regionLeader?.name || prov?.region || 'Bölge'} lider il ritmi referans alınıp aynı saha koreografisi kurulmalıdır.`,
+        localizeAgronomyDisplayText(forecastSummary.windowNote || 'Kısa vade hava penceresi saha temposu ve teslimat sıralamasıyla birlikte okunmalı.')
+    ].filter(Boolean);
+
+    return { stance, lead, paragraphs, keyMoves };
+}
+
+function buildRegionalIndexStrategyCards({ dossier, provinceMetric, climateSummary, forecastSummary, rankedModels, cropRows, soilRows, focusProvinceSales, regionPeers }) {
+    const topModel = rankedModels?.[0] || null;
+    const dominantCrop = cropRows?.[0] || {};
+    const dominantSoil = soilRows?.[0] || {};
+    const bundle = getCropEquipmentBundle(dominantCrop, dominantSoil, climateSummary);
+    const focusBrand = dossier?.focus_brand || null;
+    const regionRank = Math.max(1, (regionPeers || []).findIndex(item => String(item.id) === String(dossier?.province?.id || '')) + 1);
+
+    return [
+        {
+            tone: (provinceMetric?.mechIndex || 0) >= 6 ? 'is-up' : 'is-analysis',
+            eyebrow: 'Bölgesel rol',
+            title: localizeAgronomyDisplayText(dossier?.province?.region || 'Bölge'),
+            value: `${regionRank}. sıra / ${fmtNum(provinceMetric?.total || dossier?.overview?.market_total_sales || 0)} adet`,
+            note: `${provinceMetric?.mechIndex != null ? provinceMetric.mechIndex.toFixed(1) : '-'} mekanizasyon endeksi ve ${(provinceMetric?.yoyGrowth || 0) >= 0 ? '+' : ''}${Number(provinceMetric?.yoyGrowth || 0).toFixed(1)}% ivme ile okunur.`
+        },
+        {
+            tone: 'is-warning',
+            eyebrow: 'Makine kurulumu',
+            title: localizeAgronomyDisplayText(dominantSoil?.soil_type || 'Toprak ve çekiş'),
+            value: dominantSoil?.recommended_hp_range || bundle.hpWindow.label,
+            note: localizeAgronomyDisplayText(`${describeProvinceDrive(dominantSoil?.recommended_drive_type || bundle.driveLabel)} çekiş ve ${bundle.tractorTypeLabel} bu il için ana saha mimarisidir.`)
+        },
+        {
+            tone: topModel?.fit_tone || 'is-opportunity',
+            eyebrow: 'Portföy hamlesi',
+            title: topModel ? `${topModel.brand_name} ${topModel.model_name}` : 'Model routing',
+            value: topModel?.avg_hp ? `${Number(topModel.avg_hp).toFixed(0)} HP / ${topModel.drive_label}` : bundle.tractorTypeLabel,
+            note: localizeAgronomyDisplayText(topModel?.fit_reasons?.[0] || `${dominantCrop.crop_name || 'Ana ürün'} etrafında demo ve ekipman paketi öne alınmalıdır.`)
+        },
+        {
+            tone: focusBrand ? ((focusProvinceSales?.share_pct || 0) >= 15 ? 'is-up' : 'is-opportunity') : 'is-analysis',
+            eyebrow: 'Ticari rota',
+            title: focusBrand ? `${focusBrand.brand_name} il pozisyonu` : 'Lider baskı',
+            value: focusBrand
+                ? `${fmtPct(focusProvinceSales?.share_pct || focusBrand.share_pct || 0, 1)} il payı`
+                : `${fmtPct(dossier?.overview?.top_brand_share_pct || 0, 1)} lider pay`,
+            note: localizeAgronomyDisplayText(forecastSummary.windowNote || 'Kısa vade saha takvimi teslimat ve tanıtım kurgusuyla birlikte yönetilmelidir.')
+        }
+    ];
+}
+
+function renderRegionalIndexReportCharts({ dossier, provinceMetric, climateSummary, focusProvinceSales }) {
+    ['regionalIndexBrand', 'regionalIndexSignature', 'regionalIndexClimate'].forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy?.();
+            delete charts[key];
+        }
+    });
+
+    const theme = getBrandThemeProfile(findBrandById(getRegionalIndexFocusBrandId()) || activeBrandContext || currentUser?.brand || {});
+    const primary = theme.primary_color || '#2563eb';
+    const primaryRgb = theme.primary_rgb || '37, 99, 235';
+    const accent = theme.accent_color || '#f97316';
+
+    const brandEl = document.getElementById('rixBrandChart');
+    if (brandEl && dossier?.top_brands?.length) {
+        const rows = dossier.top_brands.slice(0, 8);
+        const options = chartOptions('Adet');
+        charts.regionalIndexBrand = new Chart(brandEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => item.brand_name || '-'),
+                datasets: [{
+                    label: 'İl hacmi',
+                    data: rows.map(item => Number(item.total_sales || 0)),
+                    backgroundColor: rows.map((item, index) => item.primary_color || (index % 2 === 0 ? `rgba(${primaryRgb}, 0.78)` : 'rgba(56, 189, 248, 0.64)')),
+                    borderRadius: 10,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                ...options,
+                indexAxis: 'y',
+                plugins: {
+                    ...options.plugins,
+                    legend: { display: false },
+                    tooltip: {
+                        ...options.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => {
+                                const row = rows[ctx.dataIndex];
+                                return `${row.brand_name}: ${fmtNum(ctx.raw)} adet / ${fmtPct(row.share_pct || 0, 1)}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const signatureEl = document.getElementById('rixSignatureChart');
+    if (signatureEl && provinceMetric) {
+        const focusShare = focusProvinceSales?.share_pct || dossier?.focus_brand?.share_pct || dossier?.overview?.top_brand_share_pct || 0;
+        const hpScore = provinceMetric.avgHp ? Math.min(100, (Number(provinceMetric.avgHp) / 140) * 100) : 0;
+        const mechScore = provinceMetric.mechIndex ? Math.min(100, Number(provinceMetric.mechIndex) * 12) : 0;
+        const options = chartOptions('Skor');
+        charts.regionalIndexSignature = new Chart(signatureEl, {
+            type: 'radar',
+            data: {
+                labels: ['Mekanizasyon', '4WD', 'Kabin', 'Bahce', 'HP', 'Pazar'],
+                datasets: [{
+                    label: `${dossier?.province?.name || 'İl'} imzası`,
+                    data: [
+                        mechScore,
+                        Number(provinceMetric.ratio4wd || 0),
+                        Number(provinceMetric.cabinRatio || 0),
+                        Number(provinceMetric.bahceRatio || 0),
+                        hpScore,
+                        Number(focusShare || 0)
+                    ],
+                    borderColor: primary,
+                    backgroundColor: `rgba(${primaryRgb}, 0.24)`,
+                    pointBackgroundColor: primary,
+                    pointBorderColor: '#fff',
+                    pointRadius: 3,
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                ...options,
+                scales: {
+                    r: {
+                        beginAtZero: true,
+                        min: 0,
+                        max: 100,
+                        angleLines: { color: 'rgba(255,255,255,0.08)' },
+                        grid: { color: 'rgba(255,255,255,0.08)' },
+                        pointLabels: { color: '#cbd5e1', font: { size: 11 } },
+                        ticks: { color: '#64748b', backdropColor: 'transparent', stepSize: 20 }
+                    }
+                },
+                plugins: {
+                    ...options.plugins,
+                    legend: { display: false }
+                }
+            }
+        });
+    }
+
+    const climateEl = document.getElementById('rixClimateChart');
+    const climateRows = (climateSummary?.monthlyProfile || []).filter(item =>
+        item.rainfall != null || item.droughtIndex != null || item.avgTemp != null
+    );
+    if (climateEl && climateRows.length) {
+        const options = chartOptions('mm / endeks');
+        charts.regionalIndexClimate = new Chart(climateEl, {
+            data: {
+                labels: climateRows.map(item => item.label),
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Yağış',
+                        data: climateRows.map(item => Number(item.rainfall || 0)),
+                        backgroundColor: 'rgba(56, 189, 248, 0.56)',
+                        borderRadius: 10,
+                        borderSkipped: false,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'Kuraklık',
+                        data: climateRows.map(item => Number(item.droughtIndex || 0)),
+                        borderColor: accent,
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        borderWidth: 3,
+                        pointRadius: 2
+                    },
+                    {
+                        type: 'line',
+                        label: 'Ortalama sıcaklık',
+                        data: climateRows.map(item => Number(item.avgTemp || 0)),
+                        borderColor: '#22c55e',
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        yAxisID: 'y2'
+                    }
+                ]
+            },
+            options: {
+                ...options,
+                scales: {
+                    ...options.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#38bdf8', callback: value => `${fmtNum(value)} mm` },
+                        title: { display: true, text: 'Yağış', color: '#38bdf8' }
+                    },
+                    y2: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#22c55e', callback: value => `${value} C` },
+                        title: { display: true, text: 'Sıcaklık', color: '#22c55e' }
+                    }
+                }
+            }
+        });
+    }
+}
+
+async function renderRegionalIndexProvinceReport(provinceId) {
+    const reportHost = document.getElementById('regionalIndexReportHost');
+    if (!reportHost) return;
+
+    const focusBrandId = getRegionalIndexFocusBrandId();
+    const [dossier, climate, recentWeather, forecast] = await Promise.all([
+        API.getProvinceIntelligence(provinceId, selectedYear, focusBrandId || ''),
+        API.getClimate(provinceId).catch(() => []),
+        API.getWeather(provinceId).catch(() => []),
+        API.getWeatherForecast(provinceId).catch(() => [])
+    ]);
+
+    const prov = dossier?.province || allProvinces.find(item => String(item.id) === String(provinceId)) || {};
+    const provinceMetric = (regionalIndexState.metrics || []).find(item => String(item.id) === String(provinceId)) || null;
+    const focusProvinceSales = (regionalIndexState.sales_cache || []).find(item => String(item.province_id) === String(provinceId)) || null;
+    const referenceClimateRows = Array.isArray(dossier?.reference_profile?.climate_rows) ? dossier.reference_profile.climate_rows : [];
+    const climateRows = Array.isArray(climate) && climate.length ? climate : referenceClimateRows;
+    const climateSummary = buildWeatherClimateSummary(climateRows, prov);
+    const forecastSummary = buildWeatherForecastSummary(forecast || [], recentWeather || []);
+    const cropRows = Array.isArray(dossier?.crops) ? dossier.crops : [];
+    const soilRows = Array.isArray(dossier?.soil) ? dossier.soil : [];
+    const cropOperationRows = buildProvinceCropOperationRows(cropRows, soilRows, climateSummary);
+    const soilMachineRows = buildProvinceSoilMachineRows(soilRows, cropRows, climateSummary, forecastSummary);
+    const climateActionRows = buildWeatherActionRows(climateSummary.monthlyProfile || []);
+    const rankedModels = (dossier?.top_models || [])
+        .map(model => scoreProvinceModelFit(
+            model,
+            cropRows,
+            soilRows,
+            prov,
+            climateSummary,
+            forecastSummary,
+            dossier?.overview || {},
+            dossier?.cabin_mix || []
+        ))
+        .sort((left, right) => right.fit_score - left.fit_score || right.total_sales - left.total_sales)
+        .slice(0, 8);
+
+    const regionPeers = (regionalIndexState.metrics || [])
+        .filter(item => item.region === prov.region)
+        .sort((left, right) => right.total - left.total || right.mechIndex - left.mechIndex)
+        .slice(0, 8);
+
+    const narrative = buildRegionalIndexNarrative({
+        dossier,
+        provinceMetric,
+        climateSummary,
+        forecastSummary,
+        rankedModels,
+        cropRows,
+        soilRows,
+        focusProvinceSales,
+        regionPeers
+    });
+
+    const strategyCards = buildRegionalIndexStrategyCards({
+        dossier,
+        provinceMetric,
+        climateSummary,
+        forecastSummary,
+        rankedModels,
+        cropRows,
+        soilRows,
+        focusProvinceSales,
+        regionPeers
+    });
+
+    const stageBrand = findBrandById(focusBrandId || dossier?.focus_brand?.brand_id) || activeBrandContext || currentUser?.brand || {};
+    if (focusBrandId) {
+        const selectedBrand = findBrandById(focusBrandId);
+        if (selectedBrand) setActiveBrandContext(selectedBrand, { persist: currentUser?.role === 'admin' });
+    }
+
+    const stageHtml = buildBrandStageHtml(stageBrand, {
+        title: `${prov?.name || 'İl'} için bölgesel saha dosyası`,
+        summary: localizeAgronomyDisplayText(narrative.lead),
+        compareCopy: `${prov?.region || 'Bölge'} · ${prov?.climate_zone || 'İklim sınıfı yok'} · ${dossier?.overview?.dominant_hp || provinceMetric?.dominantHp || '-'} HP omurgası`,
+        chips: [
+            localizeAgronomyDisplayText(prov?.region || ''),
+            localizeAgronomyDisplayText(cropRows?.[0]?.crop_name || ''),
+            localizeAgronomyDisplayText(soilRows?.[0]?.soil_type || ''),
+            localizeAgronomyDisplayText(forecastSummary?.dominant?.label || '')
+        ]
+    });
+
+    const provinceOptionsHtml = (allProvinces || []).map(item => `
+        <option value="${item.id}" ${String(item.id) === String(provinceId) ? 'selected' : ''}>${dashboardSafe(item.name)} (${dashboardSafe(item.plate_code)})</option>
+    `).join('');
+
+    const peerRowsHtml = regionPeers.length > 0 ? regionPeers.map((item, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td><strong>${dashboardSafe(item.name)}</strong></td>
+            <td>${fmtNum(item.total || 0)}</td>
+            <td>${item.mechIndex != null ? Number(item.mechIndex).toFixed(1) : '-'}</td>
+            <td>${item.avgHp != null ? `${Number(item.avgHp).toFixed(0)} HP` : '-'}</td>
+            <td>${item.yoyGrowth != null ? `${item.yoyGrowth >= 0 ? '+' : ''}${Number(item.yoyGrowth).toFixed(1)}%` : '-'}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="6" class="rix-table-empty">Bölgesel kıyas verisi bulunamadı.</td></tr>';
+
+    const modelRowsHtml = rankedModels.length > 0 ? rankedModels.map((item, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td><strong>${agronomySafe(item.brand_name || '-')}</strong></td>
+            <td>${agronomySafe(item.model_name || item.tuik_model_adi || '-')}</td>
+            <td class="${dashboardSafe(item.fit_tone)}">${agronomySafe(item.fit_score || '-')}</td>
+            <td>${item.avg_hp != null ? `${Number(item.avg_hp).toFixed(0)} HP` : '-'}</td>
+            <td>${agronomySafe(item.drive_label || '-')}</td>
+            <td>${fmtNum(item.total_sales || 0)}</td>
+            <td>${agronomySafe(item.fit_reasons?.[0] || '-')}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="8" class="rix-table-empty">Model uyum matrisi için veri bulunamadı.</td></tr>';
+
+    const soilRowsHtml = soilMachineRows.length > 0 ? soilMachineRows.map(item => `
+        <tr>
+            <td><strong>${agronomySafe(item.soil_type)}</strong></td>
+            <td>${agronomySafe(item.soil_texture)}</td>
+            <td>${agronomySafe(item.crop_names)}</td>
+            <td>${agronomySafe(item.drive_label)}</td>
+            <td>${agronomySafe(item.hp_window)}</td>
+            <td>${agronomySafe(item.equipment_summary)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="6" class="rix-table-empty">Toprak-makine matrisi için veri bulunamadı.</td></tr>';
+
+    const cropRowsHtml = cropOperationRows.length > 0 ? cropOperationRows.map(item => `
+        <tr>
+            <td><strong>${agronomySafe(item.crop_name)}</strong></td>
+            <td>${fmtNum(item.area || 0)} ha</td>
+            <td>${fmtNum(item.production || 0)} t</td>
+            <td>${agronomySafe(item.hp_window)}</td>
+            <td>${agronomySafe(item.tractor_label)}</td>
+            <td>${agronomySafe(item.equipment_summary)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="6" class="rix-table-empty">Ürün-operasyon matrisi için veri bulunamadi.</td></tr>';
+
+    const climateRowsHtml = climateActionRows.length > 0 ? climateActionRows.map(item => `
+        <tr>
+            <td><strong>${agronomySafe(item.label)}</strong></td>
+            <td>${item.avgTemp != null ? Number(item.avgTemp).toFixed(1) : '-'}</td>
+            <td>${item.rainfall != null ? fmtNum(Math.round(item.rainfall)) : '-'}</td>
+            <td>${item.droughtIndex != null ? Number(item.droughtIndex).toFixed(1) : '-'}</td>
+            <td class="${dashboardSafe(item.tone)}">${agronomySafe(item.action)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="5" class="rix-table-empty">İklim aksiyon matrisi için veri bulunamadı.</td></tr>';
+
+    const kpis = [
+        {
+            label: 'İl hacmi',
+            value: `${fmtNum(dossier?.overview?.market_total_sales || provinceMetric?.total || 0)} adet`,
+            note: provinceMetric?.yoyGrowth != null ? `${provinceMetric.yoyGrowth >= 0 ? '+' : ''}${Number(provinceMetric.yoyGrowth).toFixed(1)}% yıllık` : `${selectedYear} pazarı`,
+            tone: (provinceMetric?.yoyGrowth || 0) >= 0 ? 'is-up' : 'is-warning'
+        },
+        {
+            label: 'Mekanizasyon',
+            value: provinceMetric?.mechIndex != null ? Number(provinceMetric.mechIndex).toFixed(1) : '-',
+            note: 'Traktor / 1000 ha endeksi',
+            tone: (provinceMetric?.mechIndex || 0) >= 6 ? 'is-up' : 'is-analysis'
+        },
+        {
+            label: 'HP omurgası',
+            value: dossier?.overview?.dominant_hp || provinceMetric?.dominantHp || '-',
+            note: provinceMetric?.avgHp != null ? `${Number(provinceMetric.avgHp).toFixed(0)} HP agirlikli ort.` : 'Guc tercihi',
+            tone: 'is-analysis'
+        },
+        {
+            label: '4WD / kabin',
+            value: `${Number(provinceMetric?.ratio4wd || 0).toFixed(0)}% / ${Number(provinceMetric?.cabinRatio || 0).toFixed(0)}%`,
+            note: 'Operasyon zorlugu ve konfor',
+            tone: 'is-warning'
+        },
+        {
+            label: dossier?.focus_brand ? `${dashboardSafe(dossier.focus_brand.brand_name)} pozisyonu` : 'Lider marka',
+            value: dossier?.focus_brand
+                ? `${fmtPct(focusProvinceSales?.share_pct || dossier.focus_brand.share_pct || 0, 1)} / ${dossier.focus_brand.rank}. sıra`
+                : `${dashboardSafe(dossier?.overview?.top_brand_name || '-')} / ${fmtPct(dossier?.overview?.top_brand_share_pct || 0, 1)}`,
+            note: dossier?.focus_brand ? `${fmtNum(dossier.focus_brand.total_sales || 0)} adet` : `${dossier?.overview?.active_brand_count || 0} aktif marka`,
+            tone: dossier?.focus_brand ? ((focusProvinceSales?.share_pct || dossier.focus_brand.share_pct || 0) >= 15 ? 'is-up' : 'is-opportunity') : 'is-analysis'
+        },
+        {
+            label: 'İklim sinyali',
+            value: narrative.stance.label,
+            note: forecastSummary.windowNote || 'Saha takvimi',
+            tone: narrative.stance.tone
+        }
+    ];
+
+    reportHost.innerHTML = `
+        <div class="rix-report-shell">
+            <section class="rix-dossier-hero">
+                <div class="rix-dossier-shell">
+                    <div class="rix-dossier-copy">
+                        <div class="rix-overline">Regional Field Dossier</div>
+                        <h2>${dashboardSafe(prov?.name || 'İl')} için bölgesel mekanizasyon strateji raporu</h2>
+                        <p>${dashboardSafe(narrative.lead)}</p>
+                        <div class="rix-control-row">
+                            <label class="rix-field">
+                                <span>İl seçimi</span>
+                                <select id="regionalIndexProvinceSelect" onchange="loadRegionalIndexProvinceDetail()">
+                                    ${provinceOptionsHtml}
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+                    ${stageHtml}
+                </div>
+            </section>
+
+            <section class="rix-kpi-grid">
+                ${kpis.map(item => `
+                    <article class="rix-kpi ${dashboardSafe(item.tone)}">
+                        <span>${agronomySafe(item.label)}</span>
+                        <strong>${agronomySafe(item.value)}</strong>
+                        <small>${agronomySafe(item.note)}</small>
+                    </article>
+                `).join('')}
+            </section>
+
+            <section class="rix-grid rix-grid-wide">
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Akıcı strateji metni')}</h3>
+                            <p>Harita seçimiyle üretildiği için bu il, artık sadece veri satırı değil sahaya inen karar dosyası olarak okunur.</p>
+                        </div>
+                    </div>
+                    <div class="rix-memo ${dashboardSafe(narrative.stance.tone)}">
+                        <div class="rix-memo-pill">${agronomySafe(narrative.stance.label)}</div>
+                        <div class="rix-essay">
+                            ${narrative.paragraphs.map(text => `<p>${agronomySafe(text)}</p>`).join('')}
+                        </div>
+                        <ul class="rix-bullet-list">${narrative.keyMoves.map(item => `<li>${agronomySafe(item)}</li>`).join('')}</ul>
+                    </div>
+                </article>
+
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('90 günlük saha planı')}</h3>
+                            <p>Bu ilin tarım desenine uygun makine, ürün ve ticari rota tek bakışta okunur.</p>
+                        </div>
+                    </div>
+                    <div class="rix-card-grid">
+                        ${strategyCards.map(item => `
+                            <article class="rix-action-card ${dashboardSafe(item.tone)}">
+                                <span>${agronomySafe(item.eyebrow)}</span>
+                                <h3>${agronomySafe(item.title)}</h3>
+                                <strong>${agronomySafe(item.value)}</strong>
+                                <p>${agronomySafe(item.note)}</p>
+                            </article>
+                        `).join('')}
+                    </div>
+                </article>
+            </section>
+
+            <section class="rix-grid">
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Marka liderlik duvarı')}</h3>
+                            <p>İlde kim hacmi topluyor, paylar hangi seviyede sıkışıyor?</p>
+                        </div>
+                    </div>
+                    <div class="rix-chart-wrap"><canvas id="rixBrandChart"></canvas></div>
+                </article>
+
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Mekanizasyon imzası')}</h3>
+                            <p>İlin saha kimligi tek radar panelde okunur.</p>
+                        </div>
+                    </div>
+                    <div class="rix-chart-wrap"><canvas id="rixSignatureChart"></canvas></div>
+                </article>
+            </section>
+
+            <section class="rix-grid">
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Aynı bölgedeki kıyas')}</h3>
+                            <p>${dashboardSafe(prov?.region || 'Bölge')} içinde bu ilin yeri ve ritmi.</p>
+                        </div>
+                    </div>
+                    <div class="rix-table-wrap">
+                        <table class="rix-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>İl</th>
+                                    <th>Hacim</th>
+                                    <th>Mek. endeks</th>
+                                    <th>Ort. HP</th>
+                                    <th>YoY</th>
+                                </tr>
+                            </thead>
+                            <tbody>${peerRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Tercih edilen traktör seti')}</h3>
+                            <p>İlin tarimsal karakterine en yakin model havuzu.</p>
+                        </div>
+                    </div>
+                    <div class="rix-table-wrap">
+                        <table class="rix-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Marka</th>
+                                    <th>Model</th>
+                                    <th>Fit</th>
+                                    <th>HP</th>
+                                    <th>Çekiş</th>
+                                    <th>Satış</th>
+                                    <th>Gerekçe</th>
+                                </tr>
+                            </thead>
+                            <tbody>${modelRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="rix-grid">
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Toprak-makine matrisi')}</h3>
+                            <p>Toprak tipi, çekiş ve ekipman paketi aynı tabloda.</p>
+                        </div>
+                    </div>
+                    <div class="rix-table-wrap">
+                        <table class="rix-table">
+                            <thead>
+                                <tr>
+                                    <th>Toprak</th>
+                                    <th>Doku</th>
+                                    <th>Bağlı ürün</th>
+                                    <th>Çekiş</th>
+                                    <th>HP</th>
+                                    <th>Ekipman</th>
+                                </tr>
+                            </thead>
+                            <tbody>${soilRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>Ürün-operasyon orkestrasI</h3>
+                            <p>Ekili ürünlerin hangi makine ve HP koridorunu çağırdığı.</p>
+                        </div>
+                    </div>
+                    <div class="rix-table-wrap">
+                        <table class="rix-table">
+                            <thead>
+                                <tr>
+                                    <th>Ürün</th>
+                                    <th>Alan</th>
+                                    <th>Üretim</th>
+                                    <th>HP</th>
+                                    <th>Traktör arketipi</th>
+                                    <th>Ekipman</th>
+                                </tr>
+                            </thead>
+                            <tbody>${cropRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="rix-grid rix-grid-wide">
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>İklim ritmi</h3>
+                            <p>Yağış, kuraklık ve sıcaklık sahayı hangi ayda nasıl zorluyor?</p>
+                        </div>
+                    </div>
+                    <div class="rix-chart-wrap"><canvas id="rixClimateChart"></canvas></div>
+                </article>
+
+                <article class="rix-panel">
+                    <div class="rix-panel-head">
+                        <div>
+                            <h3>${agronomySafe('Aylık aksiyon cetveli')}</h3>
+                            <p>İl seçildiği anda yönetim diline cevrilen operasyon takvimi.</p>
+                        </div>
+                    </div>
+                    <div class="rix-table-wrap">
+                        <table class="rix-table">
+                            <thead>
+                                <tr>
+                                    <th>Ay</th>
+                                    <th>Ort. sıcaklık</th>
+                                    <th>Yağış</th>
+                                    <th>Kuraklık</th>
+                                    <th>Aksiyon</th>
+                                </tr>
+                            </thead>
+                            <tbody>${climateRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="ai-action-bar rix-action-bar">
+                <button class="ai-btn" onclick="requestAiAnalysis('regional-province', window._regionalProvinceAiContext, 'rixAiPanel')">
+                    <i class="fas fa-brain"></i>
+                    <span>AI il saha strateji raporu</span>
+                </button>
+                <span class="ai-powered">Harita seçimi + il dosyası + iklim + ürün + makine seti aynı karar katmanında</span>
+            </section>
+            <div id="rixAiPanel" class="ai-panel" style="display:none"></div>
+        </div>
+    `;
+
+    window._regionalProvinceAiContext = {
+        provinceName: prov?.name,
+        region: prov?.region,
+        provinceMetrics: provinceMetric,
+        overview: dossier?.overview,
+        focusBrand: dossier?.focus_brand,
+        topBrands: dossier?.top_brands,
+        topModels: rankedModels,
+        soilMachineRows,
+        cropOperationRows,
+        climateActions: climateActionRows,
+        narrative: narrative.paragraphs
+    };
+
+    renderRegionalIndexReportCharts({
+        dossier,
+        provinceMetric,
+        climateSummary,
+        focusProvinceSales
+    });
+}
+
+async function loadRegionalIndexProvinceDetail(nextProvinceId = null) {
+    const targetProvinceId = nextProvinceId || document.getElementById('regionalIndexProvinceSelect')?.value || regionalIndexState.province_id;
+    if (!targetProvinceId) return;
+    regionalIndexState.province_id = String(targetProvinceId);
+    const province = (allProvinces || []).find(item => String(item.id) === String(targetProvinceId));
+    if (province?.name) turkeyMapSelectedProvinceName = province.name;
+    await renderRegionalIndexProvinceReport(targetProvinceId);
+}
+
+async function handleRegionalIndexMapUpdated() {
+    regionalIndexState.sales_cache = aggregateProvinceSalesRows(mapSalesData || []);
+    const selectedProvinceId = String(regionalIndexState.province_id || '');
+    const selectedVisible = (regionalIndexState.sales_cache || []).find(item => String(item.province_id) === selectedProvinceId);
+
+    if (selectedVisible?.province_id) {
+        const province = (allProvinces || []).find(item => String(item.id) === String(selectedVisible.province_id));
+        if (province?.name) turkeyMapSelectedProvinceName = province.name;
+        await renderRegionalIndexProvinceReport(selectedVisible.province_id);
+        return;
+    }
+
+    if (selectedProvinceId) {
+        regionalIndexState.province_id = '';
+        turkeyMapSelectedProvinceName = '';
+        renderRegionalIndexReportPlaceholder('Seçili il mevcut filtrelerin dışında kaldı. Haritadan yeni bir il seçin.');
+        return;
+    }
+
+    renderRegionalIndexReportPlaceholder();
+}
+
+async function loadRegionalIndexPage() {
+    try {
+        const data = await API.getRegionalIndex(selectedYear);
+        if (!data) return;
+
+        const { year, provinces } = data;
+        regionalIndexState.metrics = provinces || [];
+        regionalIndexState.province_id = '';
+        turkeyMapSelectedProvinceName = '';
+        turkeyMapProvinceSelectHandler = async payload => {
+            const provinceId = payload?.province?.id;
+            if (!provinceId) return;
+            regionalIndexState.province_id = String(provinceId);
+            await renderRegionalIndexProvinceReport(provinceId);
+            document.getElementById('regionalIndexReportHost')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+
+        const focusBrandId = getRegionalIndexFocusBrandId();
+        const currentBrandValue = String(document.getElementById('mapBrandFilter')?.value || focusBrandId || '');
+        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
+        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
+        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
+        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
+        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
+
+        const brandOptions = allBrands.map(item => `
+            <option value="${item.id}" ${String(item.id) === currentBrandValue ? 'selected' : ''}>${dashboardSafe(item.name)}</option>
+        `).join('');
+        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="rix-shell">
+                <section class="rix-map-shell">
+                    <div id="turkeyMapWorkspace" class="turkey-map-workspace rix-map-workspace">
+                        <section id="turkeyMapFilterPanel" class="tmx-filter-panel rix-filter-panel">
+                            <div class="tmx-filter-header">
+                                <div class="tmx-filter-copy">
+                                    <span class="tmx-kicker">Harita Kontrolleri</span>
+                                    <div class="tmx-filter-title-row">
+                                        <h3>Harita filtreleri</h3>
+                                        <span id="turkeyMapFilterSummary" class="tmx-filter-summary"></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="tmx-filter-body">
+                                <div class="tmx-filter-grid">
+                                    <select id="mapBrandFilter" onchange="updateMap()">
+                                        <option value="">Tüm Markalar</option>
+                                        ${brandOptions}
+                                    </select>
+                                    <select id="mapCabinFilter" onchange="updateMap()">
+                                        <option value="">Tüm Kabin</option>
+                                        ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
+                                    </select>
+                                    <select id="mapDriveFilter" onchange="updateMap()">
+                                        <option value="">Tüm Çekiş</option>
+                                        ${selectedOption(currentDriveValue, currentDriveValue)}
+                                    </select>
+                                    <select id="mapGearFilter" onchange="updateMap()">
+                                        <option value="">Tüm Şanzıman</option>
+                                        ${selectedOption(currentGearValue, currentGearValue)}
+                                    </select>
+                                    <select id="mapHpFilter" onchange="updateMap()">
+                                        <option value="">Tüm HP</option>
+                                        ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
+                                    </select>
+                                    <select id="mapRegionFilter" onchange="updateMap()">
+                                        <option value="">Tüm Bölgeler</option>
+                                        <option value="Marmara">Marmara</option>
+                                        <option value="Ege">Ege</option>
+                                        <option value="Akdeniz">Akdeniz</option>
+                                        <option value="İç Anadolu">İç Anadolu</option>
+                                        <option value="Karadeniz">Karadeniz</option>
+                                        <option value="Doğu Anadolu">Doğu Anadolu</option>
+                                        <option value="Güneydoğu Anadolu">Güneydoğu Anadolu</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </section>
+
+                        <div class="card tmx-map-card rix-map-card">
+                            <div class="card-body tmx-map-body">
+                                <div class="tmx-map-stage">
+                                    <div class="tmx-map-toolbar">
+                                        <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
+                                        <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                            <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
+                                        </button>
+                                    </div>
+                                    <div class="tmx-map-title">
+                                        <strong>Bölgesel Mekanizasyon Haritasi</strong>
+                                        <span>Bir il seçildiğinde tam strateji dosyası açılır</span>
+                                    </div>
+                                    <div class="turkey-map-container tmx-map-container">
+                                        <div id="turkeyMap"></div>
+                                    </div>
+                                </div>
+                                <div class="tmx-legend">
+                                    <span><i style="background:#1e40af"></i>Yüksek</span>
+                                    <span><i style="background:#3b82f6"></i>Orta-Yüksek</span>
+                                    <span><i style="background:#60a5fa"></i>Orta</span>
+                                    <span><i style="background:#93c5fd"></i>Düşük</span>
+                                    <span><i style="background:#1e293b"></i>Satış Yok</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="regionalIndexReportHost" class="rix-report-host">
+                    <div class="rix-empty-state">
+                        <strong>Haritadan bir il seçin.</strong>
+                        <p>${year} dönemi için il seçildiğinde mekanizasyon, iklim, ürün ve makine dosyası bu alanda dolacak.</p>
+                    </div>
+                </section>
+            </div>
+        `;
+
+        if (currentRegionValue) {
+            const regionFilter = document.getElementById('mapRegionFilter');
+            if (regionFilter) regionFilter.value = currentRegionValue;
+        }
+
+        bindTurkeyMapResizeObserver();
+        syncTurkeyMapWorkspaceUi();
+        await updateMap();
+        scheduleTurkeyMapResize(true);
+    } catch (err) {
+        showError(err);
+    }
+}
+
+const modelRegionState = {
+    brand_id: '',
+    model_key: ''
+};
+
+function ensureModelRegionState(data) {
+    if (!data) return modelRegionState;
+    const brands = data.brands || [];
+    const selectedBrandId = String(modelRegionState.brand_id || data.selected_brand_id || brands[0]?.id || '');
+    const validBrandId = brands.some(item => String(item.id) === selectedBrandId)
+        ? selectedBrandId
+        : String(data.selected_brand_id || brands[0]?.id || '');
+    modelRegionState.brand_id = validBrandId;
+
+    const models = data.models || [];
+    const selectedModelKey = String(modelRegionState.model_key || data.selected_model_key || models[0]?.model_key || '');
+    const validModelKey = models.some(item => String(item.model_key) === selectedModelKey)
+        ? selectedModelKey
+        : String(data.selected_model_key || models[0]?.model_key || '');
+    modelRegionState.model_key = validModelKey;
+    return modelRegionState;
+}
+
+function onModelRegionBrandChange() {
+    const nextBrandId = document.getElementById('modelRegionBrandFilter')?.value || '';
+    modelRegionState.brand_id = String(nextBrandId || '');
+    modelRegionState.model_key = '';
+
+    const brand = findBrandById(modelRegionState.brand_id);
+    if (brand) {
+        setActiveBrandContext(brand, { persist: currentUser?.role === 'admin' });
+    }
+
+    loadModelRegionPage();
+}
+
+function onModelRegionModelChange() {
+    modelRegionState.model_key = document.getElementById('modelRegionModelFilter')?.value || '';
+    loadModelRegionPage();
+}
+
+function buildModelRegionExecutiveMemo(focus) {
+    const overview = focus?.overview || {};
+    const topRegion = focus?.region_ladder?.[0] || null;
+    const topProvince = focus?.province_arena?.[0] || null;
+    const topWhitespace = focus?.whitespace_provinces?.[0] || null;
+    const leadSibling = focus?.sibling_stack?.[0] || null;
+    const leadRival = focus?.rival_stack?.[0] || null;
+
+    let stance = {
+        label: 'Seçici yayılım',
+        tone: 'is-analysis',
+        note: 'Modelin doğal habitatını korurken sadece yüksek uyum ve düşük penetrasyon ceplerine atak yapılması gerekir.'
+    };
+
+    if ((overview.support_driven_share_pct || 0) >= 35) {
+        stance = {
+            label: 'Destekle hızlan',
+            tone: 'is-opportunity',
+            note: 'Destekli iller bu model için ciroyu hızlandıran ana saha katmanına dönüşüyor.'
+        };
+    } else if ((overview.yoy_growth_pct || 0) >= 8) {
+        stance = {
+            label: 'Yayılım modu',
+            tone: 'is-up',
+            note: 'Model doğal uyum bulduğu bölgelerde organik olarak genişliyor; bayi ve stok temposu şimdi artırılmalı.'
+        };
+    } else if ((focus?.rival_stack || []).length > 0) {
+        stance = {
+            label: 'Koridor savaşı',
+            tone: 'is-warning',
+            note: 'Aynı HP koridorundaki rakip modeller kritik bölgelerde baskı kuruyor; rotalama ve fiyatlama birlikte yönetilmeli.'
+        };
+    }
+
+    const headline = focus?.model?.model_name
+        ? `${focus.model.model_name} modeli ${overview.active_regions || 0} bölgede yayılım kuruyor; ana habitat ${topRegion?.region || '-'} ve ilk saha ucu ${topProvince?.province_name || '-'}.`
+        : 'Model için yönetici notu hazırlanıyor.';
+
+    const points = [
+        topRegion
+            ? `${topRegion.region} toplam hacmin ${formatDashboardPercent(topRegion.share_pct || 0, 1)} kısmını taşıyor; ortalama uyum skoru ${topRegion.avg_fit_score || 0}.`
+            : '',
+        topProvince
+            ? `${topProvince.province_name} ${formatNumber(topProvince.total_sales || 0)} adet ve ${fmtPct(topProvince.fit_score || 0, 0)} uyum ile en olgun saha cephesi.`
+            : '',
+        topWhitespace
+            ? `${topWhitespace.province_name} beyaz alanda ilk hedef; fırsat skoru ${topWhitespace.opportunity_score} ve pazar ${formatNumber(topWhitespace.province_market_units || 0)} adet.`
+            : '',
+        leadSibling
+            ? `${leadSibling.model_name} aynı marka içinde ${leadSibling.role_note.toLowerCase()} rolünde; rota ayrımı burada kurulabilir.`
+            : '',
+        leadRival
+            ? `${leadRival.brand_name} / ${leadRival.model_name} baskın rakip paketi olarak ${leadRival.dominant_region} cephesinde izlenmeli.`
+            : ''
+    ].filter(Boolean).slice(0, 4);
+
+    return { stance, headline, points };
+}
+
+function renderModelRegionCharts({ focus, brand }) {
+    ['modelRegionTrend', 'modelRegionRegion', 'modelRegionOpportunity'].forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy?.();
+            delete charts[key];
+        }
+    });
+
+    const primary = brand?.primary_color || getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim() || '#2563eb';
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--brand-accent').trim() || '#f97316';
+
+    const trendEl = document.getElementById('modelRegionTrendChart');
+    if (trendEl && (focus?.monthly_curve || []).length > 0) {
+        const trendOptions = chartOptions('Adet');
+        charts.modelRegionTrend = new Chart(trendEl, {
+            type: 'line',
+            data: {
+                labels: (focus.monthly_curve || []).map(item => item.period_label),
+                datasets: [{
+                    label: 'Model ritmi',
+                    data: (focus.monthly_curve || []).map(item => Number(item.total_units || 0)),
+                    borderColor: primary,
+                    backgroundColor: `${primary}1f`,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    borderWidth: 3
+                }]
+            },
+            options: {
+                ...trendOptions,
+                plugins: {
+                    ...trendOptions.plugins,
+                    tooltip: {
+                        ...trendOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `Model ritmi: ${formatNumber(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const regionEl = document.getElementById('modelRegionRegionChart');
+    if (regionEl && (focus?.region_ladder || []).length > 0) {
+        const rows = (focus.region_ladder || []).slice(0, 7);
+        const regionOptions = chartOptions('Adet');
+        charts.modelRegionRegion = new Chart(regionEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => item.region),
+                datasets: [{
+                    label: 'Toplam model satışı',
+                    data: rows.map(item => Number(item.total_sales || 0)),
+                    backgroundColor: `${primary}cc`,
+                    borderRadius: 10,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                ...regionOptions,
+                plugins: {
+                    ...regionOptions.plugins,
+                    tooltip: {
+                        ...regionOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const oppEl = document.getElementById('modelRegionOpportunityChart');
+    if (oppEl) {
+        const sold = (focus?.province_arena || []).slice(0, 10).map(item => ({
+            x: Number(item.fit_score || 0),
+            y: Number(item.province_market_units || 0),
+            r: Math.max(6, Math.min(24, Number(item.current_sales || 0) / 8)),
+            province_name: item.province_name,
+            type_label: 'Mevcut habitat'
+        }));
+        const white = (focus?.whitespace_provinces || []).slice(0, 8).map(item => ({
+            x: Number(item.fit_score || 0),
+            y: Number(item.province_market_units || 0),
+            r: Math.max(6, Math.min(22, Number(item.opportunity_score || 0) / 4)),
+            province_name: item.province_name,
+            type_label: 'Beyaz alan'
+        }));
+
+        const oppOptions = chartOptions('Pazar');
+        charts.modelRegionOpportunity = new Chart(oppEl, {
+            type: 'bubble',
+            data: {
+                datasets: [
+                    {
+                        label: 'Mevcut habitat',
+                        data: sold,
+                        backgroundColor: `${primary}99`,
+                        borderColor: primary,
+                        borderWidth: 1.5
+                    },
+                    {
+                        label: 'Beyaz alan',
+                        data: white,
+                        backgroundColor: `${accent}99`,
+                        borderColor: accent,
+                        borderWidth: 1.5
+                    }
+                ]
+            },
+            options: {
+                ...oppOptions,
+                scales: {
+                    x: {
+                        min: 40,
+                        max: 100,
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b', callback: value => `${value}` },
+                        title: { display: true, text: 'Uyum skoru', color: '#94a3b8' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b', callback: value => fmtNum(value) },
+                        title: { display: true, text: 'İl pazarı', color: '#94a3b8' }
+                    }
+                },
+                plugins: {
+                    ...oppOptions.plugins,
+                    tooltip: {
+                        ...oppOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.raw.province_name}: uyum ${ctx.raw.x}, pazar ${formatNumber(ctx.raw.y)}`
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+async function loadModelRegionPage() {
+    try {
+        const data = await API.getModelRegion({
+            brand_id: modelRegionState.brand_id || getSelectedBrandId({ fallbackToFirst: true }),
+            model_key: modelRegionState.model_key || ''
+        });
+        if (!data) return;
+
+        const state = ensureModelRegionState(data);
+        const brands = data.brands || [];
+        const models = data.models || [];
+        const focus = data.focus || {};
+        const selectedBrand = brands.find(item => String(item.id) === String(state.brand_id)) || focus.brand || brands[0];
+        const selectedModel = models.find(item => String(item.model_key) === String(state.model_key)) || focus.model || models[0];
+        if (!selectedBrand || !selectedModel || !focus?.overview) {
+            document.getElementById('pageContent').innerHTML = '<div class="empty-state"><p>Model-bölge verisi bulunamadı.</p></div>';
+            return;
+        }
+
+        const currentBrand = findBrandById(selectedBrand.id);
+        if (currentBrand) {
+            setActiveBrandContext(currentBrand, { persist: currentUser?.role === 'admin' });
+        }
+
+        const themeProfile = getBrandThemeProfile(currentBrand || selectedBrand || activeBrandContext || {});
+        const memo = buildModelRegionExecutiveMemo(focus);
+        const content = document.getElementById('pageContent');
+
+        const brandOptionsHtml = brands.map(item => `
+            <option value="${item.id}" ${String(item.id) === String(state.brand_id) ? 'selected' : ''}>
+                ${dashboardSafe(item.name)} · ${formatNumber(item.total_sales || 0)}
+            </option>
+        `).join('');
+
+        const modelOptionsHtml = models.map(item => `
+            <option value="${dashboardSafe(item.model_key)}" ${String(item.model_key) === String(state.model_key) ? 'selected' : ''}>
+                ${dashboardSafe(item.model_name)} · ${item.hp_range || '-'} · ${formatNumber(item.total_sales || 0)}
+            </option>
+        `).join('');
+
+        const stageHtml = buildBrandStageHtml(themeProfile, {
+            title: `${dashboardSafe(selectedModel.model_name)} için model habitat merkezi`,
+            summary: memo.stance.note,
+            compareCopy: focus.overview?.dominant_region
+                ? `${dashboardSafe(focus.overview.dominant_region)} ana habitat, ${dashboardSafe(focus.whitespace_provinces?.[0]?.province_name || 'beyaz alan')} ilk genişleme cephesi.`
+                : `${dashboardSafe(selectedModel.model_name)} modeli için doğal yayılım cepleri tarandı.`
+        });
+
+        const kpis = [
+            {
+                label: 'Toplam model satışı',
+                value: `${formatNumber(focus.overview.total_sales || 0)} adet`,
+                note: 'N ve N-1 penceresi',
+                tone: 'is-analysis'
+            },
+            {
+                label: 'Yıllık ivme',
+                value: focus.overview.yoy_growth_pct != null ? formatSignedPct(focus.overview.yoy_growth_pct, 1) : '-',
+                note: `${dashboardSafe(focus.overview.latest_window_label || '-')}`,
+                tone: (focus.overview.yoy_growth_pct || 0) >= 0 ? 'is-up' : 'is-warning'
+            },
+            {
+                label: 'Aktif il',
+                value: String(focus.overview.active_provinces || 0),
+                note: `${focus.overview.active_regions || 0} bölgeye yayıldı`,
+                tone: 'is-opportunity'
+            },
+            {
+                label: 'Ulusal model payı',
+                value: fmtPct(focus.overview.national_model_share_pct || 0, 2),
+                note: `${fmtPct(focus.overview.avg_province_share_pct || 0, 1)} ort. il payı`,
+                tone: 'is-analysis'
+            },
+            {
+                label: 'Destek etkisi',
+                value: fmtPct(focus.overview.support_driven_share_pct || 0, 1),
+                note: 'Destekli illerdeki pay',
+                tone: 'is-forecast'
+            },
+            {
+                label: 'Tahmini ciro',
+                value: focus.overview.estimated_revenue_usd ? fmtPrice(focus.overview.estimated_revenue_usd) : '-',
+                note: focus.overview.avg_price_usd ? `${fmtPrice(focus.overview.avg_price_usd)} ort. fiyat` : 'Fiyat kaydı sınırlı',
+                tone: 'is-opportunity'
+            }
+        ];
+
+        const agroCardsHtml = (focus.agro_cards || []).map(item => `
+            <article class="mrx-card ${dashboardSafe(item.tone || 'is-analysis')}">
+                <span>${dashboardSafe(item.label || '')}</span>
+                <strong>${dashboardSafe(item.value || '-')}</strong>
+                <p>${dashboardSafe(item.note || '')}</p>
+            </article>
+        `).join('');
+
+        const memoPointsHtml = memo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
+
+        const regionRowsHtml = (focus.region_ladder || []).map(item => `
+            <article class="mrx-region-row ${dashboardSafe((item.avg_fit_score || 0) >= 78 ? 'is-up' : 'is-analysis')}">
+                <div class="mrx-region-head">
+                    <div>
+                        <h3>${dashboardSafe(item.region)}</h3>
+                        <p>${dashboardSafe(item.mission_label || 'Bölge komutu')} · ${dashboardSafe(item.dominant_crop || 'Ürün ekseni bekleniyor')}</p>
+                    </div>
+                    <span>${fmtPct(item.share_pct || 0, 1)}</span>
+                </div>
+                <div class="mrx-region-metrics">
+                    <div><span>Hacim</span><strong>${formatNumber(item.total_sales || 0)}</strong></div>
+                    <div><span>Uyum</span><strong>${item.avg_fit_score || 0}</strong></div>
+                    <div><span>İl</span><strong>${item.province_count || 0}</strong></div>
+                    <div><span>YoY</span><strong>${item.yoy_growth_pct != null ? formatSignedPct(item.yoy_growth_pct, 1) : 'Yeni'}</strong></div>
+                </div>
+            </article>
+        `).join('') || '<div class="mrx-empty">Bölgesel komut cetveli için veri bulunamadı.</div>';
+
+        const whitespaceHtml = (focus.whitespace_provinces || []).map(item => `
+            <article class="mrx-opportunity-card">
+                <div class="mrx-opportunity-head">
+                    <div>
+                        <h3>${dashboardSafe(item.province_name)}</h3>
+                        <p>${dashboardSafe(item.region || '-')} · ${dashboardSafe(item.mission_label || '')}</p>
+                    </div>
+                    <span>${item.opportunity_score || 0}</span>
+                </div>
+                <div class="mrx-opportunity-meta">
+                    <span>Uyum ${item.fit_score || 0}</span>
+                    <span>Pazar ${formatNumber(item.province_market_units || 0)}</span>
+                    ${item.support_programs ? '<span>Destekli il</span>' : ''}
+                </div>
+                <p>${dashboardSafe(item.fit_note || '')}</p>
+            </article>
+        `).join('') || '<div class="mrx-empty">Beyaz alan adayı oluşmadı.</div>';
+
+        const provinceHtml = (focus.province_arena || []).slice(0, 8).map(item => `
+            <article class="mrx-province-card">
+                <div class="mrx-province-head">
+                    <div>
+                        <h3>${dashboardSafe(item.province_name)}</h3>
+                        <p>${dashboardSafe(item.region || '-')} · ${dashboardSafe(item.fit_label || '-')}</p>
+                    </div>
+                    <span>${formatNumber(item.total_sales || 0)}</span>
+                </div>
+                <div class="mrx-province-grid">
+                    <div><span>Pazar payı</span><strong>${fmtPct(item.province_share_pct || 0, 1)}</strong></div>
+                    <div><span>Uyum</span><strong>${item.fit_score || 0}</strong></div>
+                    <div><span>Agro eksen</span><strong>${dashboardSafe(item.dominant_crop || '-')}</strong></div>
+                    <div><span>Trend</span><strong>${item.yoy_growth_pct != null ? formatSignedPct(item.yoy_growth_pct, 1) : 'Yeni'}</strong></div>
+                </div>
+                <p>${dashboardSafe(item.fit_note || '')}</p>
+            </article>
+        `).join('') || '<div class="mrx-empty">İl arenası için veri bulunamadı.</div>';
+
+        const siblingHtml = (focus.sibling_stack || []).map(item => `
+            <article class="mrx-list-card">
+                <div>
+                    <strong>${dashboardSafe(item.model_name)}</strong>
+                    <small>${dashboardSafe(item.role_note || '')}</small>
+                </div>
+                <span>${dashboardSafe(item.hp_range || '-')}</span>
+            </article>
+        `).join('') || '<div class="mrx-empty">Kardeş model kaydı bulunamadı.</div>';
+
+        const rivalHtml = (focus.rival_stack || []).map(item => `
+            <article class="mrx-list-card is-rival">
+                <div>
+                    <strong>${dashboardSafe(item.brand_name)} / ${dashboardSafe(item.model_name)}</strong>
+                    <small>${dashboardSafe(item.dominant_region || '-')}</small>
+                </div>
+                <span>${formatNumber(item.total_sales || 0)}</span>
+            </article>
+        `).join('') || '<div class="mrx-empty">Aynı HP koridorunda rakip model kaydı bulunamadı.</div>';
+
+        const c1 = themeProfile.primary || '#22c55e';
+        const c2 = themeProfile.accent || themeProfile.secondary || '#f59e0b';
+
+        content.innerHTML = `
+            <div class="mrx-shell">
+                <!-- Kompakt control bar (sadece Model — marka banner'dan gelir) -->
+                <section class="mrx-control-bar">
+                    <div class="mrx-filter-grid">
+                        <label class="mrx-field" style="grid-column: 1 / -1">
+                            <span>Model</span>
+                            <select id="modelRegionModelFilter" onchange="onModelRegionModelChange()">
+                                ${modelOptionsHtml}
+                            </select>
+                        </label>
+                    </div>
+                    <div class="mrx-headline">
+                        <h2>${dashboardSafe(selectedModel.model_name)}</h2>
+                        <div class="mrx-chip-row">
+                            <span class="mrx-chip"><i class="fas fa-calendar-alt"></i>${dashboardSafe(data.meta?.latest_window_label || '-')}</span>
+                            <span class="mrx-chip"><i class="fas fa-bolt"></i>${dashboardSafe(selectedModel.hp_range || '-')}</span>
+                            <span class="mrx-chip"><i class="fas fa-cogs"></i>${dashboardSafe(selectedModel.drive_type || '-')}</span>
+                            <span class="mrx-chip"><i class="fas fa-tractor"></i>${dashboardSafe(selectedModel.category || '-')}</span>
+                            <span class="mrx-chip mrx-chip-accent"><i class="fas fa-map-marked-alt"></i>${dashboardSafe(focus.overview?.dominant_region || '-')} habitat</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 6'lı KPI bant (toplam satış, YoY, aktif il, ulusal pay, destek etkisi, ciro) -->
+                <section class="mrx-kpi-grid">
+                    ${kpis.map(item => `
+                        <article class="mrx-kpi ${dashboardSafe(item.tone || 'is-analysis')}">
+                            <span>${dashboardSafe(item.label)}</span>
+                            <strong>${dashboardSafe(item.value)}</strong>
+                            <small>${dashboardSafe(item.note)}</small>
+                        </article>
+                    `).join('')}
+                </section>
+
+                <!-- Türkiye choropleth haritası: il bazında modelin penetrasyonu -->
+                <section class="mrx-grid-single">
+                    <article class="mrx-panel mrx-map-panel">
+                        <div class="mrx-panel-head mrx-panel-head-row">
+                            <h3>${dashboardSafe(selectedModel.model_name)} ülke yayılımı</h3>
+                            <div class="mrx-map-legend">
+                                <span class="mrx-legend-item"><i class="mrx-legend-swatch" style="background:#0f172a;border:1px solid rgba(148,163,184,0.18)"></i>Veri yok</span>
+                                <span class="mrx-legend-item"><i class="mrx-legend-swatch" style="background:${c1};opacity:0.35"></i>Düşük</span>
+                                <span class="mrx-legend-item"><i class="mrx-legend-swatch" style="background:${c1};opacity:0.7"></i>Orta</span>
+                                <span class="mrx-legend-item"><i class="mrx-legend-swatch" style="background:${c1};opacity:1"></i>Yüksek penetrasyon</span>
+                            </div>
+                        </div>
+                        <div id="mrxModelMap" class="mrx-map mrx-map-full"></div>
+                    </article>
+                </section>
+
+                <!-- Bölgesel agro kartlar -->
+                <section class="mrx-card-grid">
+                    ${agroCardsHtml}
+                </section>
+
+                <!-- Yönetici model notu + bölgesel komut cetveli -->
+                <section class="mrx-grid mrx-grid-wide">
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Yönetici model notu</h3></div>
+                        <div class="mrx-memo ${dashboardSafe(memo.stance.tone || 'is-analysis')}">
+                            <div class="mrx-memo-pill">${dashboardSafe(memo.stance.label)}</div>
+                            <h3 class="mrx-memo-headline">${dashboardSafe(memo.headline)}</h3>
+                            <ul class="mrx-bullet-list">${memoPointsHtml}</ul>
+                        </div>
+                    </article>
+
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Bölgesel komut cetveli</h3></div>
+                        <div class="mrx-region-list">${regionRowsHtml}</div>
+                    </article>
+                </section>
+
+                <!-- Aylık ritim + bölge yoğunluğu chartları -->
+                <section class="mrx-grid">
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Model aylık ritmi</h3></div>
+                        ${(focus.monthly_curve || []).length ? '<div class="mrx-chart"><canvas id="modelRegionTrendChart"></canvas></div>' : '<div class="mrx-empty">Aylık model ritmi verisi bulunamadı.</div>'}
+                    </article>
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Bölge yoğunluk haritası</h3></div>
+                        ${(focus.region_ladder || []).length ? '<div class="mrx-chart"><canvas id="modelRegionRegionChart"></canvas></div>' : '<div class="mrx-empty">Bölge yoğunluğu verisi bulunamadı.</div>'}
+                    </article>
+                </section>
+
+                <!-- Uyum/fırsat matrisi + beyaz alan misyonları -->
+                <section class="mrx-grid">
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Uyum × fırsat matrisi</h3></div>
+                        <div class="mrx-chart"><canvas id="modelRegionOpportunityChart"></canvas></div>
+                    </article>
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Beyaz alan misyonları</h3></div>
+                        <div class="mrx-opportunity-grid">${whitespaceHtml}</div>
+                    </article>
+                </section>
+
+                <!-- İl arenası + portföy/rakip rotası -->
+                <section class="mrx-grid">
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>İl arenası</h3></div>
+                        <div class="mrx-province-grid">${provinceHtml}</div>
+                    </article>
+                    <article class="mrx-panel">
+                        <div class="mrx-panel-head"><h3>Portföy ve rakip rotası</h3></div>
+                        <div class="mrx-stack-grid">
+                            <div>
+                                <h4>Kardeş modeller</h4>
+                                <div class="mrx-stack-list">${siblingHtml}</div>
+                            </div>
+                            <div>
+                                <h4>Rakip modeller</h4>
+                                <div class="mrx-stack-list">${rivalHtml}</div>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="ai-action-bar mrx-action-bar">
+                    <button class="ai-btn" onclick="requestAiAnalysis('model-region', window._mrxAiContext, 'mrxAiPanel')">
+                        <i class="fas fa-brain"></i>
+                        <span>AI model-bölge saha planı</span>
+                    </button>
+                    <span class="ai-powered">Model uyumu + beyaz alan + rakip koridoru tek strateji katmanında</span>
+                </section>
+                <div id="mrxAiPanel" class="ai-panel" style="display:none"></div>
+            </div>
+        `;
+
+        window._mrxAiContext = {
+            brandName: selectedBrand.name,
+            modelName: selectedModel.model_name,
+            overview: focus.overview,
+            regionLadder: focus.region_ladder,
+            whitespaceProvinces: focus.whitespace_provinces,
+            provinceArena: focus.province_arena,
+            siblingStack: focus.sibling_stack,
+            rivalStack: focus.rival_stack
+        };
+
+        renderModelRegionCharts({ focus, brand: selectedBrand });
+        renderModelRegionMap({ focus, themeProfile });
+    } catch (err) {
+        showError(err);
+    }
+}
+
+let _mrxMap = null;
+
+async function renderModelRegionMap({ focus, themeProfile }) {
+    const provinces = focus?.province_arena || [];
+    if (_mrxMap) { _mrxMap.remove(); _mrxMap = null; }
+    const c1 = themeProfile?.primary || '#22c55e';
+
+    setTimeout(async () => {
+        const host = document.getElementById('mrxModelMap');
+        if (!host) return;
+        _mrxMap = L.map('mrxModelMap', {
+            zoomControl: false,
+            attributionControl: false,
+            dragging: false,
+            scrollWheelZoom: false,
+            doubleClickZoom: false,
+            touchZoom: false,
+            boxZoom: false,
+            keyboard: false,
+            zoomSnap: 0.25
+        }).setView([39.0, 35.5], 6);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(_mrxMap);
+
+        try {
+            const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+            const geoData = await response.json();
+
+            const nameMap = {
+                'Afyon': 'Afyonkarahisar', 'Elâzığ': 'Elazığ', 'Içel': 'Mersin',
+                'Kahramanmaras': 'Kahramanmaraş', 'Kirikkale': 'Kırıkkale', 'Kirklareli': 'Kırklareli',
+                'Kirsehir': 'Kırşehir', 'Nevsehir': 'Nevşehir', 'Nigde': 'Niğde',
+                'Sanliurfa': 'Şanlıurfa', 'Sirnak': 'Şırnak', 'Kinkkale': 'Kırıkkale',
+                'K. Maras': 'Kahramanmaraş'
+            };
+
+            const normalize = name => String(name || '').toLocaleLowerCase('tr-TR').trim();
+            const provLookup = {};
+            let maxSales = 0;
+            provinces.forEach(item => {
+                provLookup[normalize(item.province_name)] = item;
+                if ((item.total_sales || 0) > maxSales) maxSales = item.total_sales || 0;
+            });
+
+            function getOpacity(item) {
+                if (!item) return 0.18;
+                const ratio = (item.total_sales || 0) / Math.max(maxSales, 1);
+                return 0.3 + Math.min(1, ratio) * 0.65;
+            }
+
+            const geoLayer = L.geoJSON(geoData, {
+                style: feature => {
+                    const name = feature.properties.name || feature.properties.Name;
+                    const dbName = nameMap[name] || name;
+                    const item = provLookup[normalize(dbName)];
+                    return {
+                        fillColor: item ? c1 : '#0f172a',
+                        weight: 0.8,
+                        color: '#0b1220',
+                        fillOpacity: getOpacity(item)
+                    };
+                },
+                onEachFeature: (feature, layer) => {
+                    const name = feature.properties.name || feature.properties.Name;
+                    const dbName = nameMap[name] || name;
+                    const item = provLookup[normalize(dbName)];
+                    const tooltipHtml = item
+                        ? `<strong>${dashboardSafe(dbName)}</strong>
+                           <br>Hacim: ${formatNumber(item.total_sales || 0)} adet
+                           <br>İl payı: ${fmtPct(item.province_share_pct || 0, 1)}
+                           <br>Uyum: ${item.fit_score || 0} / 100
+                           ${item.dominant_crop ? `<br>Agro: ${dashboardSafe(item.dominant_crop)}` : ''}`
+                        : `<strong>${dashboardSafe(dbName)}</strong><br><em>Bu modelin tescili yok</em>`;
+                    layer.bindTooltip(tooltipHtml, { className: 'bm-tooltip', sticky: true });
+                    layer.on('mouseover', e => e.target.setStyle({ weight: 2, color: '#f8fafc' }));
+                    layer.on('mouseout', e => e.target.setStyle({ weight: 0.8, color: '#0b1220' }));
+                }
+            }).addTo(_mrxMap);
+
+            _mrxMap.fitBounds(geoLayer.getBounds(), { padding: [8, 8] });
+            setTimeout(() => _mrxMap.invalidateSize(), 80);
+        } catch (err) {
+            console.warn('Model-bölge haritası yüklenemedi', err);
+        }
+    }, 150);
+}
+
 // ============================================
 // MODEL-REGION COMPATIBILITY PAGE
 // ============================================
-async function loadModelRegionPage() {
+async function loadModelRegionPageLegacy() {
     try {
         const data = await API.getModelRegion();
         if (!data) return;
@@ -3924,14 +16077,876 @@ async function loadBenchmarkPage() {
     }
 }
 
+function onBrandComparePrimaryChange(value) {
+    window._bc_brand1 = parseInt(value, 10) || null;
+    syncActiveBrandContextById(window._bc_brand1);
+    if (String(window._bc_brand2 || '') === String(window._bc_brand1 || '')) {
+        window._bc_brand2 = allBrands.find(item => String(item.id) !== String(window._bc_brand1 || ''))?.id || window._bc_brand1;
+    }
+    loadBrandComparePage();
+}
+
+function onBrandCompareSecondaryChange(value) {
+    window._bc_brand2 = parseInt(value, 10) || null;
+    if (String(window._bc_brand2 || '') === String(window._bc_brand1 || '')) {
+        window._bc_brand2 = allBrands.find(item => String(item.id) !== String(window._bc_brand1 || ''))?.id || window._bc_brand2;
+    }
+    loadBrandComparePage();
+}
+
 async function loadBrandComparePage() {
     try {
         if (!allBrands || allBrands.length === 0) allBrands = await API.getBrands();
-        const b1Id = window._bc_brand1 || (allBrands[0]?.id);
-        const b2Id = window._bc_brand2 || (allBrands[1]?.id || allBrands[0]?.id);
+        const b1Id = window._bc_brand1 || getSelectedBrandId({ fallbackToFirst: true }) || (allBrands[0]?.id);
+        const b2Id = window._bc_brand2 || (allBrands.find(item => String(item.id) !== String(b1Id))?.id || allBrands[0]?.id);
 
         // Seed models if needed (one-time)
         try { await API.seedModels(); } catch(e) {}
+
+        {
+            const compareData = await API.getBrandCompare(b1Id, b2Id);
+            if (!compareData) return;
+
+            const compareBrand1 = compareData.brand1;
+            const compareBrand2 = compareData.brand2;
+            const deep1 = compareBrand1.data || {};
+            const deep2 = compareBrand2.data || {};
+            const compareYears = compareData.years || [];
+            const compareMarket = compareData.market || { yearly: {} };
+            const compareMaxYear = compareData.max_year;
+            const compareMaxMonth = compareData.max_month;
+            const comparePeriodLabel = compareData.period_label || `${compareMaxYear}`;
+            const compareHpOrder = compareData.hp_order || ['1-39','40-49','50-54','55-59','60-69','70-79','80-89','90-99','100-109','110-119','120+'];
+            const compareDominanceMap = Array.isArray(compareData.dominanceMap) ? compareData.dominanceMap : [];
+            const compareBattles = Array.isArray(compareData.provinceBattles) ? compareData.provinceBattles : [];
+            const compareWhitespace = Array.isArray(compareData.whitespaceSegments) ? compareData.whitespaceSegments : [];
+            const compareOverlap = Array.isArray(compareData.featureOverlap) ? compareData.featureOverlap : [];
+            const compareScorecard = Array.isArray(compareData.scorecard) ? compareData.scorecard : [];
+            const compareWinnerScore = compareData.winnerScore || { brand1: 0, brand2: 0, tie: 0 };
+            const compareProvinceWins = compareData.provinceWins || { brand1: 0, brand2: 0, tie: 0 };
+            const c1 = compareBrand1.primary_color || '#3b82f6';
+            const c2 = compareBrand2.primary_color || '#ef4444';
+            const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+            const safe = escapeHtml;
+            const fmtSignedPct = value => value == null ? '-' : `${value > 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
+            const pickCount = (bag, keys) => keys.reduce((sum, key) => sum + Number(bag?.[key] || bag?.[key.toUpperCase()] || bag?.[key.toLowerCase()] || 0), 0);
+            const pctOf = (value, total) => total > 0 ? ((value || 0) * 100 / total) : 0;
+            const winnerName = winner => winner === 'brand1' ? compareBrand1.name : winner === 'brand2' ? compareBrand2.name : 'Eşit';
+            const winnerColor = winner => winner === 'brand1' ? c1 : winner === 'brand2' ? c2 : '#94a3b8';
+            const winnerIcon = winner => winner === 'brand1' ? 'B1' : winner === 'brand2' ? 'B2' : 'ES';
+            const formatCompareScoreLabel = label => {
+                const raw = String(label || '');
+                const dynamicSalesMatch = raw.match(/^(\d{4}) ilk (\d+) ay satis$/i);
+                if (dynamicSalesMatch) return `${dynamicSalesMatch[1]} İLK ${dynamicSalesMatch[2]} AY SATIŞ`;
+
+                const labelMap = {
+                    'Pazar payi': 'PAZAR PAYI',
+                    'Yillik momentum': 'YILLIK MOMENTUM',
+                    'Aktif il': 'AKTİF İL',
+                    'Satis agirlikli HP': 'SATIŞ AĞIRLIKLI HP',
+                    'Fiyat / HP': 'FİYAT / HP',
+                    'Model genisligi': 'MODEL GENİŞLİĞİ',
+                    'Top 5 il konsantrasyonu': 'TOP 5 İL KONSANTRASYONU'
+                };
+
+                return labelMap[raw] || raw;
+            };
+            const metricFormatter = (item, value) => {
+                if (value == null) return '-';
+                if (item.id === 'share' || item.id === 'yoy' || item.id === 'concentration') return fmtPct(Number(value), 1);
+                if (item.id === 'cost_hp') return value ? `${fmtPrice(Number(value))}/HP` : '-';
+                if (item.id === 'avg_hp') return `${Number(value).toFixed(1)} HP`;
+                return fmtNum(Number(value));
+            };
+            const toHpRange = hp => hp < 40 ? '1-39' : hp < 50 ? '40-49' : hp < 55 ? '50-54' : hp < 60 ? '55-59' : hp < 70 ? '60-69' : hp < 80 ? '70-79' : hp < 90 ? '80-89' : hp < 100 ? '90-99' : hp < 110 ? '100-109' : hp < 120 ? '110-119' : '120+';
+            const hpLookup1 = new Map((deep1.hpDist || []).map(item => [item.hp, item]));
+            const hpLookup2 = new Map((deep2.hpDist || []).map(item => [item.hp, item]));
+
+            let b1Opts = '', b2Opts = '';
+            allBrands.forEach(brand => {
+                b1Opts += `<option value="${brand.id}" ${brand.id == b1Id ? 'selected' : ''}>${safe(brand.name)}</option>`;
+                b2Opts += `<option value="${brand.id}" ${brand.id == b2Id ? 'selected' : ''}>${safe(brand.name)}</option>`;
+            });
+
+            const leaderBrand = (deep1.currentSales || 0) >= (deep2.currentSales || 0) ? compareBrand1 : compareBrand2;
+            const leaderData = leaderBrand.id === compareBrand1.id ? deep1 : deep2;
+            const challengerBrand = leaderBrand.id === compareBrand1.id ? compareBrand2 : compareBrand1;
+            const momentumBrand = (deep1.yoyGrowth || 0) >= (deep2.yoyGrowth || 0) ? compareBrand1 : compareBrand2;
+            const territoryBrand = compareProvinceWins.brand1 >= compareProvinceWins.brand2 ? compareBrand1 : compareBrand2;
+            const topOpportunity = compareWhitespace[0];
+            const topBattle = compareBattles[0];
+            const pairShare = compareMarket.current_total > 0 ? (((deep1.currentSales || 0) + (deep2.currentSales || 0)) * 100 / compareMarket.current_total) : 0;
+            const shareGap = Math.abs((deep1.currentShare || 0) - (deep2.currentShare || 0));
+            const summaryText = `${safe(leaderBrand.name)} ${comparePeriodLabel} icinde ${fmtNum(leaderData.currentSales || 0)} adet ve ${fmtPct(leaderData.currentShare || 0, 2)} pay ile hacim liderligini aliyor. ${safe(momentumBrand.name)} momentumda, ${safe(territoryBrand.name)} ise il yaygınlığında öne çıkıyor.${topOpportunity ? ` En açık segment ${safe(topOpportunity.hp)} HP.` : ''}`;
+
+            const summaryTextDisplay = `${safe(leaderBrand.name)} ${comparePeriodLabel} içinde ${fmtNum(leaderData.currentSales || 0)} adet ve ${fmtPct(leaderData.currentShare || 0, 2)} pay ile hacim liderliğini alıyor. ${safe(momentumBrand.name)} momentumda, ${safe(territoryBrand.name)} ise il yaygınlığında öne çıkıyor.${topOpportunity ? ` En açık segment ${safe(topOpportunity.hp)} HP.` : ''}`;
+
+            let scorecardHtml = '';
+            compareScorecard.forEach(item => {
+                scorecardHtml += `
+                    <div class="bcx-score-item ${item.winner === 'brand1' ? 'is-left' : item.winner === 'brand2' ? 'is-right' : 'is-tie'}">
+                        <div class="bcx-score-top">
+                            <span>${safe(formatCompareScoreLabel(item.label))}</span>
+                            <strong style="color:${winnerColor(item.winner)}">${winnerIcon(item.winner)}</strong>
+                        </div>
+                        <div class="bcx-score-values">
+                            <div class="bcx-score-side">
+                                <small style="color:${c1}">${safe(compareBrand1.name)}</small>
+                                <b>${metricFormatter(item, item.v1)}</b>
+                            </div>
+                            <div class="bcx-score-side">
+                                <small style="color:${c2}">${safe(compareBrand2.name)}</small>
+                                <b>${metricFormatter(item, item.v2)}</b>
+                            </div>
+                        </div>
+                    </div>`;
+            });
+
+            const axisRows = [
+                {
+                    label: 'Hacim ve pay',
+                    winner: (deep1.currentShare || 0) >= (deep2.currentShare || 0) ? 'brand1' : 'brand2',
+                    signal: `${fmtNum(deep1.currentSales || 0)} vs ${fmtNum(deep2.currentSales || 0)} adet | fark ${fmtPct(shareGap, 2)}`,
+                    implication: 'Lider marka fiyat, bayi ve kampanya baskısını daha rahat yönetir.'
+                },
+                {
+                    label: 'Momentum',
+                    winner: (deep1.yoyGrowth || 0) >= (deep2.yoyGrowth || 0) ? 'brand1' : 'brand2',
+                    signal: `${fmtSignedPct(deep1.yoyGrowth)} vs ${fmtSignedPct(deep2.yoyGrowth)}`,
+                    implication: 'Yukselen marka satış ritmini savunma yerine saldiri modunda kullanabilir.'
+                },
+                {
+                    label: 'Saha yaygınlığı',
+                    winner: (deep1.activeProvinces || 0) >= (deep2.activeProvinces || 0) ? 'brand1' : 'brand2',
+                    signal: `${fmtNum(deep1.activeProvinces || 0)} il vs ${fmtNum(deep2.activeProvinces || 0)} il`,
+                    implication: 'Yaygin marka stok ve servis esnekligini daha genis alana yayar.'
+                },
+                {
+                    label: 'HP konumlanmasi',
+                    winner: (deep1.salesWeightedHp || 0) >= (deep2.salesWeightedHp || 0) ? 'brand1' : 'brand2',
+                    signal: `${Number(deep1.salesWeightedHp || 0).toFixed(1)} HP vs ${Number(deep2.salesWeightedHp || 0).toFixed(1)} HP`,
+                    implication: 'Daha yüksek HP ortalamasi saha tipi ve musterinin kullanim profili hakkinda fikir verir.'
+                },
+                {
+                    label: 'Fiyat verimliligi',
+                    winner: (deep1.costPerHp || 0) <= (deep2.costPerHp || 0) ? 'brand1' : 'brand2',
+                    signal: `${deep1.costPerHp ? `${fmtPrice(deep1.costPerHp)}/HP` : '-'} vs ${deep2.costPerHp ? `${fmtPrice(deep2.costPerHp)}/HP` : '-'}`,
+                    implication: 'Düşük fiyat/HP seviyesi fiyat savasi olmadan deger argumanini güçlendirir.'
+                },
+                {
+                    label: 'Portfoy derinligi',
+                    winner: (deep1.modelCount || 0) >= (deep2.modelCount || 0) ? 'brand1' : 'brand2',
+                    signal: `${fmtNum(deep1.modelCount || 0)} model vs ${fmtNum(deep2.modelCount || 0)} model`,
+                    implication: 'Genis portföy daha fazla mikro segmenti kapatir ama stok karmasini da zorlastirir.'
+                }
+            ];
+            axisRows[0].implication = 'Lider marka fiyat, bayi ve kampanya baskısını daha rahat yönetir.';
+            axisRows[1].implication = 'Yükselen marka satış ritmini savunma yerine saldırı modunda kullanabilir.';
+            axisRows[2].label = 'Saha yaygınlığı';
+            axisRows[2].implication = 'Yaygın marka stok ve servis esnekliğini daha geniş alana yayar.';
+            axisRows[3].label = 'HP konumlanması';
+            axisRows[3].implication = 'Daha yüksek HP ortalaması saha tipi ve müşterinin kullanım profili hakkında fikir verir.';
+            axisRows[4].label = 'Fiyat verimliliği';
+            axisRows[4].implication = 'Düşük fiyat/HP seviyesi fiyat savaşı olmadan değer argümanını güçlendirir.';
+            axisRows[5].label = 'Portföy derinliği';
+            axisRows[5].implication = 'Geniş portföy daha fazla mikro segmenti kapatır ama stok karmasını da zorlaştırır.';
+
+            const axisRowsHtml = axisRows.map(row => `
+                <tr>
+                    <td>${safe(row.label)}</td>
+                    <td style="color:${winnerColor(row.winner)}"><strong>${safe(winnerName(row.winner))}</strong></td>
+                    <td>${safe(row.signal)}</td>
+                    <td>${safe(row.implication)}</td>
+                </tr>`).join('');
+
+            const featureRows = [
+                { label: 'Tarla', left: pctOf(deep1.categories?.tarla, deep1.currentSales || 0), right: pctOf(deep2.categories?.tarla, deep2.currentSales || 0), tone: 'green' },
+                { label: 'Bahçe', left: pctOf(deep1.categories?.bahce, deep1.currentSales || 0), right: pctOf(deep2.categories?.bahce, deep2.currentSales || 0), tone: 'amber' },
+                { label: '4WD', left: pctOf(pickCount(deep1.driveTypes, ['4WD']), deep1.currentSales || 0), right: pctOf(pickCount(deep2.driveTypes, ['4WD']), deep2.currentSales || 0), tone: 'blue' },
+                { label: '2WD', left: pctOf(pickCount(deep1.driveTypes, ['2WD']), deep1.currentSales || 0), right: pctOf(pickCount(deep2.driveTypes, ['2WD']), deep2.currentSales || 0), tone: 'gold' },
+                { label: 'Kabinli', left: pctOf(pickCount(deep1.cabinTypes, ['kabinli']), deep1.currentSales || 0), right: pctOf(pickCount(deep2.cabinTypes, ['kabinli']), deep2.currentSales || 0), tone: 'purple' },
+                { label: 'Rollbar', left: pctOf(pickCount(deep1.cabinTypes, ['rollbar']), deep1.currentSales || 0), right: pctOf(pickCount(deep2.cabinTypes, ['rollbar']), deep2.currentSales || 0), tone: 'slate' }
+            ];
+            const featureRowsHtml = featureRows.map(row => `
+                <div class="bcx-mirror-row">
+                    <div class="bcx-mirror-bar left ${row.tone}">
+                        <span style="width:${Math.min(row.left, 100)}%;background:${c1}">${fmtPct(row.left, 0)}</span>
+                    </div>
+                    <div class="bcx-mirror-label">${safe(row.label)}</div>
+                    <div class="bcx-mirror-bar right ${row.tone}">
+                        <span style="width:${Math.min(row.right, 100)}%;background:${c2}">${fmtPct(row.right, 0)}</span>
+                    </div>
+                </div>`).join('');
+
+            const whitespaceRowsHtml = compareWhitespace.slice(0, 10).map(item => `
+                <tr>
+                    <td><strong>${safe(item.hp)}</strong></td>
+                    <td>${fmtNum(item.marketSales)}</td>
+                    <td style="color:${c1}">${fmtPct(item.brand1SharePct, 1)}</td>
+                    <td style="color:${c2}">${fmtPct(item.brand2SharePct, 1)}</td>
+                    <td>${safe(item.leader === 'brand1' ? compareBrand1.name : compareBrand2.name)}</td>
+                    <td>${fmtNum(item.openVolume)}</td>
+                </tr>`).join('');
+
+            const battleRowsHtml = compareBattles.slice(0, 12).map(item => `
+                <tr class="${item.leader === 'brand1' ? 'is-left' : item.leader === 'brand2' ? 'is-right' : ''}">
+                    <td><strong>${safe(item.name)}</strong><span>${safe(item.region || '-')}</span></td>
+                    <td style="color:${c1}">${fmtNum(item.s1)}</td>
+                    <td style="color:${c2}">${fmtNum(item.s2)}</td>
+                    <td>${fmtNum(item.gap)}</td>
+                </tr>`).join('');
+
+            const overlapRowsHtml = compareOverlap.slice(0, 10).map(item => `
+                <tr>
+                    <td>${safe(item.label)}</td>
+                    <td style="color:${c1}">${fmtNum(item.b1)} <small>${fmtPct(item.p1, 1)}</small></td>
+                    <td style="color:${c2}">${fmtNum(item.b2)} <small>${fmtPct(item.p2, 1)}</small></td>
+                </tr>`).join('');
+
+            const maxModelRow = Math.max((deep1.topModels || []).length, (deep2.topModels || []).length, 8);
+            let topModelRowsHtml = '';
+            for (let index = 0; index < maxModelRow; index++) {
+                const leftModel = deep1.topModels?.[index];
+                const rightModel = deep2.topModels?.[index];
+                topModelRowsHtml += `
+                    <tr>
+                        <td class="bcx-model-side">${leftModel ? `<strong>${safe(leftModel.name)}</strong><span>${fmtNum(leftModel.currentSales || 0)} adet | ${leftModel.hp ? `${Number(leftModel.hp).toFixed(1)} HP` : '-'}</span>` : '-'}</td>
+                        <td class="bcx-model-rank">${index + 1}</td>
+                        <td class="bcx-model-side">${rightModel ? `<strong>${safe(rightModel.name)}</strong><span>${fmtNum(rightModel.currentSales || 0)} adet | ${rightModel.hp ? `${Number(rightModel.hp).toFixed(1)} HP` : '-'}</span>` : '-'}</td>
+                    </tr>`;
+            }
+
+            const priceGroups = {};
+            (deep1.models || []).filter(model => model.price > 0).forEach(model => {
+                const hpRange = toHpRange(Number(model.hp || 0));
+                if (!priceGroups[hpRange]) priceGroups[hpRange] = { left: [], right: [] };
+                priceGroups[hpRange].left.push(model);
+            });
+            (deep2.models || []).filter(model => model.price > 0).forEach(model => {
+                const hpRange = toHpRange(Number(model.hp || 0));
+                if (!priceGroups[hpRange]) priceGroups[hpRange] = { left: [], right: [] };
+                priceGroups[hpRange].right.push(model);
+            });
+            let priceRowsHtml = '';
+            compareHpOrder.forEach(hpRange => {
+                const bucket = priceGroups[hpRange];
+                if (!bucket) return;
+                const rowCount = Math.max(bucket.left.length, bucket.right.length);
+                for (let index = 0; index < rowCount; index++) {
+                    const leftModel = bucket.left[index];
+                    const rightModel = bucket.right[index];
+                    priceRowsHtml += `
+                        <tr>
+                            <td>${leftModel ? `<strong>${safe(leftModel.name)}</strong><span>${leftModel.hp ? `${Number(leftModel.hp).toFixed(1)} HP` : '-'}</span>` : '-'}</td>
+                            <td>${leftModel ? fmtPrice(leftModel.price) : '-'}</td>
+                            <td class="bcx-segment-cell">${index === 0 ? `${safe(hpRange)} HP` : ''}</td>
+                            <td>${rightModel ? fmtPrice(rightModel.price) : '-'}</td>
+                            <td>${rightModel ? `<strong>${safe(rightModel.name)}</strong><span>${rightModel.hp ? `${Number(rightModel.hp).toFixed(1)} HP` : '-'}</span>` : '-'}</td>
+                        </tr>`;
+                }
+            });
+
+            const spotlightCardsHtml = [
+                {
+                    label: 'Genel skor',
+                    value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
+                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                },
+                {
+                    label: 'Pazar farki',
+                    value: fmtPct(shareGap, 2),
+                    meta: `${fmtNum(Math.abs((deep1.currentSales || 0) - (deep2.currentSales || 0)))} adet fark`
+                },
+                {
+                    label: 'İl üstünlüğü',
+                    value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
+                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                },
+                {
+                    label: 'Acik segment',
+                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek bosluk yok'
+                }
+            ].map(card => `
+                <div class="bcx-spot-card">
+                    <span>${safe(card.label)}</span>
+                    <strong>${safe(card.value)}</strong>
+                    <small>${safe(card.meta)}</small>
+                </div>`).join('');
+
+            const regionCardsHtml = [
+                { label: `${compareBrand1.name} lider bölge`, value: deep1.topRegions?.[0]?.name || '-', meta: deep1.topRegions?.[0] ? `${fmtNum(deep1.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
+                { label: `${compareBrand2.name} lider bölge`, value: deep2.topRegions?.[0]?.name || '-', meta: deep2.topRegions?.[0] ? `${fmtNum(deep2.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
+                { label: 'Kritik savas alani', value: topBattle?.name || '-', meta: topBattle ? `${fmtNum(topBattle.gap)} adet fark` : 'İl verisi yok' },
+                { label: 'Iki markanin havuzu', value: fmtPct(pairShare, 1), meta: 'Seçili iki markanin toplam pazar payi' }
+            ].map(card => `
+                <div class="bcx-mini-card">
+                    <span>${safe(card.label)}</span>
+                    <strong>${safe(card.value)}</strong>
+                    <small>${safe(card.meta)}</small>
+                </div>`).join('');
+
+            const spotlightCardsHtmlFixed = [
+                {
+                    label: 'Genel skor',
+                    value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
+                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                },
+                {
+                    label: 'Pazar farkı',
+                    value: fmtPct(shareGap, 2),
+                    meta: `${fmtNum(Math.abs((deep1.currentSales || 0) - (deep2.currentSales || 0)))} adet fark`
+                },
+                {
+                    label: 'İl üstünlüğü',
+                    value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
+                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                },
+                {
+                    label: 'Açık segment',
+                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek boşluk yok'
+                }
+            ].map(card => `
+                <div class="bcx-spot-card">
+                    <span>${safe(card.label)}</span>
+                    <strong>${safe(card.value)}</strong>
+                    <small>${safe(card.meta)}</small>
+                </div>`).join('');
+
+            const regionCardsHtmlFixed = [
+                { label: `${compareBrand1.name} lider bölge`, value: deep1.topRegions?.[0]?.name || '-', meta: deep1.topRegions?.[0] ? `${fmtNum(deep1.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
+                { label: `${compareBrand2.name} lider bölge`, value: deep2.topRegions?.[0]?.name || '-', meta: deep2.topRegions?.[0] ? `${fmtNum(deep2.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
+                { label: 'Kritik savaş alanı', value: topBattle?.name || '-', meta: topBattle ? `${fmtNum(topBattle.gap)} adet fark` : 'İl verisi yok' },
+                { label: 'İki markanın havuzu', value: fmtPct(pairShare, 1), meta: 'Seçili iki markanın toplam pazar payı' }
+            ].map(card => `
+                <div class="bcx-mini-card">
+                    <span>${safe(card.label)}</span>
+                    <strong>${safe(card.value)}</strong>
+                    <small>${safe(card.meta)}</small>
+                </div>`).join('');
+
+            const spotlightCardsHtmlDisplay = [
+                {
+                    label: 'Genel skor',
+                    value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
+                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                },
+                {
+                    label: 'Pazar farkı',
+                    value: fmtPct(shareGap, 2),
+                    meta: `${fmtNum(Math.abs((deep1.currentSales || 0) - (deep2.currentSales || 0)))} adet fark`
+                },
+                {
+                    label: 'İl üstünlüğü',
+                    value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
+                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                },
+                {
+                    label: 'Açık segment',
+                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek boşluk yok'
+                }
+            ].map(card => `
+                <div class="bcx-spot-card">
+                    <span>${safe(card.label)}</span>
+                    <strong>${safe(card.value)}</strong>
+                    <small>${safe(card.meta)}</small>
+                </div>`).join('');
+
+            const regionCardsHtmlDisplay = [
+                { label: `${compareBrand1.name} lider bölge`, value: deep1.topRegions?.[0]?.name || '-', meta: deep1.topRegions?.[0] ? `${fmtNum(deep1.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
+                { label: `${compareBrand2.name} lider bölge`, value: deep2.topRegions?.[0]?.name || '-', meta: deep2.topRegions?.[0] ? `${fmtNum(deep2.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
+                { label: 'Kritik savaş alanı', value: topBattle?.name || '-', meta: topBattle ? `${fmtNum(topBattle.gap)} adet fark` : 'İl verisi yok' },
+                { label: 'İki markanın havuzu', value: fmtPct(pairShare, 1), meta: 'Seçili iki markanın toplam pazar payı' }
+            ].map(card => `
+                <div class="bcx-mini-card">
+                    <span>${safe(card.label)}</span>
+                    <strong>${safe(card.value)}</strong>
+                    <small>${safe(card.meta)}</small>
+                </div>`).join('');
+
+            const monthlyLabels = [];
+            const monthlyData1 = [];
+            const monthlyData2 = [];
+            for (let month = 1; month <= compareMaxMonth; month++) {
+                monthlyLabels.push(monthNames[month - 1] || String(month));
+                monthlyData1.push(deep1.monthly?.[month] || 0);
+                monthlyData2.push(deep2.monthly?.[month] || 0);
+            }
+
+            const shareLabels = compareYears.map(String);
+            const shareData1 = compareYears.map(year => Number(deep1.marketShare?.[year] || 0));
+            const shareData2 = compareYears.map(year => Number(deep2.marketShare?.[year] || 0));
+            const segmentData1 = compareHpOrder.map(hp => Number(hpLookup1.get(hp)?.marketSharePct || 0));
+            const segmentData2 = compareHpOrder.map(hp => Number(hpLookup2.get(hp)?.marketSharePct || 0));
+            const scatterData1 = (deep1.models || []).filter(model => model.price > 0 && model.hp > 0).map(model => ({ x: Number(model.hp), y: Number(model.price), name: model.name, sales: model.currentSales || 0 }));
+            const scatterData2 = (deep2.models || []).filter(model => model.price > 0 && model.hp > 0).map(model => ({ x: Number(model.hp), y: Number(model.price), name: model.name, sales: model.currentSales || 0 }));
+
+            document.getElementById('pageContent').innerHTML = `
+                <div class="bcx-shell">
+                    <section class="bcx-hero bcx-hero-compact">
+                        <div class="bcx-selector-bar">
+                            <div class="bcx-selector bcx-selector-static" style="border-color:${c1}">
+                                <div class="bcx-brand-dot" style="background:${c1}"></div>
+                                <strong class="bcx-fixed-name">${safe(compareBrand1.name)}</strong>
+                                <small class="bcx-fixed-hint">aktif marka</small>
+                            </div>
+                            <div class="bcx-vs">VS</div>
+                            <div class="bcx-selector" style="border-color:${c2}">
+                                <select class="bc-select" onchange="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
+                                <div class="bcx-brand-dot" style="background:${c2}"></div>
+                            </div>
+                        </div>
+                        <div class="bcx-spotlight-row">${spotlightCardsHtmlDisplay}</div>
+                        <div class="bcx-headline-strip">
+                            <h2>${safe(compareBrand1.name)} <span class="bcx-vs-mini">vs</span> ${safe(compareBrand2.name)}</h2>
+                            <div class="bcx-chip-row">
+                                <span class="bcx-chip"><i class="fas fa-calendar-alt"></i> ${safe(comparePeriodLabel)}</span>
+                                <span class="bcx-chip"><i class="fas fa-chart-pie"></i> ${fmtNum(compareMarket.current_total || 0)} adet toplam pazar</span>
+                                <span class="bcx-chip"><i class="fas fa-database"></i> ${safe((compareData.source_stack || []).join(' + '))}</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bcx-score-grid">${scorecardHtml}</section>
+
+                    <section class="bcx-panel-grid bcx-two-up">
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Aylık ritim</h3>
+                                <span>${compareMaxYear} ilk ${compareMaxMonth} ay</span>
+                            </div>
+                            <div class="bcx-chart-wrap"><canvas id="bcxMonthlyChart"></canvas></div>
+                        </div>
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Pazar payı izi</h3>
+                                <span>${compareYears[0] || compareMaxYear} - ${compareMaxYear}</span>
+                            </div>
+                            <div class="bcx-chart-wrap"><canvas id="bcxShareChart"></canvas></div>
+                        </div>
+                    </section>
+
+                    <section class="bcx-panel-grid bcx-two-up">
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>HP pay savaşı</h3>
+                                <span>Segment bazlı pazar penetrasyonu</span>
+                            </div>
+                            <div class="bcx-chart-wrap"><canvas id="bcxSegmentChart"></canvas></div>
+                        </div>
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Stratejik eksenler</h3>
+                                <span>Kazanan boyutlar ve etkileri</span>
+                            </div>
+                            <div class="bcx-table-wrap">
+                                <table class="bcx-table">
+                                    <thead><tr><th>Boyut</th><th>Kazanan</th><th>Kanıt</th><th>Yorum</th></tr></thead>
+                                    <tbody>${axisRowsHtml}</tbody>
+                                </table>
+                            </div>
+                            <div class="bcx-mini-grid">${regionCardsHtmlDisplay}</div>
+                        </div>
+                    </section>
+
+                    <section class="bcx-panel-grid bcx-two-up">
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Portfoy ve konfigurasyon dengesi</h3>
+                                <span>Tarla, bahce, çekiş ve kabin resmi</span>
+                            </div>
+                            <div class="bcx-mirror-grid">${featureRowsHtml}</div>
+                        </div>
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Beyaz alan segmentleri</h3>
+                                <span>Liderin bile hala açık biraktigi hacim</span>
+                            </div>
+                            <div class="bcx-table-wrap">
+                                <table class="bcx-table bcx-tight">
+                                    <thead><tr><th>HP</th><th>Pazar</th><th style="color:${c1}">${safe(compareBrand1.name)}</th><th style="color:${c2}">${safe(compareBrand2.name)}</th><th>Lider</th><th>Acik hacim</th></tr></thead>
+                                    <tbody>${whitespaceRowsHtml || '<tr><td colspan="6">Segment boslugu bulunamadi</td></tr>'}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bcx-panel-grid">
+                        <div class="bcx-panel bcx-map-panel">
+                            <div class="bcx-panel-head">
+                                <h3>İl hakimiyet haritası</h3>
+                                <div class="bcx-map-legend">
+                                    <span class="bcx-legend-item"><i class="bcx-legend-swatch" style="background:${c1}"></i>${safe(compareBrand1.name)} hakim</span>
+                                    <span class="bcx-legend-item"><i class="bcx-legend-swatch" style="background:#475569"></i>Eşit / dengeli</span>
+                                    <span class="bcx-legend-item"><i class="bcx-legend-swatch" style="background:${c2}"></i>${safe(compareBrand2.name)} hakim</span>
+                                </div>
+                            </div>
+                            <div id="bcxDomMap" class="bcx-map bcx-map-full"></div>
+                        </div>
+                    </section>
+
+                    <section class="bcx-panel-grid bcx-two-up">
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Fiyat / HP dağılımı</h3>
+                                <span>Model bazli fiyat-performans pozisyonu</span>
+                            </div>
+                            <div class="bcx-chart-wrap"><canvas id="bcxScatterChart"></canvas></div>
+                        </div>
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Top model yarismasi</h3>
+                                <span>Seçili donemdeki en cok satan modeller</span>
+                            </div>
+                            <div class="bcx-table-wrap">
+                                <table class="bcx-table bcx-tight bcx-model-table">
+                                    <thead><tr><th style="color:${c1}">${safe(compareBrand1.name)}</th><th>#</th><th style="color:${c2}">${safe(compareBrand2.name)}</th></tr></thead>
+                                    <tbody>${topModelRowsHtml}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bcx-panel-grid bcx-price-row">
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>HP bazli fiyat koridoru</h3>
+                                <span>Liste fiyatlari ile doğrudan ladder karsilastirmasi</span>
+                            </div>
+                            <div class="bcx-table-wrap">
+                                <table class="bcx-table bcx-price-table">
+                                    <thead><tr><th style="color:${c1}">${safe(compareBrand1.name)}</th><th>Fiyat</th><th>Segment</th><th>Fiyat</th><th style="color:${c2}">${safe(compareBrand2.name)}</th></tr></thead>
+                                    <tbody>${priceRowsHtml || '<tr><td colspan="5">Fiyatli model verisi bulunamadi</td></tr>'}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="bcx-panel">
+                            <div class="bcx-panel-head">
+                                <h3>Ozellik kesisimi</h3>
+                                <span>Drive, kabin ve kullanim kombinasyonlari</span>
+                            </div>
+                            <div class="bcx-table-wrap">
+                                <table class="bcx-table bcx-tight">
+                                    <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${safe(compareBrand1.name)}</th><th style="color:${c2}">${safe(compareBrand2.name)}</th></tr></thead>
+                                    <tbody>${overlapRowsHtml || '<tr><td colspan="3">Kesisim verisi bulunamadi</td></tr>'}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div class="ai-action-bar">
+                        <button id="bcxAiBtn" class="ai-btn">
+                            <i class="fas fa-robot"></i> AI Karsilastirma Raporu
+                        </button>
+                        <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
+                    </div>
+                    <div id="bcAiPanel" class="ai-panel" style="display:none"></div>
+                </div>`;
+
+            const compareHost = document.getElementById('pageContent');
+            if (compareHost) {
+                compareHost.querySelector('.bcx-overline')?.replaceChildren(document.createTextNode('Yönetici Karşılaştırma Merkezi'));
+                const panelHeadings = compareHost.querySelectorAll('.bcx-panel-head h3');
+                const headingTexts = [
+                    'Aylık ritim',
+                    'Pazar payı izi',
+                    'HP pay savaşı',
+                    'Stratejik eksenler',
+                    'Portföy ve konfigürasyon dengesi',
+                    'Beyaz alan segmentleri',
+                    'İl hakimiyet haritası',
+                    'Fiyat / HP dağılımı',
+                    'Top model yarışması',
+                    'HP bazlı fiyat koridoru',
+                    'Özellik kesişimi'
+                ];
+                panelHeadings.forEach((node, index) => {
+                    if (headingTexts[index]) node.textContent = headingTexts[index];
+                });
+
+                const panelNotes = compareHost.querySelectorAll('.bcx-panel-head span');
+                const noteTexts = [
+                    null,
+                    null,
+                    'Segment bazlı pazar penetrasyonu',
+                    null,
+                    'Tarla, bahçe, çekiş ve kabin resmi',
+                    'Liderin bile hâlâ açık bıraktığı hacim',
+                    null,
+                    'Model bazlı fiyat-performans pozisyonu',
+                    'Seçili dönemdeki en çok satan modeller',
+                    'Liste fiyatları ile doğrudan ladder karşılaştırması',
+                    'Çekiş, kabin ve kullanım kombinasyonları'
+                ];
+                panelNotes.forEach((node, index) => {
+                    if (noteTexts[index]) node.textContent = noteTexts[index];
+                });
+
+                const tightTables = compareHost.querySelectorAll('.bcx-table.bcx-tight');
+                if (tightTables[0]) {
+                    const whitespaceHeaders = tightTables[0].querySelectorAll('th');
+                    if (whitespaceHeaders[5]) whitespaceHeaders[5].textContent = 'Açık hacim';
+                    if (!compareWhitespace.length) {
+                        const tbody = tightTables[0].querySelector('tbody');
+                        if (tbody) tbody.innerHTML = '<tr><td colspan="6">Segment boşluğu bulunamadı</td></tr>';
+                    }
+                }
+                if (tightTables[1]) {
+                    const battleHeaders = tightTables[1].querySelectorAll('th');
+                    if (battleHeaders[0]) battleHeaders[0].textContent = 'İl';
+                    if (!compareBattles.length) {
+                        const tbody = tightTables[1].querySelector('tbody');
+                        if (tbody) tbody.innerHTML = '<tr><td colspan="4">İl savaşı verisi bulunamadı</td></tr>';
+                    }
+                }
+                if (tightTables[3] && !compareOverlap.length) {
+                    const tbody = tightTables[3].querySelector('tbody');
+                    if (tbody) tbody.innerHTML = '<tr><td colspan="3">Kesişim verisi bulunamadı</td></tr>';
+                }
+
+                const priceBody = compareHost.querySelector('.bcx-price-table tbody');
+                if (priceBody && !priceRowsHtml) {
+                    priceBody.innerHTML = '<tr><td colspan="5">Fiyatlı model verisi bulunamadı</td></tr>';
+                }
+
+                const aiButton = compareHost.querySelector('#bcxAiBtn');
+                if (aiButton) {
+                    aiButton.innerHTML = '<i class="fas fa-robot"></i> AI Karşılaştırma Raporu';
+                }
+            }
+
+            ['bcxMonthly', 'bcxShare', 'bcxSegment', 'bcxScatter'].forEach(key => {
+                if (charts[key]) charts[key].destroy();
+            });
+
+            charts.bcxMonthly = new Chart(document.getElementById('bcxMonthlyChart'), {
+                type: 'bar',
+                data: {
+                    labels: monthlyLabels,
+                    datasets: [
+                        { label: compareBrand1.name, data: monthlyData1, backgroundColor: c1 + 'cc', borderColor: c1, borderWidth: 1, borderRadius: 6 },
+                        { label: compareBrand2.name, data: monthlyData2, backgroundColor: c2 + 'cc', borderColor: c2, borderWidth: 1, borderRadius: 6 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#cbd5e1' } }, datalabels: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { ticks: { color: '#64748b', callback: value => fmtNum(value) }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                    }
+                }
+            });
+
+            charts.bcxShare = new Chart(document.getElementById('bcxShareChart'), {
+                type: 'line',
+                data: {
+                    labels: shareLabels,
+                    datasets: [
+                        { label: compareBrand1.name, data: shareData1, borderColor: c1, backgroundColor: c1 + '22', fill: true, tension: 0.35, pointRadius: 4, pointBackgroundColor: c1 },
+                        { label: compareBrand2.name, data: shareData2, borderColor: c2, backgroundColor: c2 + '22', fill: true, tension: 0.35, pointRadius: 4, pointBackgroundColor: c2 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#cbd5e1' } }, datalabels: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { ticks: { color: '#64748b', callback: value => `${value}%` }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                    }
+                }
+            });
+
+            charts.bcxSegment = new Chart(document.getElementById('bcxSegmentChart'), {
+                type: 'bar',
+                data: {
+                    labels: compareHpOrder,
+                    datasets: [
+                        { label: compareBrand1.name, data: segmentData1, backgroundColor: c1 + 'cc', borderColor: c1, borderWidth: 1, borderRadius: 5 },
+                        { label: compareBrand2.name, data: segmentData2, backgroundColor: c2 + 'cc', borderColor: c2, borderWidth: 1, borderRadius: 5 }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#cbd5e1' } }, datalabels: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#64748b', callback: value => `${value}%` }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.03)' } }
+                    }
+                }
+            });
+
+            charts.bcxScatter = new Chart(document.getElementById('bcxScatterChart'), {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        { label: compareBrand1.name, data: scatterData1, backgroundColor: c1 + 'cc', borderColor: c1, pointRadius: 7, pointHoverRadius: 10 },
+                        { label: compareBrand2.name, data: scatterData2, backgroundColor: c2 + 'cc', borderColor: c2, pointRadius: 7, pointHoverRadius: 10 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1' } },
+                        datalabels: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => {
+                                    const point = ctx.raw;
+                                    return `${ctx.dataset.label}: ${point.name || ''} | ${point.x} HP | ${fmtPrice(point.y)} | ${fmtNum(point.sales || 0)} adet`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { title: { display: true, text: 'HP', color: '#94a3b8' }, ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { title: { display: true, text: 'Liste Fiyati ($)', color: '#94a3b8' }, ticks: { color: '#64748b', callback: value => fmtPrice(value) }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                    }
+                }
+            });
+
+            if (_bmMap) { _bmMap.remove(); _bmMap = null; }
+            setTimeout(async () => {
+                _bmMap = L.map('bcxDomMap', {
+                    zoomControl: false,
+                    attributionControl: false,
+                    dragging: false,
+                    scrollWheelZoom: false,
+                    doubleClickZoom: false,
+                    touchZoom: false,
+                    boxZoom: false,
+                    keyboard: false,
+                    zoomSnap: 0.25
+                }).setView([39.0, 35.5], 6);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(_bmMap);
+
+                // GeoJSON il sınırları (choropleth)
+                try {
+                    const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+                    const geoData = await response.json();
+
+                    // Province name mapping (GeoJSON name -> DB name)
+                    const nameMap = {
+                        'Afyon': 'Afyonkarahisar', 'Elâzığ': 'Elazığ', 'Içel': 'Mersin',
+                        'Kahramanmaras': 'Kahramanmaraş', 'Kirikkale': 'Kırıkkale', 'Kirklareli': 'Kırklareli',
+                        'Kirsehir': 'Kırşehir', 'Nevsehir': 'Nevşehir', 'Nigde': 'Niğde',
+                        'Sanliurfa': 'Şanlıurfa', 'Sirnak': 'Şırnak', 'Kinkkale': 'Kırıkkale',
+                        'K. Maras': 'Kahramanmaraş'
+                    };
+
+                    // İl adını normalize et (case + tr karakter)
+                    function normalizeProvKey(name) {
+                        return String(name || '').toLocaleLowerCase('tr-TR').trim();
+                    }
+                    const dominanceLookup = {};
+                    compareDominanceMap.forEach(item => {
+                        dominanceLookup[normalizeProvKey(item.name)] = item;
+                    });
+
+                    function getDomColor(item) {
+                        if (!item) return '#0f172a';
+                        const total = (item.s1 || 0) + (item.s2 || 0);
+                        if (total === 0) return '#0f172a';
+                        const diff = Math.abs((item.s1 || 0) - (item.s2 || 0));
+                        const pressure = Math.min(1, diff / Math.max(total, 1));
+                        const opacity = 0.35 + pressure * 0.55;
+                        if (item.dominance === 'brand1') return c1;
+                        if (item.dominance === 'brand2') return c2;
+                        return '#475569';
+                    }
+
+                    function getDomFillOpacity(item) {
+                        if (!item) return 0.18;
+                        const total = (item.s1 || 0) + (item.s2 || 0);
+                        if (total === 0) return 0.18;
+                        const diff = Math.abs((item.s1 || 0) - (item.s2 || 0));
+                        const pressure = Math.min(1, diff / Math.max(total, 1));
+                        return 0.4 + pressure * 0.5;
+                    }
+
+                    const geoLayer = L.geoJSON(geoData, {
+                        style: feature => {
+                            const name = feature.properties.name || feature.properties.Name;
+                            const dbName = nameMap[name] || name;
+                            const item = dominanceLookup[normalizeProvKey(dbName)];
+                            return {
+                                fillColor: getDomColor(item),
+                                weight: 0.8,
+                                color: '#0b1220',
+                                fillOpacity: getDomFillOpacity(item)
+                            };
+                        },
+                        onEachFeature: (feature, layer) => {
+                            const name = feature.properties.name || feature.properties.Name;
+                            const dbName = nameMap[name] || name;
+                            const item = dominanceLookup[normalizeProvKey(dbName)];
+                            const tooltipHtml = item
+                                ? `<strong>${safe(dbName)}</strong><br>${safe(compareBrand1.name)}: ${fmtNum(item.s1 || 0)}<br>${safe(compareBrand2.name)}: ${fmtNum(item.s2 || 0)}<br>Fark: ${fmtNum(Math.abs((item.s1 || 0) - (item.s2 || 0)))}`
+                                : `<strong>${safe(dbName)}</strong><br><em>Veri yok</em>`;
+                            layer.bindTooltip(tooltipHtml, { className: 'bm-tooltip', sticky: true });
+                            layer.on('mouseover', e => e.target.setStyle({ weight: 2, color: '#f8fafc' }));
+                            layer.on('mouseout', e => e.target.setStyle({ weight: 0.8, color: '#0b1220' }));
+                        }
+                    }).addTo(_bmMap);
+
+                    // Tüm Türkiye'yi tam kadraja yerleştir (zoom kullanıcı kontrolüne kapalı)
+                    _bmMap.fitBounds(geoLayer.getBounds(), { padding: [8, 8] });
+                    setTimeout(() => _bmMap.invalidateSize(), 80);
+                } catch (err) {
+                    console.warn('Choropleth yüklenemedi, nokta haritasına dönülüyor', err);
+                    compareDominanceMap.forEach(item => {
+                        if (!item.lat || !item.lng) return;
+                        const color = item.dominance === 'brand1' ? c1 : item.dominance === 'brand2' ? c2 : '#64748b';
+                        L.circleMarker([item.lat, item.lng], {
+                            radius: 8, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.7
+                        }).addTo(_bmMap).bindTooltip(`<strong>${safe(item.name)}</strong><br>${safe(compareBrand1.name)}: ${fmtNum(item.s1)}<br>${safe(compareBrand2.name)}: ${fmtNum(item.s2)}`, { className: 'bm-tooltip' });
+                    });
+                }
+            }, 150);
+
+            const aiContext = {
+                brand1: compareBrand1.name,
+                brand2: compareBrand2.name,
+                period: comparePeriodLabel,
+                score: compareWinnerScore,
+                market: compareMarket,
+                left: {
+                    sales: deep1.currentSales,
+                    share: deep1.currentShare,
+                    yoy: deep1.yoyGrowth,
+                    provinces: deep1.activeProvinces,
+                    avgHp: deep1.salesWeightedHp,
+                    costPerHp: deep1.costPerHp,
+                    topProvinces: (deep1.topProvinces || []).slice(0, 5),
+                    topModels: (deep1.topModels || []).slice(0, 5)
+                },
+                right: {
+                    sales: deep2.currentSales,
+                    share: deep2.currentShare,
+                    yoy: deep2.yoyGrowth,
+                    provinces: deep2.activeProvinces,
+                    avgHp: deep2.salesWeightedHp,
+                    costPerHp: deep2.costPerHp,
+                    topProvinces: (deep2.topProvinces || []).slice(0, 5),
+                    topModels: (deep2.topModels || []).slice(0, 5)
+                },
+                whitespace: compareWhitespace.slice(0, 5),
+                provinceBattles: compareBattles.slice(0, 8)
+            };
+            const aiBtn = document.getElementById('bcxAiBtn');
+            if (aiBtn) {
+                aiBtn.onclick = () => requestAiAnalysis('brand-compare', aiContext, 'bcAiPanel');
+            }
+
+            return;
+        }
 
         const data = await API.getBrandCompare(b1Id, b2Id);
         if (!data) return;
@@ -4084,15 +17099,15 @@ async function loadBrandComparePage() {
 
         document.getElementById('pageContent').innerHTML = `
         <div class="bc-container">
-            <!-- Brand Selectors -->
+            <!-- Brand Selectors (Marka A: aktif marka — banner'dan; Marka B: rakip seçimi) -->
             <div class="bc-selectors">
                 <div class="bc-sel-left">
                     <div class="bc-brand-badge" style="background:${brand1.primary_color}"><i class="fas fa-tractor"></i></div>
-                    <select class="bc-select" onchange="window._bc_brand1=parseInt(this.value);loadBrandComparePage()">${b1Opts}</select>
+                    <strong style="font-size:14px;font-weight:800;color:#f8fafc;letter-spacing:0.04em">${dashboardSafe(brand1.name)}</strong>
                 </div>
                 <div class="bc-vs">VS</div>
                 <div class="bc-sel-right">
-                    <select class="bc-select" onchange="window._bc_brand2=parseInt(this.value);loadBrandComparePage()">${b2Opts}</select>
+                    <select class="bc-select" onchange="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
                     <div class="bc-brand-badge" style="background:${brand2.primary_color}"><i class="fas fa-tractor"></i></div>
                 </div>
             </div>
@@ -4603,6 +17618,2932 @@ function reloadTarmakBir2() {
 // BENCHMARK PAGE - placeholder removed, real function is above
 
 // ============================================
+// WEATHER COMMAND CENTER
+// ============================================
+function normalizeWeatherKey(value = '') {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/gi, '')
+        .toLowerCase();
+}
+
+function getWeatherCommandBrandId() {
+    if (currentUser?.role !== 'admin') return String(currentUser?.brand_id || '');
+    return String(activeBrandContext?.id || '');
+}
+
+function weatherAverage(items, picker) {
+    const values = (items || [])
+        .map(item => Number(picker(item)))
+        .filter(value => Number.isFinite(value));
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+function weatherSum(items, picker) {
+    return (items || []).reduce((sum, item) => {
+        const value = Number(picker(item));
+        return sum + (Number.isFinite(value) ? value : 0);
+    }, 0);
+}
+
+function aggregateWeatherProvinceSales(rows = []) {
+    const provinceMap = new Map();
+
+    (rows || []).forEach(row => {
+        const key = String(row.plate_code || row.province_name || '').trim();
+        if (!key) return;
+
+        if (!provinceMap.has(key)) {
+            provinceMap.set(key, {
+                province_name: row.province_name,
+                plate_code: row.plate_code,
+                region: row.region,
+                total_sales: 0,
+                province_total_sales: 0
+            });
+        }
+
+        const current = provinceMap.get(key);
+        current.total_sales += Number(row.total_sales || 0);
+        current.province_total_sales = Math.max(current.province_total_sales, Number(row.province_total_sales || 0));
+    });
+
+    return Array.from(provinceMap.values())
+        .map(item => {
+            const province = (allProvinces || []).find(prov =>
+                String(prov.plate_code || '') === String(item.plate_code || '') ||
+                normalizeWeatherKey(prov.name) === normalizeWeatherKey(item.province_name)
+            );
+
+            return {
+                ...item,
+                province_id: province?.id || null,
+                share_pct: item.province_total_sales > 0 ? (item.total_sales * 100) / item.province_total_sales : null
+            };
+        })
+        .sort((left, right) => right.total_sales - left.total_sales || left.province_name.localeCompare(right.province_name, 'tr'));
+}
+
+function resolveWeatherCommandProvinceId(provinceSales = []) {
+    if (weatherCommandState.province_id) return String(weatherCommandState.province_id);
+
+    const topProvince = (provinceSales || []).find(item => item.province_id);
+    if (topProvince?.province_id) return String(topProvince.province_id);
+
+    return String(allProvinces?.[0]?.id || '');
+}
+
+function getWeatherConditionMeta(condition = '') {
+    const normalized = String(condition || '').toLowerCase();
+    if (normalized.includes('storm') || normalized.includes('thunder')) return { icon: 'fa-bolt', label: 'Firtina', tone: 'is-warning' };
+    if (normalized.includes('snow')) return { icon: 'fa-snowflake', label: 'Kar', tone: 'is-down' };
+    if (normalized.includes('rain') || normalized.includes('shower')) return { icon: 'fa-cloud-rain', label: 'Yağış', tone: 'is-warning' };
+    if (normalized.includes('fog') || normalized.includes('mist')) return { icon: 'fa-smog', label: 'Sis', tone: 'is-neutral' };
+    if (normalized.includes('cloud')) return { icon: 'fa-cloud', label: 'Bulutlu', tone: 'is-neutral' };
+    if (normalized.includes('clear') || normalized.includes('sun')) return { icon: 'fa-sun', label: 'Acik', tone: 'is-up' };
+    return { icon: 'fa-cloud-sun', label: condition || 'Degisken', tone: 'is-analysis' };
+}
+
+function buildWeatherForecastSummary(forecast = [], recentWeather = []) {
+    const future = (forecast || []).slice().sort((left, right) => new Date(left.date) - new Date(right.date));
+    const currentWindow = (recentWeather || []).filter(item => !item.is_forecast);
+    const latestActual = currentWindow.slice().sort((left, right) => new Date(right.date) - new Date(left.date))[0] || null;
+    const isReference = future.length > 0 && future.every(item => String(item.source || '').includes('reference'));
+
+    const avgMax = weatherAverage(future, item => item.temp_max);
+    const avgMin = weatherAverage(future, item => item.temp_min);
+    const rainTotal = weatherSum(future, item => item.rainfall_mm);
+    const humidityAvg = weatherAverage(future, item => item.humidity_pct) ?? weatherAverage(currentWindow, item => item.humidity_pct);
+    const windPeak = Math.max(...future.map(item => Number(item.wind_speed_kmh || 0)), 0);
+    const rainyDays = future.filter(item => Number(item.rainfall_mm || 0) >= 1).length;
+    const heatDays = future.filter(item => Number(item.temp_max || 0) >= 30).length;
+    const coldNights = future.filter(item => Number(item.temp_min || 0) <= 2).length;
+    const dominant = future[0] ? getWeatherConditionMeta(future[0].weather_condition) : getWeatherConditionMeta('');
+
+    let windowNote = 'Ritim dengeli. Standart saha planlaması korunabilir.';
+    if (rainTotal >= 30 || rainyDays >= 3) {
+        windowNote = 'Yağış baskısı yüksek. Zemin sıkışması ve çekiş planlaması öne alınmalı.';
+    } else if (heatDays >= 3) {
+        windowNote = 'Isi stresi olasi. Operasyon saatleri ve sogutma/servis temposu yeniden ayarlanabilir.';
+    } else if (coldNights >= 2) {
+        windowNote = 'Gece sogugu kritik. Erken sabah operasyonu ve don hassasiyeti izlenmeli.';
+    } else if (windPeak >= 30) {
+        windowNote = 'Ruzgar yukseliyor. Ilaclama ve açık saha operasyon penceresi daralabilir.';
+    }
+
+    return {
+        future,
+        latestActual,
+        avgMax,
+        avgMin,
+        rainTotal,
+        humidityAvg,
+        windPeak,
+        rainyDays,
+        heatDays,
+        coldNights,
+        dominant,
+        windowNote,
+        isReference
+    };
+}
+
+function buildWeatherReferenceWindow(climateSummary = {}, prov = {}, dayCount = 7) {
+    const today = new Date();
+    const monthIndex = today.getMonth() + 1;
+    const monthlyRow = (climateSummary.monthlyProfile || []).find(item => Number(item.month) === monthIndex) || {};
+    const baseTemp = Number.isFinite(Number(monthlyRow.avgTemp))
+        ? Number(monthlyRow.avgTemp)
+        : Number(prov.avg_temperature || climateSummary.annualTemp || 14);
+    const baseRain = Number.isFinite(Number(monthlyRow.rainfall))
+        ? Number(monthlyRow.rainfall)
+        : Number((climateSummary.annualRain || prov.annual_rainfall_mm || 360) / 12);
+    const baseHumidity = Number.isFinite(Number(monthlyRow.humidity))
+        ? Number(monthlyRow.humidity)
+        : 60;
+    const weeklyRainTarget = Math.max(0, Number((baseRain / 4.3).toFixed(1)));
+    const rainySlots = weeklyRainTarget >= 18
+        ? [1, 3, 5]
+        : weeklyRainTarget >= 8
+            ? [2, 5]
+            : weeklyRainTarget >= 3
+                ? [3]
+                : [];
+
+    return Array.from({ length: dayCount }, (_, index) => {
+        const date = new Date(today);
+        date.setDate(today.getDate() + index);
+
+        const tempOffset = ((index % 4) - 1.5) * 1.1;
+        const avgTemp = baseTemp + tempOffset;
+        const tempMax = Number((avgTemp + (baseTemp >= 22 ? 6.5 : 5.5)).toFixed(1));
+        const tempMin = Number((avgTemp - (baseTemp >= 22 ? 5.5 : 4.5)).toFixed(1));
+        const rainfall = rainySlots.includes(index)
+            ? Number((weeklyRainTarget / Math.max(rainySlots.length, 1)).toFixed(1))
+            : 0;
+        const humidity = Math.min(90, Math.max(35, baseHumidity + (rainfall > 0 ? 8 : -3) + (index % 3 === 0 ? 2 : -1)));
+        const windSpeed = Number((14 + (index % 3) * 2 + (rainfall > 0 ? 4 : 0)).toFixed(0));
+
+        let weatherCondition = 'clear';
+        if (rainfall >= 3) {
+            weatherCondition = 'rain';
+        } else if (tempMin <= 0) {
+            weatherCondition = 'snow';
+        } else if (humidity >= 72) {
+            weatherCondition = 'cloud';
+        }
+
+        return {
+            province_id: prov.id,
+            date: date.toISOString().slice(0, 10),
+            weather_condition: weatherCondition,
+            temp_max: tempMax,
+            temp_min: tempMin,
+            rainfall_mm: rainfall,
+            humidity_pct: Number(humidity.toFixed(0)),
+            wind_speed_kmh: windSpeed,
+            is_forecast: true,
+            source: 'climate_reference_profile'
+        };
+    });
+}
+
+function buildWeatherClimateSummary(climate = [], prov = {}) {
+    const monthNames = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const rows = (climate || []).map(item => ({
+        ...item,
+        year: Number(item.year),
+        month: Number(item.month),
+        avg_temp: Number(item.avg_temp),
+        avg_rainfall_mm: Number(item.avg_rainfall_mm),
+        avg_humidity: Number(item.avg_humidity),
+        frost_days: Number(item.frost_days),
+        drought_index: Number(item.drought_index),
+        growing_degree_days: Number(item.growing_degree_days)
+    })).filter(item => Number.isFinite(item.year) && Number.isFinite(item.month));
+
+    const years = Array.from(new Set(rows.map(item => item.year))).sort((left, right) => left - right);
+    const monthlyProfile = monthNames.map((label, index) => {
+        const monthRows = rows.filter(item => item.month === index + 1);
+        return {
+            label,
+            month: index + 1,
+            avgTemp: weatherAverage(monthRows, item => item.avg_temp),
+            rainfall: weatherAverage(monthRows, item => item.avg_rainfall_mm),
+            humidity: weatherAverage(monthRows, item => item.avg_humidity),
+            frostDays: weatherAverage(monthRows, item => item.frost_days),
+            droughtIndex: weatherAverage(monthRows, item => item.drought_index),
+            gdd: weatherAverage(monthRows, item => item.growing_degree_days)
+        };
+    });
+
+    const annualProfile = years.map(year => {
+        const yearRows = rows.filter(item => item.year === year);
+        return {
+            year,
+            avgTemp: weatherAverage(yearRows, item => item.avg_temp),
+            rainfall: weatherSum(yearRows, item => item.avg_rainfall_mm),
+            humidity: weatherAverage(yearRows, item => item.avg_humidity),
+            frostDays: weatherSum(yearRows, item => item.frost_days),
+            droughtIndex: weatherAverage(yearRows, item => item.drought_index),
+            gdd: weatherSum(yearRows, item => item.growing_degree_days)
+        };
+    });
+
+    const recentAnnual = annualProfile.slice(-6);
+    const recentHalf = recentAnnual.slice(-3);
+    const previousHalf = recentAnnual.slice(0, Math.max(recentAnnual.length - 3, 0));
+    const warmingSignal = recentHalf.length && previousHalf.length
+        ? (weatherAverage(recentHalf, item => item.avgTemp) - weatherAverage(previousHalf, item => item.avgTemp))
+        : null;
+    const rainfallSignal = recentHalf.length && previousHalf.length
+        ? (weatherAverage(recentHalf, item => item.rainfall) - weatherAverage(previousHalf, item => item.rainfall))
+        : null;
+
+    const hottestMonth = monthlyProfile.reduce((best, item) => (item.avgTemp ?? -Infinity) > (best?.avgTemp ?? -Infinity) ? item : best, null);
+    const wettestMonth = monthlyProfile.reduce((best, item) => (item.rainfall ?? -Infinity) > (best?.rainfall ?? -Infinity) ? item : best, null);
+    const frostMonth = monthlyProfile.reduce((best, item) => (item.frostDays ?? -Infinity) > (best?.frostDays ?? -Infinity) ? item : best, null);
+    const droughtMonth = monthlyProfile.reduce((best, item) => (item.droughtIndex ?? -Infinity) > (best?.droughtIndex ?? -Infinity) ? item : best, null);
+    const annualRain = weatherAverage(annualProfile, item => item.rainfall) ?? Number(prov.annual_rainfall_mm || 0);
+    const annualTemp = weatherAverage(annualProfile, item => item.avgTemp) ?? Number(prov.avg_temperature || 0);
+
+    return {
+        years,
+        monthlyProfile,
+        annualProfile,
+        annualRain,
+        annualTemp,
+        warmingSignal,
+        rainfallSignal,
+        hottestMonth,
+        wettestMonth,
+        frostMonth,
+        droughtMonth
+    };
+}
+
+function buildWeatherActionRows(monthlyProfile = []) {
+    const avgRain = weatherAverage(monthlyProfile, item => item.rainfall) || 0;
+    const avgTemp = weatherAverage(monthlyProfile, item => item.avgTemp) || 0;
+    const avgDrought = weatherAverage(monthlyProfile, item => item.droughtIndex) || 0;
+
+    return monthlyProfile.map(item => {
+        let action = 'Dengeli pencere. Standart operasyon temposu uygun.';
+        let tone = 'is-neutral';
+
+        if ((item.frostDays || 0) >= 2) {
+            action = 'Don hassasiyeti var. Sabah operasyonları ve depolama akışını koru.';
+            tone = 'is-down';
+        } else if ((item.rainfall || 0) > avgRain * 1.2 && (item.rainfall || 0) >= 35) {
+            action = 'Yağış yüksek. 4WD / toprak sıkışması ve servis planını önde tut.';
+            tone = 'is-warning';
+        } else if ((item.avgTemp || 0) > avgTemp + 4) {
+            action = 'Isı ve toz baskısı artıyor. Saatleme ve soğutma ihtiyacı doğabilir.';
+            tone = 'is-warning';
+        } else if ((item.droughtIndex || 0) > avgDrought * 1.15 && (item.droughtIndex || 0) > 0) {
+            action = 'Kuraklık baskısı belirgin. Verim, sulama ve ekonomik kullanım odağa alınmalı.';
+            tone = 'is-opportunity';
+        } else if ((item.gdd || 0) > 0) {
+            action = 'Yetişme penceresi aktif. İşletme temposu ve tarla operasyonları hızlanabilir.';
+            tone = 'is-up';
+        }
+
+        return { ...item, action: localizeAgronomyDisplayText(action), tone };
+    });
+}
+
+function buildWeatherExecutiveMemo({ prov, forecastSummary, climateSummary, focusProvinceSales, crops, soil }) {
+    const topCrop = (crops || [])[0];
+    const topSoil = (soil || [])[0];
+    const salesNote = focusProvinceSales?.total_sales
+        ? `${prov?.name || 'İl'} ${selectedYear} yilinda ${fmtNum(focusProvinceSales.total_sales)} adetlik hacim uretti.`
+        : `${prov?.name || 'İl'} için satış etkisi baglam olarak okunuyor.`;
+
+    let stance = { label: 'İklim dengesi', tone: 'is-neutral' };
+    if ((forecastSummary.rainTotal || 0) >= 30 || (forecastSummary.coldNights || 0) >= 2) {
+        stance = { label: 'Operasyon savunmasi', tone: 'is-warning' };
+    } else if ((forecastSummary.heatDays || 0) >= 3 || (climateSummary.droughtMonth?.droughtIndex || 0) > 0) {
+        stance = { label: 'Verim baskısı', tone: 'is-opportunity' };
+    } else if ((forecastSummary.rainyDays || 0) <= 1 && (forecastSummary.avgMax || 0) > 10) {
+        stance = { label: 'Saha hizi artabilir', tone: 'is-up' };
+    }
+
+    const headline = `${prov?.name || 'İl'} için kisa vade hava penceresi ile uzun dönem iklim hafızası tek ekranda bulusturuldu. ${salesNote}`;
+    const points = [
+        forecastSummary.windowNote,
+        climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} en sıcak pencere, ${climateSummary.wettestMonth?.label || '-'} ise en ıslak dönem.` : 'Uzun dönem iklim verisi geldikce aylık baski haritasi netleşecek.',
+        topCrop ? `${topCrop.crop_name} il genelindeki en büyük ürün deseni. Tavsiye edilen güç penceresi ${topCrop.requires_hp_min || '-'}-${topCrop.requires_hp_max || '-'} HP.` : 'Ürün deseni verisi olmadiginda iklim ve toprak baskısı yine okunur.',
+        topSoil ? `${topSoil.soil_type} zemini için ${topSoil.recommended_hp_range || '-'} ve ${translateLabel(topSoil.recommended_tractor_type || '') || 'uygun tip'} öneri katmani hazir.` : 'Toprak verisi yoksa il genel parametreleriyle karar destek devam eder.'
+    ];
+
+    return { stance, headline, points };
+}
+
+function renderWeatherCommandCharts({ forecastSummary, climateSummary }) {
+    ['weatherForecast', 'weatherNormals', 'weatherAnnual', 'weatherStress'].forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy?.();
+            delete charts[key];
+        }
+    });
+
+    const forecastEl = document.getElementById('wcxForecastChart');
+    if (forecastEl && forecastSummary.future.length > 0) {
+        const labels = forecastSummary.future.map(item => new Date(item.date).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' }));
+        const forecastOptions = chartOptions('C / mm');
+        charts.weatherForecast = new Chart(forecastEl, {
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Yağış',
+                        data: forecastSummary.future.map(item => Number(item.rainfall_mm || 0)),
+                        backgroundColor: 'rgba(56, 189, 248, 0.64)',
+                        borderRadius: 10,
+                        borderSkipped: false,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'Maks. sıcaklık',
+                        data: forecastSummary.future.map(item => Number(item.temp_max || 0)),
+                        borderColor: '#f97316',
+                        backgroundColor: 'rgba(249, 115, 22, 0.12)',
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3
+                    },
+                    {
+                        type: 'line',
+                        label: 'Min. sıcaklık',
+                        data: forecastSummary.future.map(item => Number(item.temp_min || 0)),
+                        borderColor: '#38bdf8',
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3
+                    }
+                ]
+            },
+            options: {
+                ...forecastOptions,
+                scales: {
+                    ...forecastOptions.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#38bdf8', callback: value => `${value} mm` },
+                        title: { display: true, text: 'Yağış', color: '#38bdf8' }
+                    }
+                },
+                plugins: {
+                    ...forecastOptions.plugins,
+                    tooltip: {
+                        ...forecastOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => ctx.dataset.yAxisID === 'y1'
+                                ? `${ctx.dataset.label}: ${fmtNum(ctx.raw)} mm`
+                                : `${ctx.dataset.label}: ${Number(ctx.raw).toFixed(1)} C`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const normalsEl = document.getElementById('wcxNormalsChart');
+    if (normalsEl && climateSummary.monthlyProfile.length > 0) {
+        const labels = climateSummary.monthlyProfile.map(item => item.label);
+        const normalsOptions = chartOptions('C / mm');
+        charts.weatherNormals = new Chart(normalsEl, {
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Ortalama yağış',
+                        data: climateSummary.monthlyProfile.map(item => Number(item.rainfall || 0)),
+                        backgroundColor: 'rgba(14, 165, 233, 0.58)',
+                        borderRadius: 10,
+                        borderSkipped: false,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'Ortalama sıcaklık',
+                        data: climateSummary.monthlyProfile.map(item => Number(item.avgTemp || 0)),
+                        borderColor: 'var(--brand-primary)',
+                        backgroundColor: 'rgba(var(--brand-primary-rgb), 0.1)',
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3
+                    },
+                    {
+                        type: 'line',
+                        label: 'Nem',
+                        data: climateSummary.monthlyProfile.map(item => Number(item.humidity || 0)),
+                        borderColor: '#a855f7',
+                        backgroundColor: 'transparent',
+                        tension: 0.28,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        yAxisID: 'y2'
+                    }
+                ]
+            },
+            options: {
+                ...normalsOptions,
+                scales: {
+                    ...normalsOptions.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#38bdf8', callback: value => `${value} mm` },
+                        title: { display: true, text: 'Yağış', color: '#38bdf8' }
+                    },
+                    y2: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#a855f7', callback: value => `${value}%` },
+                        title: { display: true, text: 'Nem', color: '#a855f7' }
+                    }
+                }
+            }
+        });
+    }
+
+    const annualEl = document.getElementById('wcxAnnualChart');
+    if (annualEl && climateSummary.annualProfile.length > 0) {
+        const labels = climateSummary.annualProfile.map(item => String(item.year));
+        const annualOptions = chartOptions('C / mm');
+        charts.weatherAnnual = new Chart(annualEl, {
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Yillik yağış',
+                        data: climateSummary.annualProfile.map(item => Number(item.rainfall || 0)),
+                        backgroundColor: 'rgba(59, 130, 246, 0.48)',
+                        borderRadius: 10,
+                        borderSkipped: false,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'Yıllık ortalama sıcaklık',
+                        data: climateSummary.annualProfile.map(item => Number(item.avgTemp || 0)),
+                        borderColor: '#f97316',
+                        backgroundColor: 'rgba(249, 115, 22, 0.12)',
+                        tension: 0.26,
+                        borderWidth: 3,
+                        pointRadius: 3
+                    }
+                ]
+            },
+            options: {
+                ...annualOptions,
+                scales: {
+                    ...annualOptions.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#3b82f6', callback: value => `${fmtNum(value)} mm` },
+                        title: { display: true, text: 'Yağış', color: '#3b82f6' }
+                    }
+                }
+            }
+        });
+    }
+
+    const stressEl = document.getElementById('wcxStressChart');
+    if (stressEl && climateSummary.monthlyProfile.length > 0) {
+        const labels = climateSummary.monthlyProfile.map(item => item.label);
+        const stressOptions = chartOptions('Gun / Endeks');
+        charts.weatherStress = new Chart(stressEl, {
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Don gunleri',
+                        data: climateSummary.monthlyProfile.map(item => Number(item.frostDays || 0)),
+                        backgroundColor: 'rgba(148, 163, 184, 0.64)',
+                        borderRadius: 10,
+                        borderSkipped: false
+                    },
+                    {
+                        type: 'line',
+                        label: 'Kuraklık endeksi',
+                        data: climateSummary.monthlyProfile.map(item => Number(item.droughtIndex || 0)),
+                        borderColor: '#ef4444',
+                        backgroundColor: 'transparent',
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'GDD',
+                        data: climateSummary.monthlyProfile.map(item => Number(item.gdd || 0)),
+                        borderColor: '#22c55e',
+                        backgroundColor: 'transparent',
+                        tension: 0.28,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        yAxisID: 'y2'
+                    }
+                ]
+            },
+            options: {
+                ...stressOptions,
+                scales: {
+                    ...stressOptions.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#ef4444' },
+                        title: { display: true, text: 'Kuraklık', color: '#ef4444' }
+                    },
+                    y2: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#22c55e' },
+                        title: { display: true, text: 'GDD', color: '#22c55e' }
+                    }
+                }
+            }
+        });
+    }
+}
+
+async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
+    const prov = (allProvinces || []).find(item => String(item.id) === String(provinceId || ''));
+    if (!prov) {
+        document.getElementById('pageContent').innerHTML = '<div class="empty-state"><p>İl bulunamadi.</p></div>';
+        return;
+    }
+
+    const focusBrandId = getWeatherCommandBrandId();
+    const [weather, forecast, climate, soil, crops, dossier] = await Promise.all([
+        API.getWeather(provinceId).catch(() => []),
+        API.getWeatherForecast(provinceId).catch(() => []),
+        API.getClimate(provinceId).catch(() => []),
+        API.getSoil(provinceId).catch(() => []),
+        API.getCrops(provinceId, selectedYear).catch(() => []),
+        API.getProvinceIntelligence(provinceId, selectedYear, focusBrandId || '').catch(() => null)
+    ]);
+
+    const referenceProfile = dossier?.reference_profile || {};
+    const weatherProv = {
+        ...prov,
+        climate_zone: prov.climate_zone || referenceProfile.climate_zone || null,
+        annual_rainfall_mm: prov.annual_rainfall_mm || referenceProfile.annual_rainfall_mm || null,
+        avg_temperature: prov.avg_temperature || referenceProfile.avg_temperature || null,
+        elevation_m: prov.elevation_m || referenceProfile.elevation_m || null,
+        agricultural_area_hectare: prov.agricultural_area_hectare || referenceProfile.agricultural_area_hectare || null,
+        primary_crops: Array.isArray(prov.primary_crops) && prov.primary_crops.length
+            ? prov.primary_crops
+            : (Array.isArray(referenceProfile.primary_crops)
+                ? referenceProfile.primary_crops.map(item => item.name).filter(Boolean)
+                : [])
+    };
+    const climateRows = Array.isArray(climate) && climate.length
+        ? climate
+        : (Array.isArray(referenceProfile.climate_rows) ? referenceProfile.climate_rows : []);
+    const soilRows = Array.isArray(soil) && soil.length
+        ? soil
+        : (Array.isArray(dossier?.soil) ? dossier.soil : []);
+    const cropRows = Array.isArray(crops) && crops.length
+        ? crops
+        : (Array.isArray(dossier?.crops) ? dossier.crops : []);
+
+    const climateSummary = buildWeatherClimateSummary(climateRows, weatherProv);
+    const forecastRows = Array.isArray(forecast) && forecast.length ? forecast : buildWeatherReferenceWindow(climateSummary, weatherProv);
+    const recentWeather = (weather || []).filter(item => !item.is_forecast);
+    const forecastSummary = buildWeatherForecastSummary(forecastRows, recentWeather);
+    const actionRows = buildWeatherActionRows(climateSummary.monthlyProfile || []);
+    const focusProvinceSales = (provinceSales || []).find(item => String(item.province_id) === String(provinceId || '')) || null;
+    const weatherMemo = buildWeatherExecutiveMemo({
+        prov: weatherProv,
+        forecastSummary,
+        climateSummary,
+        focusProvinceSales,
+        crops: cropRows,
+        soil: soilRows
+    });
+
+    const focusBrand = focusBrandId ? findBrandById(focusBrandId) : activeBrandContext;
+    const theme = getBrandThemeProfile(focusBrand || activeBrandContext || {});
+    const stageHtml = buildBrandStageHtml(theme, {
+        title: `${weatherProv.name} climate command center`,
+        summary: weatherMemo.headline,
+        compareCopy: `${weatherProv.climate_zone || 'İklim sınıfı yok'} · ${weatherProv.annual_rainfall_mm ? `${fmtNum(weatherProv.annual_rainfall_mm)} mm` : 'Yağış verisi yok'} · ${weatherProv.elevation_m ? `${fmtNum(weatherProv.elevation_m)} m` : 'Rakim yok'}`
+    });
+
+    const topProvinceChips = (provinceSales || []).slice(0, 6).map(item => `
+        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadWeatherDetail('${item.province_id}')">
+            <strong>${dashboardSafe(item.province_name)}</strong>
+            <small>${fmtNum(item.total_sales)} adet</small>
+        </button>
+    `).join('');
+
+    const provinceOptionsHtml = (allProvinces || []).map(item => `
+        <option value="${item.id}" ${String(item.id) === String(provinceId) ? 'selected' : ''}>${dashboardSafe(item.name)}${item.region ? ` · ${dashboardSafe(item.region)}` : ''}</option>
+    `).join('');
+
+    const chipRows = [
+        { label: 'İklim zonu', value: weatherProv.climate_zone || '-' },
+        { label: 'Yillik yağış', value: weatherProv.annual_rainfall_mm ? `${fmtNum(weatherProv.annual_rainfall_mm)} mm` : '-' },
+        { label: 'Ortalama sıcaklık', value: weatherProv.avg_temperature ? `${Number(weatherProv.avg_temperature).toFixed(1)} C` : '-' },
+        { label: 'Rakim', value: weatherProv.elevation_m ? `${fmtNum(weatherProv.elevation_m)} m` : '-' },
+        { label: 'Birincil ürünler', value: Array.isArray(weatherProv.primary_crops) && weatherProv.primary_crops.length ? weatherProv.primary_crops.slice(0, 2).join(' / ') : '-' }
+    ];
+
+    const kpiCards = [
+        {
+            label: '7 gun yağış',
+            value: `${fmtNum(forecastSummary.rainTotal || 0)} mm`,
+            note: `${forecastSummary.rainyDays || 0} yagisli gun`,
+            tone: (forecastSummary.rainTotal || 0) >= 30 ? 'is-warning' : 'is-up'
+        },
+        {
+            label: 'Sicaklik bandi',
+            value: `${forecastSummary.avgMin != null ? Number(forecastSummary.avgMin).toFixed(1) : '-'} / ${forecastSummary.avgMax != null ? Number(forecastSummary.avgMax).toFixed(1) : '-'} C`,
+            note: forecastSummary.isReference ? 'Referans kisa vade pencere' : (forecastSummary.dominant.label || 'Kisa vade pencere'),
+            tone: (forecastSummary.heatDays || 0) >= 3 ? 'is-warning' : 'is-analysis'
+        },
+        {
+            label: 'Nem seviyesi',
+            value: forecastSummary.humidityAvg != null ? `${Number(forecastSummary.humidityAvg).toFixed(0)}%` : '-',
+            note: forecastSummary.windPeak
+                ? `${forecastSummary.isReference ? 'Referans ruzgar tepe' : 'Ruzgar tepe'} ${Number(forecastSummary.windPeak).toFixed(0)} km/h`
+                : 'Ruzgar verisi sinirli',
+            tone: (forecastSummary.humidityAvg || 0) >= 70 ? 'is-warning' : 'is-neutral'
+        },
+        {
+            label: 'Isinma sinyali',
+            value: climateSummary.warmingSignal != null ? `${climateSummary.warmingSignal >= 0 ? '+' : ''}${Number(climateSummary.warmingSignal).toFixed(1)} C` : '-',
+            note: 'Son yılların sicaklik kaymasi',
+            tone: climateSummary.warmingSignal != null && climateSummary.warmingSignal > 0 ? 'is-opportunity' : 'is-neutral'
+        },
+        {
+            label: 'Yağış trendi',
+            value: climateSummary.rainfallSignal != null ? `${climateSummary.rainfallSignal >= 0 ? '+' : ''}${fmtNum(Math.round(climateSummary.rainfallSignal))} mm` : '-',
+            note: climateSummary.wettestMonth ? `${climateSummary.wettestMonth.label} en ıslak ay` : 'Trend bekleniyor',
+            tone: climateSummary.rainfallSignal != null && climateSummary.rainfallSignal < 0 ? 'is-warning' : 'is-up'
+        },
+        {
+            label: focusBrand ? `${focusBrand.name} il hacmi` : 'İl hacmi',
+            value: focusProvinceSales?.total_sales ? `${fmtNum(focusProvinceSales.total_sales)} adet` : '-',
+            note: focusBrand && focusProvinceSales?.share_pct != null ? `${fmtPct(focusProvinceSales.share_pct, 1)} il ici pay` : `${selectedYear} baglami`,
+            tone: focusProvinceSales?.share_pct != null && focusProvinceSales.share_pct >= 20 ? 'is-up' : 'is-analysis'
+        }
+    ];
+
+    const operationCards = [
+        {
+            eyebrow: 'Kisa vade saha',
+            title: forecastSummary.windowNote.includes('Yağış') ? 'Zemin baskısı artıyor' : forecastSummary.windowNote.includes('Isi') ? 'Isi disiplini gerekiyor' : 'Saha penceresi açık',
+            value: `${forecastSummary.rainyDays || 0} yagisli gun`,
+            note: forecastSummary.windowNote
+        },
+        {
+            eyebrow: 'Uzun dönem hafiza',
+            title: climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} / ${climateSummary.wettestMonth?.label || '-'}` : 'Aylik profil bekleniyor',
+            value: climateSummary.annualRain ? `${fmtNum(Math.round(climateSummary.annualRain))} mm` : '-',
+            note: climateSummary.hottestMonth ? `En sıcak ay ${climateSummary.hottestMonth.label}, en ıslak ay ${climateSummary.wettestMonth?.label || '-'}.` : 'İklim kaydi olmadiginda il metadata paneli calisir.'
+        },
+        {
+            eyebrow: 'Toprak ve makina',
+            title: soilRows?.[0]?.recommended_tractor_type ? translateLabel(soilRows[0].recommended_tractor_type) : 'Makina setup paneli',
+            value: soilRows?.[0]?.recommended_hp_range || (cropRows?.[0] ? `${cropRows[0].requires_hp_min || '-'}-${cropRows[0].requires_hp_max || '-'} HP` : '-'),
+            note: soilRows?.[0]?.soil_type ? `${soilRows[0].soil_type} zemini için uygun çekiş ve HP koridoru izlenmeli.` : 'Toprak verisi geldiginde setup daha da netleşir.'
+        },
+        {
+            eyebrow: 'Ürün deseni',
+            title: cropRows?.[0]?.crop_name || 'Ürün matrisi',
+            value: cropRows?.length ? `${fmtNum(cropRows.length)} ürün satırı` : '-',
+            note: cropRows?.[0] ? `${cropRows[0].crop_name} ${fmtNum(cropRows[0].cultivation_area_hectare || 0)} ha alanla on planda.` : 'Ürün verisi yoksa iklim ve toprak katmani yine aktif.'
+        }
+    ];
+
+    const forecastTilesHtml = forecastSummary.future.length > 0 ? forecastSummary.future.map(item => {
+        const meta = getWeatherConditionMeta(item.weather_condition);
+        return `
+            <article class="wcx-forecast-tile ${dashboardSafe(meta.tone)}">
+                <span>${new Date(item.date).toLocaleDateString('tr-TR', { weekday: 'short' })}</span>
+                <i class="fas ${dashboardSafe(meta.icon)}"></i>
+                <strong>${item.temp_max != null ? Number(item.temp_max).toFixed(0) : '-'} C</strong>
+                <small>${item.temp_min != null ? Number(item.temp_min).toFixed(0) : '-'} C</small>
+                <b>${Number(item.rainfall_mm || 0) > 0 ? `${fmtNum(item.rainfall_mm)} mm` : meta.label}</b>
+            </article>
+        `;
+    }).join('') : '<div class="wcx-empty">Forecast verisi bulunamadi.</div>';
+
+    const memoPointsHtml = weatherMemo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
+    const chipHtml = chipRows.map(item => `
+        <div class="wcx-chip">
+            <strong>${dashboardSafe(item.value)}</strong>
+            <small>${dashboardSafe(item.label)}</small>
+        </div>
+    `).join('');
+
+    const kpiHtml = kpiCards.map(item => `
+        <article class="wcx-kpi ${dashboardSafe(item.tone)}">
+            <span>${dashboardSafe(item.label)}</span>
+            <strong>${dashboardSafe(item.value)}</strong>
+            <small>${dashboardSafe(item.note)}</small>
+        </article>
+    `).join('');
+
+    const operationHtml = operationCards.map(item => `
+        <article class="wcx-operation-card">
+            <span>${dashboardSafe(item.eyebrow)}</span>
+            <h3>${dashboardSafe(item.title)}</h3>
+            <strong>${dashboardSafe(item.value)}</strong>
+            <p>${dashboardSafe(item.note)}</p>
+        </article>
+    `).join('');
+
+    const soilRowsHtml = soilRows.length > 0 ? soilRows.map(item => `
+        <tr>
+            <td><strong>${dashboardSafe(item.soil_type || '-')}</strong></td>
+            <td>${dashboardSafe(item.soil_texture || '-')}</td>
+            <td>${item.ph_level != null ? Number(item.ph_level).toFixed(1) : '-'}</td>
+            <td>${item.organic_matter_pct != null ? `%${Number(item.organic_matter_pct).toFixed(1)}` : '-'}</td>
+            <td>${dashboardSafe(item.recommended_hp_range || '-')}</td>
+            <td>${dashboardSafe(translateLabel(item.recommended_tractor_type || '') || '-')}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="6" class="wcx-table-empty">Toprak setup verisi bulunamadi.</td></tr>';
+
+    const cropRowsHtml = cropRows.length > 0 ? cropRows.slice(0, 8).map(item => `
+        <tr>
+            <td><strong>${dashboardSafe(item.crop_name || '-')}</strong></td>
+            <td>${fmtNum(item.cultivation_area_hectare || 0)}</td>
+            <td>${fmtNum(item.annual_production_tons || 0)}</td>
+            <td>${item.requires_hp_min || '-'}-${item.requires_hp_max || '-'} HP</td>
+            <td>${item.planting_month || '-'} / ${item.harvest_month || '-'}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="5" class="wcx-table-empty">Ürün deseni verisi bulunamadi.</td></tr>';
+
+    const actionRowsHtml = actionRows.length > 0 ? actionRows.map(item => `
+        <tr>
+            <td><strong>${dashboardSafe(item.label)}</strong></td>
+            <td>${item.avgTemp != null ? Number(item.avgTemp).toFixed(1) : '-'}</td>
+            <td>${item.rainfall != null ? fmtNum(Math.round(item.rainfall)) : '-'}</td>
+            <td>${item.humidity != null ? `${Number(item.humidity).toFixed(0)}%` : '-'}</td>
+            <td>${item.frostDays != null ? Number(item.frostDays).toFixed(1) : '-'}</td>
+            <td>${item.droughtIndex != null ? Number(item.droughtIndex).toFixed(1) : '-'}</td>
+            <td class="${dashboardSafe(item.tone)}">${dashboardSafe(item.action)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="7" class="wcx-table-empty">Aylik iklim aksiyon matrisi için veri bulunamadi.</td></tr>';
+
+    document.getElementById('pageContent').innerHTML = `
+        <div class="wcx-shell">
+            <section class="wcx-hero">
+                <div class="wcx-hero-shell">
+                    <div class="wcx-hero-copy">
+                        <div class="wcx-overline">Climate Command Center</div>
+                        <h2>${dashboardSafe(weatherProv.name)} iklim komuta merkezi</h2>
+                        <p>${dashboardSafe(weatherMemo.headline)}</p>
+                        <div class="wcx-control-row">
+                            <label class="wcx-field">
+                                <span>İl seçimi</span>
+                                <select id="weatherProvinceSelect" onchange="loadWeatherDetail()">
+                                    ${provinceOptionsHtml}
+                                </select>
+                            </label>
+                        </div>
+                        <div class="wcx-chip-row">${chipHtml}</div>
+                        ${topProvinceChips ? `<div class="wcx-quick-row">${topProvinceChips}</div>` : ''}
+                    </div>
+                    ${stageHtml}
+                </div>
+            </section>
+
+            <section class="wcx-kpi-grid">${kpiHtml}</section>
+
+            <section class="wcx-operation-grid">${operationHtml}</section>
+
+            <section class="wcx-grid wcx-grid-wide">
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Yonetici iklim brifi</h3>
+                            <p>Kisa vade hava akışı ile uzun dönem iklim hafızası ayni paragrafta karar diline cevrilir.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-memo ${dashboardSafe(weatherMemo.stance.tone)}">
+                        <div class="wcx-memo-pill">${dashboardSafe(weatherMemo.stance.label)}</div>
+                        <ul class="wcx-bullet-list">${memoPointsHtml}</ul>
+                    </div>
+                </article>
+
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>7 gun operasyon penceresi</h3>
+                            <p>Yağış, isi ve saha ritmi için gunluk görsel pano.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-forecast-grid">${forecastTilesHtml}</div>
+                </article>
+            </section>
+
+            <section class="wcx-grid">
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Kisa vade tahmin</h3>
+                            <p>7 günlük sıcaklık ve yağış akışı.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-chart-wrap"><canvas id="wcxForecastChart"></canvas></div>
+                </article>
+
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Aylik iklim normalleri</h3>
+                            <p>Sicaklik, yağış ve nem ayni iklim tabaninda bulusur.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-chart-wrap"><canvas id="wcxNormalsChart"></canvas></div>
+                </article>
+            </section>
+
+            <section class="wcx-grid">
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Yillik iklim trendi</h3>
+                            <p>Son dönem ısınma ve yağış kaymasi yil bazinda izlenir.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-chart-wrap"><canvas id="wcxAnnualChart"></canvas></div>
+                </article>
+
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Stres haritasi</h3>
+                            <p>Don, kuraklık ve gelişim gunleri aylık baski matrisi olarak okunur.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-chart-wrap"><canvas id="wcxStressChart"></canvas></div>
+                </article>
+            </section>
+
+            <section class="wcx-grid">
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Toprak ve makina setup</h3>
+                            <p>Zemin tipi, organik madde ve onerilen traktör setup katmani.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-table-wrap">
+                        <table class="wcx-table">
+                            <thead>
+                                <tr>
+                                    <th>Toprak</th>
+                                    <th>Doku</th>
+                                    <th>pH</th>
+                                    <th>Organik</th>
+                                    <th>HP</th>
+                                    <th>Makina tipi</th>
+                                </tr>
+                            </thead>
+                            <tbody>${soilRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="wcx-panel">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Ürün deseni ve güç penceresi</h3>
+                            <p>İlin tarimsal deseni ve beklenen HP ihtiyac koridoru.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-table-wrap">
+                        <table class="wcx-table">
+                            <thead>
+                                <tr>
+                                    <th>Ürün</th>
+                                    <th>Alan</th>
+                                    <th>Üretim</th>
+                                    <th>HP koridoru</th>
+                                    <th>Ekim / hasat</th>
+                                </tr>
+                            </thead>
+                            <tbody>${cropRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="wcx-grid">
+                <article class="wcx-panel wcx-panel-full">
+                    <div class="wcx-panel-head">
+                        <div>
+                            <h3>Aylik aksiyon matrisi</h3>
+                            <p>Her ay için iklim baskısı ve operasyon notu tek satirda okunur.</p>
+                        </div>
+                    </div>
+                    <div class="wcx-table-wrap">
+                        <table class="wcx-table wcx-table-wide">
+                            <thead>
+                                <tr>
+                                    <th>Ay</th>
+                                    <th>Ort. sıcaklık</th>
+                                    <th>Ort. yağış</th>
+                                    <th>Nem</th>
+                                    <th>Don</th>
+                                    <th>Kuraklık</th>
+                                    <th>Aksiyon notu</th>
+                                </tr>
+                            </thead>
+                            <tbody>${actionRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+        </div>
+    `;
+
+    renderWeatherCommandCharts({ forecastSummary, climateSummary });
+}
+
+async function loadWeatherPage() {
+    try {
+        if (!allProvinces || allProvinces.length === 0) {
+            allProvinces = await API.getProvinces();
+        }
+
+        const focusBrandId = getWeatherCommandBrandId();
+        const rawProvinceSales = await API.getSalesByProvince(selectedYear, focusBrandId || '').catch(() => []);
+        const provinceSales = aggregateWeatherProvinceSales(rawProvinceSales || []);
+        weatherCommandState.sales_cache = provinceSales;
+
+        const targetProvinceId = resolveWeatherCommandProvinceId(provinceSales);
+        weatherCommandState.province_id = String(targetProvinceId || '');
+
+        await renderWeatherCommandCenter(targetProvinceId, provinceSales);
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function loadWeatherDetail(nextProvinceId = null) {
+    const targetProvinceId = nextProvinceId || document.getElementById('weatherProvinceSelect')?.value || weatherCommandState.province_id;
+    if (!targetProvinceId) return;
+
+    weatherCommandState.province_id = String(targetProvinceId);
+
+    if (!weatherCommandState.sales_cache || weatherCommandState.sales_cache.length === 0) {
+        return loadWeatherPage();
+    }
+
+    try {
+        await renderWeatherCommandCenter(targetProvinceId, weatherCommandState.sales_cache);
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// PROVINCE AGRO INTELLIGENCE
+// ============================================
+function getProvinceIntelligenceBrandId() {
+    if (currentUser?.role !== 'admin') return String(currentUser?.brand_id || '');
+    return String(activeBrandContext?.id || '');
+}
+
+function aggregateProvinceSalesRows(rows = []) {
+    const provinceMap = new Map();
+
+    (rows || []).forEach(row => {
+        const key = String(row.plate_code || row.province_name || '').trim();
+        if (!key) return;
+
+        if (!provinceMap.has(key)) {
+            provinceMap.set(key, {
+                province_name: row.province_name,
+                plate_code: row.plate_code,
+                region: row.region,
+                total_sales: 0,
+                province_total_sales: 0
+            });
+        }
+
+        const current = provinceMap.get(key);
+        current.total_sales += Number(row.total_sales || 0);
+        current.province_total_sales = Math.max(current.province_total_sales, Number(row.province_total_sales || 0));
+    });
+
+    return Array.from(provinceMap.values())
+        .map(item => {
+            const province = (allProvinces || []).find(prov =>
+                String(prov.plate_code || '') === String(item.plate_code || '') ||
+                normalizeWeatherKey(prov.name) === normalizeWeatherKey(item.province_name)
+            );
+
+            return {
+                ...item,
+                province_id: province?.id || null,
+                share_pct: item.province_total_sales > 0 ? (item.total_sales * 100) / item.province_total_sales : null
+            };
+        })
+        .sort((left, right) => right.total_sales - left.total_sales || String(left.province_name || '').localeCompare(String(right.province_name || ''), 'tr'));
+}
+
+function resolveProvinceIntelligenceDefaultId(provinceSales = []) {
+    if (provinceIntelState.province_id) return String(provinceIntelState.province_id);
+
+    const topProvince = (provinceSales || []).find(item => item.province_id);
+    if (topProvince?.province_id) return String(topProvince.province_id);
+
+    return String(allProvinces?.[0]?.id || '');
+}
+
+function parseProvinceHpWindow(value = '') {
+    const numbers = String(value || '').match(/\d+(?:[.,]\d+)?/g) || [];
+    const parsed = numbers
+        .map(item => Number(String(item).replace(',', '.')))
+        .filter(item => Number.isFinite(item));
+
+    if (!parsed.length) {
+        return { min: null, max: null, mid: null, label: value || '-' };
+    }
+
+    const min = parsed[0];
+    const max = parsed[1] ?? parsed[0];
+    return {
+        min,
+        max,
+        mid: (min + max) / 2,
+        label: value || (min === max ? `${min} HP` : `${min}-${max} HP`)
+    };
+}
+
+function normalizeProvinceMachineKey(value = '') {
+    const normalized = normalizeWeatherKey(value);
+    if (!normalized) return '';
+    if (/(bahce|bag|dar|vine|orchard|meyve)/.test(normalized)) return 'bahce';
+    if (/(hibrit|karma|universal|mix)/.test(normalized)) return 'hibrit';
+    if (/(tarla|field|rowcrop|standart|genel)/.test(normalized)) return 'tarla';
+    return normalized;
+}
+
+function describeProvinceDrive(value = '') {
+    const raw = String(value || '').toUpperCase();
+    if (!raw) return '2WD / 4WD';
+    if (raw.includes('4')) return '4WD';
+    if (raw.includes('2')) return '2WD';
+    return raw;
+}
+
+function getProvinceClimateSignal(climateSummary = {}, forecastSummary = {}, prov = {}) {
+    if ((forecastSummary.rainTotal || 0) >= 35 || (climateSummary.wettestMonth?.rainfall || 0) >= 75) {
+        return {
+            tone: 'is-warning',
+            label: 'Zemin baskısı',
+            note: `${prov?.name || 'İl'} yağışlı pencerelerde çekiş, toprak sıkışması ve lastik/ağırlık dengesiyle yönetilmeli.`
+        };
+    }
+
+    if ((climateSummary.droughtMonth?.droughtIndex || 0) > 0 && (climateSummary.annualRain || 0) <= 500) {
+        return {
+            tone: 'is-opportunity',
+            label: 'Kuraklık disiplini',
+            note: 'Düşük nemli dönemlerde ekonomik güç, hassas ekipman ve saatleme disiplinleri öne çıkıyor.'
+        };
+    }
+
+    if ((climateSummary.warmingSignal || 0) >= 0.8 || (forecastSummary.heatDays || 0) >= 3) {
+        return {
+            tone: 'is-analysis',
+            label: 'Isınma kayması',
+            note: 'Isı stresi artıyor; operatör konforu, soğutma ve verimliliği koruyan ekipman kombinasyonu kritik.'
+        };
+    }
+
+    if ((forecastSummary.rainyDays || 0) <= 1 && (forecastSummary.avgMax || 0) >= 14) {
+        return {
+            tone: 'is-up',
+            label: 'Saha hızı',
+            note: 'Operasyon penceresi açık. Teslimat, demo ve ekipman paketleri için saha ritmi hızlanabilir.'
+        };
+    }
+
+    return {
+        tone: 'is-neutral',
+        label: 'Dengeli agro ritim',
+        note: 'İl, yıl içinde farklı operasyon pencerelerine sahip; segment planını ürün ve toprak bazında okumak yeterli.'
+    };
+}
+
+function inferProvinceCropArchetype(crop = {}) {
+    const cropName = normalizeWeatherKey(crop.crop_name || '');
+    const cropType = normalizeWeatherKey(crop.crop_type || '');
+
+    if (/(meyve|uzum|bag|zeytin|narenciye|ceviz|badem|kiraz|elma|kayisi|fistik|armut|seftali)/.test(cropName) || cropType === 'meyve') {
+        return {
+            key: 'bahce',
+            title: 'Bahce ve sıra arasi operasyon paketi',
+            tractorTypeLabel: 'Dar izli / bahce traktoru',
+            equipment: ['atomizer', 'mulcher', 'sıra arası freze', 'budama platformu', 'bahçe römorku'],
+            note: 'Manevra kabiliyeti ve sıra arasi işlem verimliligi öne çıkar.'
+        };
+    }
+
+    if (/(sebze|domates|biber|patates|sogan|patlican|karpuz|kavun|salatalik)/.test(cropName) || cropType === 'sebze') {
+        return {
+            key: 'hibrit',
+            title: 'Sebze ve yoğun işçilik paketi',
+            tractorTypeLabel: 'Kompakt / hibrit saha traktoru',
+            equipment: ['rotovator', 'yatak hazirlama', 'transplanter', 'damla sulama romorku', 'precision sprayer'],
+            note: 'Sik geçiş, hassas ayar ve düşük yakitli operasyon dizilimi gerekir.'
+        };
+    }
+
+    if (/(yonca|silaj|ot|yem|fig|korunga)/.test(cropName) || cropType === 'yem') {
+        return {
+            key: 'tarla',
+            title: 'Yem ve ot yonetimi paketi',
+            tractorTypeLabel: 'Orta HP tarla traktoru',
+            equipment: ['cayir bicme', 'tirnakli tirmik', 'balya makinesi', 'yem romorku', 'diskaro'],
+            note: 'Balya, tasima ve PTO verimi ayni anda güçlü olmali.'
+        };
+    }
+
+    if (/(pamuk|sekerpancari|seker pancari|aycicegi|aycicek|misir|kanola|kolza|tutun|endustri)/.test(cropName) || cropType === 'endustriyel') {
+        return {
+            key: 'tarla',
+            title: 'Endustriyel ürün saha paketi',
+            tractorTypeLabel: '4WD destekli tarla traktoru',
+            equipment: ['hassas ekim makinesi', 'sıra arası kültivatör', 'güç yuklu pulluk', 'geniş boom sprayer', 'taşıma römorku'],
+            note: 'Çekiş, sıra hassasiyeti ve yüksek sezon temposu belirleyicidir.'
+        };
+    }
+
+    return {
+        key: 'tarla',
+        title: 'Tahil ve açık tarla paketi',
+        tractorTypeLabel: 'Universal tarla traktoru',
+        equipment: ['pulluk', 'kultivator', 'hububat mibzeri', 'gubre serpme', 'tarla ilaclama'],
+        note: 'Alan verimliligi, düşük birim maliyet ve gun boyu ritim esastir.'
+    };
+}
+
+function getCropEquipmentBundle(crop = {}, soilItem = {}, climateSummary = {}) {
+    const archetype = inferProvinceCropArchetype(crop);
+    const hpWindow = parseProvinceHpWindow(
+        crop.requires_hp_min != null || crop.requires_hp_max != null
+            ? `${crop.requires_hp_min || crop.requires_hp_max || '-'}-${crop.requires_hp_max || crop.requires_hp_min || '-'} HP`
+            : soilItem?.recommended_hp_range || ''
+    );
+    const driveLabel = describeProvinceDrive(
+        soilItem?.recommended_drive_type ||
+        (((climateSummary.annualRain || 0) >= 560 || (climateSummary.wettestMonth?.rainfall || 0) >= 70) ? '4WD' : '')
+    );
+    const suitableTypes = Array.isArray(crop.suitable_tractor_types) && crop.suitable_tractor_types.length
+        ? crop.suitable_tractor_types.map(item => translateLabel(item)).join(' / ')
+        : archetype.tractorTypeLabel;
+
+    return {
+        ...archetype,
+        hpWindow,
+        driveLabel,
+        tractorTypeLabel: localizeAgronomyDisplayText(suitableTypes || archetype.tractorTypeLabel),
+        equipmentSummary: localizeAgronomyDisplayText(archetype.equipment.slice(0, 4).join(' + ')),
+        climateNote: climateSummary.droughtMonth?.label
+            ? `${climateSummary.droughtMonth.label} kuraklık baskısı ve ${climateSummary.wettestMonth?.label || '-'} yağış penceresi planlamayi etkiler.`
+            : archetype.note
+    };
+}
+
+function getProvinceSoilStressNote(soilItem = {}, climateSummary = {}, forecastSummary = {}) {
+    const texture = normalizeWeatherKey(soilItem.soil_texture || soilItem.soil_type || '');
+
+    if (/(kil|agir|clay)/.test(texture) && ((forecastSummary.rainTotal || 0) >= 20 || (climateSummary.wettestMonth?.rainfall || 0) >= 65)) {
+        return 'Agir dokuda yağış geldikce sikisma ve patinaj riski yukselir; 4WD ve doğru lastik basinci onceliklidir.';
+    }
+
+    if (/(kum|sandy)/.test(texture) && ((climateSummary.annualRain || 0) <= 450 || (climateSummary.droughtMonth?.droughtIndex || 0) > 0)) {
+        return 'Kumlu zeminde kuraklikla birlikte çekiş kaybi ve draft verimsizligi artabilir; hafif ve ekonomik setup daha doğru olur.';
+    }
+
+    if (/(tin|loam|milli)/.test(texture)) {
+        return 'Dengeli dokuda cok amacli ekipman kullanimi ve universal HP bandi daha kolay isler.';
+    }
+
+    return soilItem?.notes || 'Toprak yapısı, ürün deseniyle birlikte okundugunda çekiş ve ekipman secimini belirginleştirir.';
+}
+
+function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = {}, climateSummary = {}, forecastSummary = {}, overview = {}, cabinMix = []) {
+    const dominantCrop = cropRows?.[0] || {};
+    const secondaryCrop = cropRows?.[1] || {};
+    const dominantSoil = soilRows?.[0] || {};
+    const dominantBundle = getCropEquipmentBundle(dominantCrop, dominantSoil, climateSummary);
+    const dominantWindow = parseProvinceHpWindow(overview?.dominant_hp || dominantSoil?.recommended_hp_range || '');
+    const cropWindow = parseProvinceHpWindow(
+        dominantCrop.requires_hp_min != null || dominantCrop.requires_hp_max != null
+            ? `${dominantCrop.requires_hp_min || dominantCrop.requires_hp_max || '-'}-${dominantCrop.requires_hp_max || dominantCrop.requires_hp_min || '-'} HP`
+            : ''
+    );
+    const secondaryWindow = parseProvinceHpWindow(
+        secondaryCrop.requires_hp_min != null || secondaryCrop.requires_hp_max != null
+            ? `${secondaryCrop.requires_hp_min || secondaryCrop.requires_hp_max || '-'}-${secondaryCrop.requires_hp_max || secondaryCrop.requires_hp_min || '-'} HP`
+            : ''
+    );
+    const avgHp = Number(model.avg_hp || 0);
+    const drive = describeProvinceDrive(model.drive_type || '');
+    const modelCategory = normalizeProvinceMachineKey(model.category_hint || '');
+    const cabinLabel = normalizeWeatherKey((cabinMix?.[0]?.label || '') + ' ' + (model.protection || ''));
+
+    let score = 34 + Math.min(18, Math.log2((Number(model.total_sales || 0) + 1)) * 5.5);
+    const reasons = [];
+
+    if (avgHp && cropWindow.min != null) {
+        if (avgHp >= cropWindow.min && avgHp <= cropWindow.max) {
+            score += 17;
+            reasons.push(`${dominantCrop.crop_name || 'Ana ürün'} için beklenen HP koridoruna doğrudan oturuyor.`);
+        } else if (cropWindow.mid != null && Math.abs(avgHp - cropWindow.mid) <= 12) {
+            score += 9;
+            reasons.push(`${dominantCrop.crop_name || 'Ana ürün'} için yakin HP bandinda konumlaniyor.`);
+        }
+    }
+
+    if (avgHp && dominantWindow.min != null) {
+        if (avgHp >= dominantWindow.min && avgHp <= dominantWindow.max) {
+            score += 12;
+            reasons.push(`İlin baskin güç mimarisi olan ${dominantWindow.label} bandini destekliyor.`);
+        } else if (dominantWindow.mid != null && Math.abs(avgHp - dominantWindow.mid) <= 10) {
+            score += 6;
+            reasons.push('İlin tercih ettigi HP eksenine yakin duruyor.');
+        }
+    }
+
+    if (secondaryCrop.crop_name && avgHp && secondaryWindow.min != null && avgHp >= secondaryWindow.min && avgHp <= secondaryWindow.max) {
+        score += 5;
+        reasons.push(`${secondaryCrop.crop_name} için de ikinci bir kullanim koridoru aciyor.`);
+    }
+
+    if (dominantBundle.key === 'bahce') {
+        if (modelCategory === 'bahce' || avgHp <= 80) {
+            score += 11;
+            reasons.push('Bahce karakterli ürün desenine manevra ve boyut olarak daha yakin.');
+        } else {
+            score -= 4;
+        }
+    } else if (dominantBundle.key === 'hibrit') {
+        if (modelCategory === 'hibrit' || (avgHp >= 50 && avgHp <= 95)) {
+            score += 8;
+            reasons.push('Karma saha gorevleri için esnek bir platform sunuyor.');
+        }
+    } else if (modelCategory !== 'bahce') {
+        score += 10;
+        reasons.push('Tarla operasyonlarinda draft ve ekipman tasima kapasitesi yeterli.');
+    }
+
+    const soilDrive = describeProvinceDrive(dominantSoil?.recommended_drive_type || '');
+    const needs4wd = soilDrive === '4WD' || (climateSummary.annualRain || 0) >= 560 || Number(prov?.elevation_m || 0) >= 900;
+    if (needs4wd && drive === '4WD') {
+        score += 11;
+        reasons.push('Çekiş mimarisi il topragi ve yağış rejimiyle uyumlu.');
+    } else if (!needs4wd && drive === '2WD') {
+        score += 6;
+        reasons.push('Gereksiz agirlik yaratmadan ekonomik çekiş sunuyor.');
+    } else if (needs4wd && drive !== '4WD') {
+        score -= 3;
+    }
+
+    if ((forecastSummary.rainyDays || 0) >= 2 || (climateSummary.warmingSignal || 0) >= 0.8) {
+        if (cabinLabel.includes('kabin') || cabinLabel.includes('cab')) {
+            score += 4;
+            reasons.push('Operator konforu ve iklim korumasi bu il temposunda arti yaziyor.');
+        }
+    }
+
+    const fitScore = Math.max(42, Math.min(98, Math.round(score)));
+    return {
+        ...model,
+        fit_score: fitScore,
+        fit_label: fitScore >= 86 ? 'Yüksek uyum' : fitScore >= 75 ? 'Guclu aday' : fitScore >= 63 ? 'Takip edilmeli' : 'Nis uyum',
+        fit_tone: fitScore >= 86 ? 'is-up' : fitScore >= 75 ? 'is-opportunity' : fitScore >= 63 ? 'is-warning' : 'is-neutral',
+        drive_label: drive,
+        fit_reasons: reasons.slice(0, 4).map(localizeAgronomyDisplayText)
+    };
+}
+
+function buildProvinceExecutiveMemo({ dossier, climateSummary, forecastSummary, rankedModels, cropRows, soilRows, focusProvinceSales }) {
+    const prov = dossier?.province || {};
+    const overview = dossier?.overview || {};
+    const dominantCrop = cropRows?.[0] || {};
+    const dominantSoil = soilRows?.[0] || {};
+    const dominantBundle = getCropEquipmentBundle(dominantCrop, dominantSoil, climateSummary);
+    const climateSignal = getProvinceClimateSignal(climateSummary, forecastSummary, prov);
+    const topModel = rankedModels?.[0] || null;
+    const focusBrand = dossier?.focus_brand || null;
+
+    const focusNote = focusBrand
+        ? `${focusBrand.brand_name} il içinde ${fmtPct(focusBrand.share_pct || 0, 1)} pay ve ${focusBrand.rank}. sıra ile izleniyor.`
+        : `${overview.top_brand_name || 'Lider marka'} ${fmtPct(overview.top_brand_share_pct || 0, 1)} payla lider durumda.`;
+
+    const headline = `${prov?.name || 'İl'} için toprak tipi, ürün deseni, iklim hafızası ve sahada tercih edilen traktörler aynı karar katmanında toplandı. ${focusProvinceSales?.total_sales ? `${selectedYear} hacmi ${fmtNum(focusProvinceSales.total_sales)} adet olarak okunuyor.` : `${selectedYear} yılına ait il hacmi ${fmtNum(overview.market_total_sales || 0)} adet.`}`;
+
+    const points = [
+        dominantCrop.crop_name
+            ? `${dominantCrop.crop_name} ${fmtNum(dominantCrop.cultivation_area_hectare || 0)} ha alanla il deseni için ana sürücü. Paket: ${dominantBundle.tractorTypeLabel}, ${dominantBundle.hpWindow.label}.`
+            : 'Ürün deseni verisi sınırlı olsa da il tercihleri toprak ve iklim katmanlarıyla okunuyor.',
+        dominantSoil.soil_type
+            ? `${dominantSoil.soil_type} / ${dominantSoil.soil_texture || '-'} zemini için ${dominantSoil.recommended_hp_range || dominantBundle.hpWindow.label} ve ${describeProvinceDrive(dominantSoil.recommended_drive_type || dominantBundle.driveLabel)} çekiş mimarisi öne çıkıyor.`
+            : 'Toprak kaydı geldikçe çekiş ve ekipman seti daha da netleşecek.',
+        topModel
+            ? `${topModel.brand_name} ${topModel.model_name} ${topModel.fit_score}/100 uyum skoru ile ildeki tarımsal desene en yakın paketlerden biri olarak ayrışıyor.`
+            : 'Model tercih kaydı geldikçe il özelindeki traktör seti daha da güçlenecek.',
+        forecastSummary.future?.length
+            ? `Kısa vade saha notu: ${forecastSummary.windowNote}`
+            : `Uzun dönem iklim hafızası ${fmtNum(Math.round(climateSummary.annualRain || 0))} mm yağış ve ${climateSummary.warmingSignal != null ? formatSignedPct(climateSummary.warmingSignal, 1) + ' ısınma sinyali' : 'sınırlı sıcaklık trendi'} üzerinden okunuyor.`,
+        focusNote,
+        climateSignal.note
+    ];
+
+    return {
+        stance: climateSignal,
+        headline: localizeAgronomyDisplayText(headline),
+        points: points.map(item => localizeAgronomyDisplayText(item))
+    };
+}
+
+function buildProvinceActionCards({ dossier, climateSummary, forecastSummary, rankedModels, cropRows, soilRows }) {
+    const prov = dossier?.province || {};
+    const dominantCrop = cropRows?.[0] || {};
+    const secondaryCrop = cropRows?.[1] || {};
+    const dominantSoil = soilRows?.[0] || {};
+    const dominantBundle = getCropEquipmentBundle(dominantCrop, dominantSoil, climateSummary);
+    const topModel = rankedModels?.[0] || null;
+    const topBrand = dossier?.top_brands?.[0] || null;
+    const focusBrand = dossier?.focus_brand || null;
+    const commercialTone = focusBrand
+        ? ((focusBrand.share_pct || 0) >= 18 ? 'is-up' : 'is-opportunity')
+        : ((topBrand?.share_pct || 0) >= 22 ? 'is-warning' : 'is-neutral');
+
+    return [
+        {
+            tone: 'is-warning',
+            eyebrow: 'Toprak & çekiş',
+            title: dominantSoil.soil_type || 'Makine seti',
+            value: dominantSoil.recommended_hp_range || dominantBundle.hpWindow.label,
+            note: getProvinceSoilStressNote(dominantSoil, climateSummary, forecastSummary)
+        },
+        {
+            tone: 'is-up',
+            eyebrow: 'Ürün & ekipman',
+            title: dominantCrop.crop_name || 'Ürün matrisi',
+            value: dominantBundle.equipmentSummary || dominantBundle.tractorTypeLabel,
+            note: secondaryCrop.crop_name
+                ? `${dominantCrop.crop_name || 'Ana ürün'} ile ${secondaryCrop.crop_name} birlikte ilde iki farklı ekipman ritmi yaratıyor.`
+                : dominantBundle.note
+        },
+        {
+            tone: topModel?.fit_tone || 'is-analysis',
+            eyebrow: 'Tercih edilen traktör',
+            title: topModel ? `${topModel.brand_name} ${topModel.model_name}` : 'Model stack',
+            value: topModel?.avg_hp ? `${Number(topModel.avg_hp).toFixed(0)} HP / ${topModel.drive_label}` : dominantBundle.tractorTypeLabel,
+            note: topModel?.fit_reasons?.[0] || `${prov?.name || 'İl'} için uygun traktörü sadece satışla değil, toprak ve ürünle birlikte değerlendiriyoruz.`
+        },
+        {
+            tone: commercialTone,
+            eyebrow: 'Ticari aksiyon',
+            title: focusBrand ? `${focusBrand.brand_name} il pozisyonu` : `${topBrand?.brand_name || 'Lider marka'} baskısı`,
+            value: focusBrand
+                ? `${fmtPct(focusBrand.share_pct || 0, 1)} pay / ${focusBrand.rank}. sıra`
+                : `${fmtPct(topBrand?.share_pct || 0, 1)} lider pay`,
+            note: focusBrand
+                ? ((focusBrand.share_pct || 0) >= 18
+                    ? 'Marka ilde savunma ve derinleştirme fazında; ekipman paketiyle ciro kalınlaştırılabilir.'
+                    : 'Marka için açık alan var; ana ürün paketi etrafında demo, finansman ve ekipman bundling önerilir.')
+                : 'İl rekabeti en güçlü oyuncunun etrafında şekilleniyor; parçalanma noktalarını ürün bazında okumak gerekir.'
+        }
+    ].map(item => ({
+        ...item,
+        eyebrow: localizeAgronomyDisplayText(item.eyebrow),
+        title: localizeAgronomyDisplayText(item.title),
+        value: localizeAgronomyDisplayText(item.value),
+        note: localizeAgronomyDisplayText(item.note)
+    }));
+}
+
+function buildProvinceSoilMachineRows(soilRows = [], cropRows = [], climateSummary = {}, forecastSummary = {}) {
+    return (soilRows || []).slice(0, 6).map((soilItem, index) => {
+        const matchedCrops = Array.isArray(soilItem.suitable_crops) && soilItem.suitable_crops.length
+            ? (cropRows || []).filter(crop =>
+                soilItem.suitable_crops.some(item => normalizeWeatherKey(item).includes(normalizeWeatherKey(crop.crop_name || '')) || normalizeWeatherKey(crop.crop_name || '').includes(normalizeWeatherKey(item)))
+            )
+            : [];
+        const leadCrop = matchedCrops[0] || cropRows[index] || cropRows[0] || {};
+        const bundle = getCropEquipmentBundle(leadCrop, soilItem, climateSummary);
+
+        return {
+            soil_type: localizeAgronomyDisplayText(soilItem.soil_type || '-'),
+            soil_texture: localizeAgronomyDisplayText(soilItem.soil_texture || '-'),
+            crop_names: localizeAgronomyDisplayText(matchedCrops.length
+                ? matchedCrops.slice(0, 3).map(item => item.crop_name).join(' / ')
+                : (Array.isArray(soilItem.suitable_crops) && soilItem.suitable_crops.length
+                    ? soilItem.suitable_crops.slice(0, 3).join(' / ')
+                    : (leadCrop.crop_name || '-'))),
+            drive_label: describeProvinceDrive(soilItem.recommended_drive_type || bundle.driveLabel),
+            hp_window: soilItem.recommended_hp_range || bundle.hpWindow.label,
+            equipment_summary: bundle.equipmentSummary || '-',
+            operation_note: getProvinceSoilStressNote(soilItem, climateSummary, forecastSummary)
+        };
+    });
+}
+
+function buildProvinceCropOperationRows(cropRows = [], soilRows = [], climateSummary = {}) {
+    return (cropRows || []).slice(0, 8).map(crop => {
+        const soilMatch = (soilRows || []).find(item =>
+            Array.isArray(item.suitable_crops) &&
+            item.suitable_crops.some(name => normalizeWeatherKey(name).includes(normalizeWeatherKey(crop.crop_name || '')) || normalizeWeatherKey(crop.crop_name || '').includes(normalizeWeatherKey(name)))
+        ) || soilRows?.[0] || {};
+        const bundle = getCropEquipmentBundle(crop, soilMatch, climateSummary);
+
+        return {
+            crop_name: localizeAgronomyDisplayText(crop.crop_name || '-'),
+            crop_type: localizeAgronomyDisplayText(crop.crop_type || '-'),
+            area: Number(crop.cultivation_area_hectare || 0),
+            production: Number(crop.annual_production_tons || 0),
+            season_label: localizeAgronomyDisplayText([crop.planting_season, crop.harvest_season].filter(Boolean).join(' / ') || '-'),
+            hp_window: bundle.hpWindow.label,
+            hp_mid: bundle.hpWindow.mid,
+            tractor_label: bundle.tractorTypeLabel,
+            drive_label: bundle.driveLabel,
+            equipment_summary: bundle.equipmentSummary,
+            climate_note: bundle.climateNote,
+            soil_label: localizeAgronomyDisplayText(soilMatch.soil_type || '-')
+        };
+    });
+}
+
+function renderProvinceIntelligenceCharts({ dossier, climateSummary, cropOperationRows, rankedModels }) {
+    ['provinceBrandChart', 'provinceHpChart', 'provinceCropChart', 'provinceClimateChart'].forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy?.();
+            delete charts[key];
+        }
+    });
+
+    const brandEl = document.getElementById('pdxBrandChart');
+    if (brandEl && dossier?.top_brands?.length) {
+        const rows = dossier.top_brands.slice(0, 8).reverse();
+        const options = chartOptions('Adet');
+        charts.provinceBrandChart = new Chart(brandEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => item.brand_name || '-'),
+                datasets: [{
+                    label: 'Tescil',
+                    data: rows.map(item => Number(item.total_sales || 0)),
+                    backgroundColor: rows.map(item => item.primary_color || 'rgba(var(--brand-primary-rgb), 0.72)'),
+                    borderRadius: 10,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                ...options,
+                indexAxis: 'y',
+                plugins: {
+                    ...options.plugins,
+                    legend: { display: false },
+                    tooltip: {
+                        ...options.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => {
+                                const source = rows[ctx.dataIndex];
+                                return `${ctx.label}: ${fmtNum(ctx.raw)} adet / ${fmtPct(source?.share_pct || 0, 1)}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const hpEl = document.getElementById('pdxHpChart');
+    if (hpEl && dossier?.hp_mix?.length) {
+        const rows = dossier.hp_mix.slice(0, 8);
+        const options = chartOptions('Adet');
+        charts.provinceHpChart = new Chart(hpEl, {
+            type: 'bar',
+            data: {
+                labels: rows.map(item => translateLabel(item.hp_range || '-')),
+                datasets: [{
+                    label: 'HP segment satisi',
+                    data: rows.map(item => Number(item.total_sales || 0)),
+                    backgroundColor: rows.map((_, index) => index % 2 === 0 ? 'rgba(var(--brand-primary-rgb), 0.78)' : 'rgba(56, 189, 248, 0.62)'),
+                    borderRadius: 12,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                ...options,
+                plugins: {
+                    ...options.plugins,
+                    legend: { display: false },
+                    tooltip: {
+                        ...options.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => {
+                                const source = rows[ctx.dataIndex];
+                                return `${ctx.label}: ${fmtNum(ctx.raw)} adet / ${fmtPct(source?.share_pct || 0, 1)}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const cropEl = document.getElementById('pdxCropChart');
+    if (cropEl && cropOperationRows.length) {
+        const rows = cropOperationRows.slice(0, 6);
+        const options = chartOptions('HP / ha');
+        charts.provinceCropChart = new Chart(cropEl, {
+            data: {
+                labels: rows.map(item => item.crop_name || '-'),
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Ekili alan',
+                        data: rows.map(item => Number(item.area || 0)),
+                        backgroundColor: 'rgba(34, 197, 94, 0.6)',
+                        borderRadius: 10,
+                        borderSkipped: false,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'HP merkezi',
+                        data: rows.map(item => item.hp_mid != null ? Number(item.hp_mid) : null),
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                        tension: 0.3,
+                        borderWidth: 3,
+                        pointRadius: 3
+                    }
+                ]
+            },
+            options: {
+                ...options,
+                scales: {
+                    ...options.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#4ade80', callback: value => `${fmtNum(value)} ha` },
+                        title: { display: true, text: 'Ekili alan', color: '#4ade80' }
+                    }
+                },
+                plugins: {
+                    ...options.plugins,
+                    tooltip: {
+                        ...options.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => ctx.dataset.yAxisID === 'y1'
+                                ? `${ctx.dataset.label}: ${fmtNum(ctx.raw)} ha`
+                                : `${ctx.dataset.label}: ${Number(ctx.raw || 0).toFixed(0)} HP`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const climateEl = document.getElementById('pdxClimateChart');
+    const monthlyRows = (climateSummary?.monthlyProfile || []).filter(item =>
+        item.avgTemp != null || item.rainfall != null || item.droughtIndex != null || item.frostDays != null
+    );
+    if (climateEl && monthlyRows.length) {
+        const options = chartOptions('mm / endeks');
+        charts.provinceClimateChart = new Chart(climateEl, {
+            data: {
+                labels: monthlyRows.map(item => item.label),
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Yağış',
+                        data: monthlyRows.map(item => Number(item.rainfall || 0)),
+                        backgroundColor: 'rgba(56, 189, 248, 0.55)',
+                        borderRadius: 10,
+                        borderSkipped: false,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: 'Kuraklık endeksi',
+                        data: monthlyRows.map(item => Number(item.droughtIndex || 0)),
+                        borderColor: '#f97316',
+                        backgroundColor: 'transparent',
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 2
+                    },
+                    {
+                        type: 'line',
+                        label: 'Don gunu',
+                        data: monthlyRows.map(item => Number(item.frostDays || 0)),
+                        borderColor: '#a855f7',
+                        backgroundColor: 'transparent',
+                        tension: 0.28,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        yAxisID: 'y2'
+                    }
+                ]
+            },
+            options: {
+                ...options,
+                scales: {
+                    ...options.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#38bdf8', callback: value => `${fmtNum(value)} mm` },
+                        title: { display: true, text: 'Yağış', color: '#38bdf8' }
+                    },
+                    y2: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#a855f7', callback: value => `${value} gun` },
+                        title: { display: true, text: 'Don', color: '#a855f7' }
+                    }
+                }
+            }
+        });
+    }
+}
+
+async function renderProvinceIntelligenceCenter(provinceId, provinceSales = []) {
+    const focusBrandId = getProvinceIntelligenceBrandId();
+    const [dossier, climate, recentWeather, forecast] = await Promise.all([
+        API.getProvinceIntelligence(provinceId, selectedYear, focusBrandId || ''),
+        API.getClimate(provinceId).catch(() => []),
+        API.getWeather(provinceId).catch(() => []),
+        API.getWeatherForecast(provinceId).catch(() => [])
+    ]);
+
+    const prov = dossier?.province || allProvinces.find(item => String(item.id) === String(provinceId)) || {};
+    const referenceClimateRows = Array.isArray(dossier?.reference_profile?.climate_rows) ? dossier.reference_profile.climate_rows : [];
+    const climateRows = Array.isArray(climate) && climate.length ? climate : referenceClimateRows;
+    const climateSummary = buildWeatherClimateSummary(climateRows, prov);
+    const forecastSummary = buildWeatherForecastSummary(forecast || [], recentWeather || []);
+    const cropRows = Array.isArray(dossier?.crops) ? dossier.crops : [];
+    const soilRows = Array.isArray(dossier?.soil) ? dossier.soil : [];
+    const cropOperationRows = buildProvinceCropOperationRows(cropRows, soilRows, climateSummary);
+    const soilMachineRows = buildProvinceSoilMachineRows(soilRows, cropRows, climateSummary, forecastSummary);
+    const rankedModels = (dossier?.top_models || [])
+        .map(model => scoreProvinceModelFit(
+            model,
+            cropRows,
+            soilRows,
+            prov,
+            climateSummary,
+            forecastSummary,
+            dossier?.overview || {},
+            dossier?.cabin_mix || []
+        ))
+        .sort((left, right) => right.fit_score - left.fit_score || right.total_sales - left.total_sales)
+        .slice(0, 8);
+    const climateActionRows = buildWeatherActionRows(climateSummary.monthlyProfile || []);
+    const focusProvinceSales = (provinceSales || []).find(item => String(item.province_id) === String(provinceId)) || null;
+    const provinceMemo = buildProvinceExecutiveMemo({
+        dossier,
+        climateSummary,
+        forecastSummary,
+        rankedModels,
+        cropRows,
+        soilRows,
+        focusProvinceSales
+    });
+    const actionCards = buildProvinceActionCards({
+        dossier,
+        climateSummary,
+        forecastSummary,
+        rankedModels,
+        cropRows,
+        soilRows
+    });
+
+    const focusBrand = dossier?.focus_brand || null;
+    const stageBrand = findBrandById(focusBrand?.brand_id || focusBrandId) || activeBrandContext || currentUser?.brand || {};
+    const stageHtml = buildBrandStageHtml(stageBrand, {
+        title: `${prov?.name || 'İl'} için agro intelligence sahnesi`,
+        summary: localizeAgronomyDisplayText(provinceMemo.headline),
+        compareCopy: focusBrand
+            ? localizeAgronomyDisplayText(`${focusBrand.brand_name} kendi il oyununu rakipler ve sektör ortalamasıyla aynı karede okuyabilir.`)
+            : localizeAgronomyDisplayText(`${prov?.name || 'İl'} ilinde marka yoğunluğu, ürün deseni ve mekanizasyon tercihi aynı vitrine getirildi.`),
+        chips: [
+            localizeAgronomyDisplayText(prov?.region || ''),
+            localizeAgronomyDisplayText(prov?.climate_zone || ''),
+            localizeAgronomyDisplayText(cropRows?.[0]?.crop_name || ''),
+            localizeAgronomyDisplayText(soilRows?.[0]?.soil_type || '')
+        ]
+    });
+
+    const provinceOptionsHtml = (allProvinces || []).map(item => `
+        <option value="${item.id}" ${String(item.id) === String(provinceId) ? 'selected' : ''}>${dashboardSafe(item.name)} (${dashboardSafe(item.plate_code)})</option>
+    `).join('');
+
+    const quickProvinceHtml = (provinceSales || [])
+        .filter(item => item.province_id)
+        .slice(0, 8)
+        .map(item => `
+            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadProvinceDetail('${item.province_id}')">
+                <strong>${dashboardSafe(item.province_name || '-')}</strong>
+                <small>${focusBrandId ? `${fmtNum(item.total_sales || 0)} adet / ${fmtPct(item.share_pct || 0, 1)} pay` : `${fmtNum(item.total_sales || 0)} adet toplam`}</small>
+            </button>
+        `).join('');
+
+    const chipRows = [
+        { label: 'Bölge', value: prov?.region || '-' },
+        { label: 'İklim', value: prov?.climate_zone || '-' },
+        { label: 'Tarım alanı', value: prov?.agricultural_area_hectare ? `${fmtNum(Math.round(prov.agricultural_area_hectare))} ha` : '-' },
+        { label: 'Rakım', value: prov?.elevation_m ? `${fmtNum(Math.round(prov.elevation_m))} m` : '-' },
+        { label: 'Yıllık yağış', value: climateSummary.annualRain ? `${fmtNum(Math.round(climateSummary.annualRain))} mm` : (prov?.annual_rainfall_mm ? `${fmtNum(Math.round(prov.annual_rainfall_mm))} mm` : '-') },
+        { label: 'Profil', value: dossier?.reference_profile?.is_reference_active ? `${dossier?.reference_profile?.label || 'Referans profil'} + tescil sinyali` : 'Gerçek il verisi' },
+        { label: 'Veri yılı', value: dossier?.period?.crop_year ? `${selectedYear} / ürün yılı ${dossier.period.crop_year}` : String(selectedYear) }
+    ];
+
+    const climateSignal = getProvinceClimateSignal(climateSummary, forecastSummary, prov);
+    const dominantCrop = cropRows?.[0] || {};
+    const dominantSoil = soilRows?.[0] || {};
+    const kpiCards = [
+        {
+            label: 'İl traktör hacmi',
+            value: `${fmtNum(dossier?.overview?.market_total_sales || 0)} adet`,
+            note: dossier?.overview?.yoy_pct != null ? `${formatSignedPct(dossier.overview.yoy_pct, 1)} yıllık değişim` : `${selectedYear} il toplamı`,
+            tone: dossier?.overview?.yoy_pct > 0 ? 'is-up' : dossier?.overview?.yoy_pct < 0 ? 'is-down' : 'is-neutral'
+        },
+        {
+            label: focusBrand ? `${focusBrand.brand_name} pozisyonu` : 'Lider marka',
+            value: focusBrand
+                ? `${fmtPct(focusBrand.share_pct || 0, 1)} / ${focusBrand.rank}. sıra`
+                : `${dossier?.overview?.top_brand_name || '-'} / ${fmtPct(dossier?.overview?.top_brand_share_pct || 0, 1)}`,
+            note: focusBrand ? `${fmtNum(focusBrand.total_sales || 0)} adet` : `${dossier?.overview?.active_brand_count || 0} aktif marka`,
+            tone: focusBrand ? ((focusBrand.share_pct || 0) >= 18 ? 'is-up' : 'is-opportunity') : 'is-analysis'
+        },
+        {
+            label: 'Dominant HP bandı',
+            value: dossier?.overview?.dominant_hp || '-',
+            note: 'İlin fiili tercihi',
+            tone: 'is-analysis'
+        },
+        {
+            label: 'Ağırlıklı ort. HP',
+            value: dossier?.overview?.weighted_avg_hp != null ? `${Number(dossier.overview.weighted_avg_hp).toFixed(1)} HP` : '-',
+            note: 'Tercih edilen model karması',
+            tone: 'is-neutral'
+        },
+        {
+            label: 'Ağırlıklı fiyat',
+            value: fmtPrice(dossier?.overview?.weighted_avg_price_usd || 0),
+            note: 'İlin ortalama fiyat seviyesi',
+            tone: 'is-opportunity'
+        },
+        {
+            label: 'Ana ürün',
+            value: dominantCrop.crop_name || '-',
+            note: dominantCrop.cultivation_area_hectare ? `${fmtNum(dominantCrop.cultivation_area_hectare)} ha / ${dominantCrop.requires_hp_min || '-'}-${dominantCrop.requires_hp_max || '-'} HP` : 'Ürün deseni izleniyor',
+            tone: 'is-up'
+        },
+        {
+            label: 'Toprak & çekiş',
+            value: dominantSoil.soil_type || '-',
+            note: dominantSoil.recommended_drive_type ? `${describeProvinceDrive(dominantSoil.recommended_drive_type)} / ${dominantSoil.recommended_hp_range || '-'}` : (dominantSoil.recommended_tractor_type || 'Setup sinyali bekleniyor'),
+            tone: 'is-warning'
+        },
+        {
+            label: 'İklim sinyali',
+            value: climateSignal.label,
+            note: climateSignal.note,
+            tone: climateSignal.tone
+        }
+    ];
+
+    const memoPointsHtml = provinceMemo.points.map(item => `<li>${agronomySafe(item)}</li>`).join('');
+    const chipHtml = chipRows.map(item => `
+        <div class="pdx-chip">
+            <strong>${agronomySafe(item.value)}</strong>
+            <small>${agronomySafe(item.label)}</small>
+        </div>
+    `).join('');
+    const kpiHtml = kpiCards.map(item => `
+        <article class="pdx-kpi ${dashboardSafe(item.tone)}">
+            <span>${agronomySafe(item.label)}</span>
+            <strong>${agronomySafe(item.value)}</strong>
+            <small>${agronomySafe(item.note)}</small>
+        </article>
+    `).join('');
+    const actionCardsHtml = actionCards.map(item => `
+        <article class="pdx-action-card ${dashboardSafe(item.tone)}">
+            <span>${agronomySafe(item.eyebrow)}</span>
+            <h3>${agronomySafe(item.title)}</h3>
+            <strong>${agronomySafe(item.value)}</strong>
+            <p>${agronomySafe(item.note)}</p>
+        </article>
+    `).join('');
+    const modelCardsHtml = rankedModels.length > 0 ? rankedModels.map((item, index) => `
+        <article class="pdx-model-card ${dashboardSafe(item.fit_tone)}">
+            <div class="pdx-model-top">
+                <div>
+                    <span>${agronomySafe(item.brand_name || '-')}</span>
+                    <h3>${agronomySafe(item.model_name || item.tuik_model_adi || '-')}</h3>
+                </div>
+                <div class="pdx-fit-pill">${agronomySafe(item.fit_label)}</div>
+            </div>
+            <div class="pdx-fit-bar"><span class="pdx-fit-fill" data-fit="${Math.max(0, Math.min(100, Number(item.fit_score || 0)))}"></span></div>
+            <div class="pdx-model-metrics">
+                <div class="pdx-model-metric"><span>Fit</span><strong>${dashboardSafe(item.fit_score || '-')}</strong></div>
+                <div class="pdx-model-metric"><span>HP</span><strong>${item.avg_hp != null ? `${Number(item.avg_hp).toFixed(0)} HP` : '-'}</strong></div>
+                <div class="pdx-model-metric"><span>Çekiş</span><strong>${agronomySafe(item.drive_label || '-')}</strong></div>
+                <div class="pdx-model-metric"><span>Satış</span><strong>${fmtNum(item.total_sales || 0)}</strong></div>
+            </div>
+            <ul class="pdx-bullet-list">${(item.fit_reasons || []).map(reason => `<li>${agronomySafe(reason)}</li>`).join('')}</ul>
+            <div class="pdx-model-foot">
+                <span>#${index + 1}</span>
+                <small>${item.avg_price_usd ? `Fiyat ekseni ${fmtPrice(item.avg_price_usd)}` : 'Fiyat verisi sınırlı'}</small>
+            </div>
+        </article>
+    `).join('') : '<div class="pdx-empty">Bu il için model eşleşme verisi bulunamadı.</div>';
+
+    const soilRowsHtml = soilMachineRows.length > 0 ? soilMachineRows.map(item => `
+        <tr>
+            <td><strong>${agronomySafe(item.soil_type)}</strong></td>
+            <td>${agronomySafe(item.soil_texture)}</td>
+            <td>${agronomySafe(item.crop_names)}</td>
+            <td>${agronomySafe(item.drive_label)}</td>
+            <td>${agronomySafe(item.hp_window)}</td>
+            <td>${agronomySafe(item.equipment_summary)}</td>
+            <td>${agronomySafe(item.operation_note)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="7" class="pdx-table-empty">Toprak-makine matrisi için veri bulunamadı.</td></tr>';
+
+    const cropRowsHtml = cropOperationRows.length > 0 ? cropOperationRows.map(item => `
+        <tr>
+            <td><strong>${agronomySafe(item.crop_name)}</strong></td>
+            <td>${agronomySafe(item.crop_type)}</td>
+            <td>${fmtNum(item.area)}</td>
+            <td>${fmtNum(item.production)}</td>
+            <td>${agronomySafe(item.hp_window)}</td>
+            <td>${agronomySafe(item.tractor_label)}</td>
+            <td>${agronomySafe(item.equipment_summary)}</td>
+            <td>${agronomySafe(item.climate_note)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="8" class="pdx-table-empty">Ürün-ekipman matrisi için veri bulunamadı.</td></tr>';
+
+    const climateRowsHtml = climateActionRows.length > 0 ? climateActionRows.map(item => `
+        <tr>
+            <td><strong>${agronomySafe(item.label)}</strong></td>
+            <td>${item.avgTemp != null ? Number(item.avgTemp).toFixed(1) : '-'}</td>
+            <td>${item.rainfall != null ? fmtNum(Math.round(item.rainfall)) : '-'}</td>
+            <td>${item.humidity != null ? `${Number(item.humidity).toFixed(0)}%` : '-'}</td>
+            <td>${item.frostDays != null ? Number(item.frostDays).toFixed(1) : '-'}</td>
+            <td>${item.droughtIndex != null ? Number(item.droughtIndex).toFixed(1) : '-'}</td>
+            <td class="${dashboardSafe(item.tone)}">${agronomySafe(item.action)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="7" class="pdx-table-empty">İklim aksiyon matrisi için veri bulunamadı.</td></tr>';
+
+    document.getElementById('pageContent').innerHTML = `
+        <div class="pdx-shell">
+            <section class="pdx-hero pdx-hero-compact">
+                <div class="pdx-hero-copy">
+                    <h2>${agronomySafe(prov?.name || 'İl')} – İl Analizi</h2>
+                    <div class="pdx-control-row">
+                        <label class="pdx-field">
+                            <span>İl seçimi</span>
+                            <select id="provinceIntelSelect" onchange="loadProvinceDetail()">
+                                ${provinceOptionsHtml}
+                            </select>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <section class="pdx-kpi-grid">${kpiHtml}</section>
+
+            <section class="pdx-grid pdx-grid-wide">
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Yönetici il brifi</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-memo ${dashboardSafe(provinceMemo.stance.tone)}">
+                        <div class="pdx-memo-pill">${agronomySafe(provinceMemo.stance.label)}</div>
+                        <ul class="pdx-bullet-list">${memoPointsHtml}</ul>
+                    </div>
+                </article>
+
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Aksiyon katmanları</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-card-grid">${actionCardsHtml}</div>
+                </article>
+            </section>
+
+            <section class="pdx-grid">
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Marka liderlik merdiveni</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-chart-wrap"><canvas id="pdxBrandChart"></canvas></div>
+                </article>
+
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>HP mimarisi</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-chart-wrap"><canvas id="pdxHpChart"></canvas></div>
+                </article>
+            </section>
+
+            <section class="pdx-grid">
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Ürün ve güç ilişkisi</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-chart-wrap"><canvas id="pdxCropChart"></canvas></div>
+                </article>
+
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>İklim baskı ritmi</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-chart-wrap"><canvas id="pdxClimateChart"></canvas></div>
+                </article>
+            </section>
+
+            <section class="pdx-grid">
+                <article class="pdx-panel pdx-panel-full">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Tercih edilen traktör seti</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-model-grid">${modelCardsHtml}</div>
+                </article>
+            </section>
+
+            <section class="pdx-grid">
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Toprak-makine matrisi</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-table-wrap">
+                        <table class="pdx-table">
+                            <thead>
+                                <tr>
+                                    <th>Toprak</th>
+                                    <th>Doku</th>
+                                    <th>Bağlı ürünler</th>
+                                    <th>Çekiş</th>
+                                    <th>HP koridoru</th>
+                                    <th>Ekipman paketi</th>
+                                    <th>Operasyon notu</th>
+                                </tr>
+                            </thead>
+                            <tbody>${soilRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="pdx-panel">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Ürün-ekipman orkestrası</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-table-wrap">
+                        <table class="pdx-table">
+                            <thead>
+                                <tr>
+                                    <th>Ürün</th>
+                                    <th>Tip</th>
+                                    <th>Alan</th>
+                                    <th>Üretim</th>
+                                    <th>HP koridoru</th>
+                                    <th>Traktör arketipi</th>
+                                    <th>Ekipman paketi</th>
+                                    <th>İklim notu</th>
+                                </tr>
+                            </thead>
+                            <tbody>${cropRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="pdx-grid">
+                <article class="pdx-panel pdx-panel-full">
+                    <div class="pdx-panel-head">
+                        <div>
+                            <h3>Aylık iklim aksiyon matrisi</h3>
+                        </div>
+                    </div>
+                    <div class="pdx-table-wrap">
+                        <table class="pdx-table pdx-table-wide">
+                            <thead>
+                                <tr>
+                                    <th>Ay</th>
+                                    <th>Ort. sıcaklık</th>
+                                    <th>Ort. yağış</th>
+                                    <th>Nem</th>
+                                    <th>Don</th>
+                                    <th>Kuraklık</th>
+                                    <th>Aksiyon notu</th>
+                                </tr>
+                            </thead>
+                            <tbody>${climateRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+        </div>
+    `;
+
+    document.querySelectorAll('.pdx-fit-fill').forEach(element => {
+        const fit = Math.max(0, Math.min(100, Number(element.dataset.fit || 0)));
+        element.style.width = `${fit}%`;
+    });
+
+    renderProvinceIntelligenceCharts({
+        dossier,
+        climateSummary,
+        cropOperationRows,
+        rankedModels
+    });
+}
+
+async function loadProvincePage() {
+    try {
+        if (!allProvinces || allProvinces.length === 0) {
+            allProvinces = await API.getProvinces();
+        }
+
+        const focusBrandId = getProvinceIntelligenceBrandId();
+        const rawProvinceSales = await API.getSalesByProvince(selectedYear, focusBrandId || '').catch(() => []);
+        const provinceSales = aggregateProvinceSalesRows(rawProvinceSales || []);
+        provinceIntelState.sales_cache = provinceSales;
+
+        const targetProvinceId = resolveProvinceIntelligenceDefaultId(provinceSales);
+        provinceIntelState.province_id = String(targetProvinceId || '');
+
+        await renderProvinceIntelligenceCenter(targetProvinceId, provinceSales);
+    } catch (err) {
+        showError(err);
+    }
+}
+
+async function loadProvinceDetail(nextProvinceId = null) {
+    const targetProvinceId = nextProvinceId || document.getElementById('provinceIntelSelect')?.value || provinceIntelState.province_id;
+    if (!targetProvinceId) return;
+
+    provinceIntelState.province_id = String(targetProvinceId);
+
+    if (!provinceIntelState.sales_cache || provinceIntelState.sales_cache.length === 0) {
+        return loadProvincePage();
+    }
+
+    try {
+        await renderProvinceIntelligenceCenter(targetProvinceId, provinceIntelState.sales_cache);
+    } catch (err) {
+        showError(err);
+    }
+}
+
+// ============================================
+// TARMAKBIR COMMAND CENTER
+// ============================================
+let tarmakCommandState = { year: null };
+
+function normalizeTarmakBrandKey(value = '') {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/gi, '')
+        .toLowerCase();
+}
+
+function getTarmakCommandYear() {
+    return Number(tarmakCommandState.year || selectedYear || new Date().getFullYear());
+}
+
+function setTarmakCommandYear(nextYear) {
+    const normalized = parseInt(nextYear, 10) || selectedYear || new Date().getFullYear();
+    tarmakCommandState.year = normalized;
+    selectedYear = normalized;
+
+    const topYearFilter = document.getElementById('yearFilter');
+    if (topYearFilter) {
+        topYearFilter.value = String(normalized);
+    }
+
+    return normalized;
+}
+
+function getTarmakCommandFocusBrandName() {
+    if (currentUser?.role !== 'admin') {
+        return findBrandById(currentUser?.brand_id)?.name || currentUser?.brand?.name || '';
+    }
+    return activeBrandContext?.name || '';
+}
+
+function getTarmakPressureAction(gapShare, yoy) {
+    if (gapShare >= 25) return 'Carryover yüksek. Stok eritme ve yeni model anlatisi ayri yönetilmeli.';
+    if (gapShare >= 15) return 'Geçiş baskısı var. Fiyat ve teslim plani ayni haftada izlenmeli.';
+    if (yoy != null && yoy >= 10) return 'Temiz talep var. Yeni model ve finansman mesaji one alinabilir.';
+    if (yoy != null && yoy <= -10) return 'Talep zayifliyor. Bayi aktivasyonu ve lokal kampanya takviyesi gerekiyor.';
+    return 'Ritim dengeli. Mevcut saha temposu korunabilir.';
+}
+
+function getTarmakPressureClass(gapShare, yoy) {
+    if (gapShare >= 20) return 'is-warning';
+    if (yoy != null && yoy < 0) return 'is-down';
+    if (yoy != null && yoy > 0) return 'is-up';
+    return 'is-neutral';
+}
+
+function buildTarmakCommandBrandRows(brandsData, fullTotal, monthNames, focusBrandName) {
+    const focusKey = normalizeTarmakBrandKey(focusBrandName);
+
+    return Object.entries(brandsData || {})
+        .map(([name, row]) => {
+            const monthly = Array.from({ length: 12 }, (_, index) => Number(row?.[index + 1] || 0));
+            const total = Number(row?.[0] || monthly.reduce((sum, value) => sum + value, 0));
+            const peakValue = Math.max(...monthly, 0);
+            const peakIndex = peakValue > 0 ? monthly.indexOf(peakValue) : -1;
+            const secondHalf = monthly.slice(6).reduce((sum, value) => sum + value, 0);
+            const q4 = monthly.slice(9).reduce((sum, value) => sum + value, 0);
+            const share = fullTotal > 0 ? (total * 100) / fullTotal : 0;
+            const q4Share = total > 0 ? (q4 * 100) / total : 0;
+            const h2Share = total > 0 ? (secondHalf * 100) / total : 0;
+            const normalizedName = normalizeTarmakBrandKey(name);
+            const brandMeta = (allBrands || []).find(item => normalizeTarmakBrandKey(item.name) === normalizedName);
+
+            let rhythm = 'Dengeli ritim';
+            if (q4Share >= 35) rhythm = 'Yil sonu yukleniyor';
+            else if (h2Share >= 58) rhythm = 'Ikinci yari hizlaniyor';
+            else if (peakIndex >= 0 && peakIndex <= 2) rhythm = 'Yilin basi sert';
+
+            return {
+                name,
+                total,
+                monthly,
+                share,
+                peakMonth: peakIndex >= 0 ? monthNames[peakIndex] : '-',
+                peakValue,
+                q4Share,
+                h2Share,
+                rhythm,
+                isFocus: !!focusKey && normalizedName === focusKey,
+                color: brandMeta?.primary_color || '#38bdf8'
+            };
+        })
+        .sort((left, right) => right.total - left.total || left.name.localeCompare(right.name, 'tr'))
+        .map((item, index) => ({ ...item, rank: index + 1 }));
+}
+
+function buildTarmakCommandMemo({
+    selectedYear,
+    filteredTotal,
+    fullTotal,
+    carryoverTotal,
+    carryoverShare,
+    filteredYoy,
+    top3Share,
+    peakMonthName,
+    gapMonthName,
+    focusRow
+}) {
+    let tone = 'is-neutral';
+    let label = 'Geçiş dönemi';
+
+    if (carryoverShare >= 20) {
+        tone = 'is-warning';
+        label = 'Carryover baskısı yüksek';
+    } else if ((filteredYoy || 0) > 0 && carryoverShare < 10) {
+        tone = 'is-up';
+        label = 'Temiz ivme';
+    } else if ((filteredYoy || 0) < 0) {
+        tone = 'is-down';
+        label = 'Talep savunmasi gerekli';
+    }
+
+    const headline = `${selectedYear} yilinda N+N1 filtreli ${fmtNum(filteredTotal)} adetlik ritim, butun maddede ${fmtNum(fullTotal)} adede cikiyor. Carryover etkisi ${fmtPct(carryoverShare, 1)} seviyesinde.`;
+    const points = [
+        `${peakMonthName} pazarın en hızlı ayi, ${gapMonthName} ise eski model baskisinin en belirgin gorundugu cephe.`,
+        `İlk 3 marka toplam havuzun ${fmtPct(top3Share, 1)} payini aliyor; pazarda yoğunlaşma belirgin.`,
+        carryoverTotal > 0
+            ? `Filtre disi hacim ${fmtNum(carryoverTotal)} adet. Bu alan fiyat, stok ve teslimat yonetimini direkt etkiliyor.`
+            : 'Filtre disi hacim sinirli. Yeni model anlatisi daha temiz bir zeminde ilerliyor.',
+        focusRow
+            ? `${focusRow.name} ${focusRow.rank}. sırada, ${fmtPct(focusRow.share, 1)} payda. Zirve ayi ${focusRow.peakMonth}, ritmi ise "${focusRow.rhythm}".`
+            : 'Odak marka seçiliyse bu ekranda markaya özel saha hamleleri de öne çıkacak.'
+    ];
+
+    return { tone, label, headline, points };
+}
+
+function renderTarmakCommandCharts({ monthNames, filteredCurrent, fullMonthly, carryoverMonthly, brandRows, focusBrandName }) {
+    ['tarmakCommandTrend', 'tarmakCommandPressure', 'tarmakCommandBrand'].forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy?.();
+            delete charts[key];
+        }
+    });
+
+    const trendEl = document.getElementById('tbxTrendChart');
+    if (trendEl) {
+        const trendOptions = chartOptions('Adet');
+        charts.tarmakCommandTrend = new Chart(trendEl, {
+            type: 'line',
+            data: {
+                labels: monthNames,
+                datasets: [
+                    {
+                        label: 'Butun madde',
+                        data: fullMonthly,
+                        borderColor: '#f97316',
+                        backgroundColor: 'rgba(249, 115, 22, 0.14)',
+                        fill: true,
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    },
+                    {
+                        label: 'N+N1 filtreli',
+                        data: filteredCurrent,
+                        borderColor: 'var(--brand-primary)',
+                        backgroundColor: 'rgba(var(--brand-primary-rgb), 0.08)',
+                        fill: true,
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    }
+                ]
+            },
+            options: {
+                ...trendOptions,
+                plugins: {
+                    ...trendOptions.plugins,
+                    tooltip: {
+                        ...trendOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const pressureEl = document.getElementById('tbxPressureChart');
+    if (pressureEl) {
+        const pressureOptions = chartOptions('Adet / %');
+        charts.tarmakCommandPressure = new Chart(pressureEl, {
+            data: {
+                labels: monthNames,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Carryover farki',
+                        data: carryoverMonthly,
+                        backgroundColor: 'rgba(245, 158, 11, 0.7)',
+                        borderRadius: 10,
+                        borderSkipped: false
+                    },
+                    {
+                        type: 'line',
+                        label: 'Carryover orani',
+                        data: fullMonthly.map((value, index) => value > 0 ? (carryoverMonthly[index] * 100) / value : 0),
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.08)',
+                        yAxisID: 'y1',
+                        tension: 0.28,
+                        borderWidth: 3,
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    }
+                ]
+            },
+            options: {
+                ...pressureOptions,
+                scales: {
+                    ...pressureOptions.scales,
+                    y1: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            color: '#22c55e',
+                            callback: value => `${Number(value).toFixed(0)}%`
+                        },
+                        title: {
+                            display: true,
+                            text: 'Carryover %',
+                            color: '#22c55e'
+                        }
+                    }
+                },
+                plugins: {
+                    ...pressureOptions.plugins,
+                    tooltip: {
+                        ...pressureOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => ctx.dataset.yAxisID === 'y1'
+                                ? `${ctx.dataset.label}: ${fmtPct(ctx.raw, 1)}`
+                                : `${ctx.dataset.label}: ${fmtNum(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const brandEl = document.getElementById('tbxBrandChart');
+    if (brandEl) {
+        const topRows = brandRows.slice(0, 8).reverse();
+        const focusKey = normalizeTarmakBrandKey(focusBrandName);
+        const brandOptions = chartOptions('Adet');
+
+        charts.tarmakCommandBrand = new Chart(brandEl, {
+            type: 'bar',
+            data: {
+                labels: topRows.map(item => item.name),
+                datasets: [
+                    {
+                        label: 'Toplam satış',
+                        data: topRows.map(item => item.total),
+                        backgroundColor: topRows.map(item => item.isFocus || (focusKey && normalizeTarmakBrandKey(item.name) === focusKey)
+                            ? item.color
+                            : `${item.color}cc`),
+                        borderRadius: 10,
+                        borderSkipped: false
+                    }
+                ]
+            },
+            options: {
+                ...brandOptions,
+                indexAxis: 'y',
+                plugins: {
+                    ...brandOptions.plugins,
+                    legend: { display: false },
+                    tooltip: {
+                        ...brandOptions.plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.label}: ${fmtNum(ctx.raw)} adet`
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+function reloadTarmakCommand(nextYear) {
+    setTarmakCommandYear(nextYear || document.getElementById('tarmakCommandYearFilter')?.value || selectedYear);
+    API.clearCache();
+    loadTarmakBirPage();
+}
+
+async function loadTarmakBirPage() {
+    try {
+        const targetYear = getTarmakCommandYear();
+        const [filteredData, totalData] = await Promise.all([
+            API.getTarmakBir(targetYear),
+            API.getTarmakBirTotal(targetYear)
+        ]);
+        if (!filteredData || !totalData) return;
+
+        const monthNames = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const selectedYearResolved = setTarmakCommandYear(filteredData.selected_year || totalData.selected_year || targetYear);
+        const availableYears = Array.from(new Set([
+            ...(filteredData.available_years || []),
+            ...(totalData.available_years || [])
+        ])).map(Number).filter(Boolean).sort((left, right) => right - left);
+
+        const previousYear = availableYears.find(year => year < selectedYearResolved) || (selectedYearResolved - 1);
+        const currentFilteredMap = filteredData.months_data?.[selectedYearResolved] || {};
+        const previousFilteredMap = filteredData.months_data?.[previousYear] || {};
+        const filteredCurrent = Array.from({ length: 12 }, (_, index) => Number(currentFilteredMap[index + 1] || 0));
+        const filteredPrev = Array.from({ length: 12 }, (_, index) => Number(previousFilteredMap[index + 1] || 0));
+        const fullMonthly = Array.from({ length: 12 }, (_, index) => Number(totalData.months_total?.[index + 1] || 0));
+        const carryoverMonthly = fullMonthly.map((value, index) => Math.max(value - filteredCurrent[index], 0));
+
+        const filteredTotal = filteredCurrent.reduce((sum, value) => sum + value, 0);
+        const filteredPrevTotal = filteredPrev.reduce((sum, value) => sum + value, 0);
+        const fullTotal = Number(totalData.grand_total || fullMonthly.reduce((sum, value) => sum + value, 0));
+        const carryoverTotal = carryoverMonthly.reduce((sum, value) => sum + value, 0);
+        const carryoverShare = fullTotal > 0 ? (carryoverTotal * 100) / fullTotal : 0;
+        const filteredYoy = filteredPrevTotal > 0 ? ((filteredTotal - filteredPrevTotal) * 100) / filteredPrevTotal : null;
+
+        const peakMonthIndex = fullMonthly.indexOf(Math.max(...fullMonthly, 0));
+        const gapMonthIndex = carryoverMonthly.indexOf(Math.max(...carryoverMonthly, 0));
+        const peakMonthName = peakMonthIndex >= 0 ? monthNames[peakMonthIndex] : '-';
+        const gapMonthName = gapMonthIndex >= 0 ? monthNames[gapMonthIndex] : '-';
+
+        const focusBrandName = getTarmakCommandFocusBrandName();
+        const brandRows = buildTarmakCommandBrandRows(totalData.brands_data || {}, fullTotal, monthNames, focusBrandName);
+        const focusRow = brandRows.find(item => item.isFocus) || null;
+        const top3Share = fullTotal > 0
+            ? (brandRows.slice(0, 3).reduce((sum, item) => sum + item.total, 0) * 100) / fullTotal
+            : 0;
+
+        const memo = buildTarmakCommandMemo({
+            selectedYear: selectedYearResolved,
+            filteredTotal,
+            fullTotal,
+            carryoverTotal,
+            carryoverShare,
+            filteredYoy,
+            top3Share,
+            peakMonthName,
+            gapMonthName,
+            focusRow
+        });
+
+        const modelRows = Object.entries(filteredData.model_breakdown || {})
+            .map(([modelYear, monthMap]) => {
+                const monthly = Array.from({ length: 12 }, (_, index) => Number(monthMap?.[index + 1] || 0));
+                const total = monthly.reduce((sum, value) => sum + value, 0);
+                const peakValue = Math.max(...monthly, 0);
+                const peakIndex = peakValue > 0 ? monthly.indexOf(peakValue) : -1;
+                return {
+                    modelYear,
+                    monthly,
+                    total,
+                    share: filteredTotal > 0 ? (total * 100) / filteredTotal : 0,
+                    peakMonth: peakIndex >= 0 ? monthNames[peakIndex] : '-'
+                };
+            })
+            .sort((left, right) => Number(right.modelYear) - Number(left.modelYear));
+
+        const archiveRows = (filteredData.registration_years || [])
+            .slice()
+            .sort((left, right) => right - left)
+            .slice(0, 6)
+            .map(year => {
+                const monthMap = filteredData.months_data?.[year] || {};
+                const monthly = Array.from({ length: 12 }, (_, index) => Number(monthMap[index + 1] || 0));
+                const total = monthly.reduce((sum, value) => sum + value, 0);
+                const q1 = monthly.slice(0, 3).reduce((sum, value) => sum + value, 0);
+                const q2 = monthly.slice(3, 6).reduce((sum, value) => sum + value, 0);
+                const q3 = monthly.slice(6, 9).reduce((sum, value) => sum + value, 0);
+                const q4 = monthly.slice(9, 12).reduce((sum, value) => sum + value, 0);
+                const prev = filteredData.months_data?.[year - 1] || {};
+                const prevTotal = Array.from({ length: 12 }, (_, index) => Number(prev[index + 1] || 0)).reduce((sum, value) => sum + value, 0);
+                const yoy = prevTotal > 0 ? ((total - prevTotal) * 100) / prevTotal : null;
+                return { year, total, q1, q2, q3, q4, yoy };
+            });
+
+        const pressureRows = monthNames.map((label, index) => {
+            const fullValue = fullMonthly[index];
+            const filteredValue = filteredCurrent[index];
+            const gap = carryoverMonthly[index];
+            const gapShare = fullValue > 0 ? (gap * 100) / fullValue : 0;
+            const prevValue = filteredPrev[index];
+            const yoy = prevValue > 0 ? ((filteredValue - prevValue) * 100) / prevValue : null;
+
+            return {
+                month: label,
+                fullTotal: fullValue,
+                filteredTotal: filteredValue,
+                gap,
+                gapShare,
+                yoy,
+                tone: getTarmakPressureClass(gapShare, yoy),
+                action: getTarmakPressureAction(gapShare, yoy)
+            };
+        });
+
+        const yearOptionsHtml = availableYears.map(year => `
+            <option value="${year}" ${year === selectedYearResolved ? 'selected' : ''}>${year}</option>
+        `).join('');
+
+        const chips = [
+            { label: 'N+N1 toplam', value: `${fmtNum(filteredTotal)} adet` },
+            { label: 'Butun madde', value: `${fmtNum(fullTotal)} adet` },
+            { label: 'Carryover', value: fmtPct(carryoverShare, 1) },
+            { label: 'Zirve ay', value: peakMonthName },
+            { label: 'Top 3 pay', value: fmtPct(top3Share, 1) }
+        ];
+
+        const kpiCards = [
+            { label: 'N+N1 hacim', value: `${fmtNum(filteredTotal)} adet`, note: `${selectedYearResolved} tescil yilinin filtreli ritmi`, tone: 'is-up' },
+            { label: 'Butun madde hacim', value: `${fmtNum(fullTotal)} adet`, note: `${totalData.source_table || 'sales_data'} üzerinden tum model yillari`, tone: 'is-analysis' },
+            { label: 'Carryover etkisi', value: `${fmtNum(carryoverTotal)} adet`, note: `${fmtPct(carryoverShare, 1)} ek hacim`, tone: carryoverShare >= 20 ? 'is-warning' : 'is-neutral' },
+            { label: 'N+N1 YoY', value: filteredYoy != null ? formatSignedPct(filteredYoy, 1) : '-', note: previousYear ? `${previousYear} ile ayni pencere kiyasi` : 'Onceki yil verisi yok', tone: filteredYoy != null ? getTarmakPressureClass(0, filteredYoy) : 'is-neutral' },
+            { label: 'Pazar zirvesi', value: peakMonthName, note: `${fmtNum(fullMonthly[peakMonthIndex] || 0)} adet tum havuz`, tone: 'is-opportunity' },
+            { label: 'Top 3 yoğunluğu', value: fmtPct(top3Share, 1), note: `${brandRows.slice(0, 3).map(item => item.name).join(' / ') || 'Veri yok'}`, tone: top3Share >= 55 ? 'is-warning' : 'is-analysis' }
+        ];
+
+        const memoPointsHtml = memo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
+        const chipHtml = chips.map(item => `
+            <div class="tbx-chip">
+                <strong>${dashboardSafe(item.value)}</strong>
+                <small>${dashboardSafe(item.label)}</small>
+            </div>
+        `).join('');
+
+        const kpiHtml = kpiCards.map(item => `
+            <article class="tbx-kpi ${dashboardSafe(item.tone)}">
+                <span>${dashboardSafe(item.label)}</span>
+                <strong>${dashboardSafe(item.value)}</strong>
+                <small>${dashboardSafe(item.note)}</small>
+            </article>
+        `).join('');
+
+        const focusPanelHtml = focusRow ? `
+            <div class="tbx-focus-card">
+                <div class="tbx-focus-head">
+                    <div>
+                        <span>Odak marka</span>
+                        <h3>${dashboardSafe(focusRow.name)}</h3>
+                    </div>
+                    <b>#${focusRow.rank}</b>
+                </div>
+                <div class="tbx-focus-grid">
+                    <div class="tbx-focus-metric">
+                        <span>Toplam</span>
+                        <strong>${fmtNum(focusRow.total)}</strong>
+                    </div>
+                    <div class="tbx-focus-metric">
+                        <span>Pazar payi</span>
+                        <strong>${fmtPct(focusRow.share, 1)}</strong>
+                    </div>
+                    <div class="tbx-focus-metric">
+                        <span>Zirve ay</span>
+                        <strong>${dashboardSafe(focusRow.peakMonth)}</strong>
+                    </div>
+                    <div class="tbx-focus-metric">
+                        <span>Q4 agirligi</span>
+                        <strong>${fmtPct(focusRow.q4Share, 1)}</strong>
+                    </div>
+                </div>
+                <div class="tbx-meter">
+                    <div class="tbx-meter-bar" style="width:${Math.min(focusRow.share, 100)}%;background:${dashboardSafe(focusRow.color)}"></div>
+                </div>
+                <p>${dashboardSafe(`${focusRow.rhythm}. Yilin ikinci yarisi agirligi ${fmtPct(focusRow.h2Share, 1)} seviyesinde.`)}</p>
+            </div>
+        ` : `
+            <div class="tbx-focus-card">
+                <div class="tbx-focus-head">
+                    <div>
+                        <span>Pazar yoğunluğu</span>
+                        <h3>${dashboardSafe(brandRows[0]?.name || 'Lider marka')}</h3>
+                    </div>
+                    <b>${fmtPct(brandRows[0]?.share || 0, 1)}</b>
+                </div>
+                <div class="tbx-focus-grid">
+                    <div class="tbx-focus-metric">
+                        <span>Lider hacim</span>
+                        <strong>${fmtNum(brandRows[0]?.total || 0)}</strong>
+                    </div>
+                    <div class="tbx-focus-metric">
+                        <span>Top 3 pay</span>
+                        <strong>${fmtPct(top3Share, 1)}</strong>
+                    </div>
+                    <div class="tbx-focus-metric">
+                        <span>Gap ayi</span>
+                        <strong>${dashboardSafe(gapMonthName)}</strong>
+                    </div>
+                    <div class="tbx-focus-metric">
+                        <span>Marka sayisi</span>
+                        <strong>${fmtNum(brandRows.length)}</strong>
+                    </div>
+                </div>
+                <p>Bu ekran seçili marka yoksa toplam pazar yoğunluğunu ve baski aylarini öne çıkarır.</p>
+            </div>
+        `;
+
+        const brandRowsHtml = brandRows.slice(0, 12).map(item => `
+            <tr class="${item.isFocus ? 'is-focus' : ''}">
+                <td>${item.rank}</td>
+                <td>
+                    <div class="tbx-brand-cell">
+                        <i style="background:${dashboardSafe(item.color)}"></i>
+                        <div>
+                            <strong>${dashboardSafe(item.name)}</strong>
+                            ${item.isFocus ? '<small>Odak marka</small>' : `<small>${dashboardSafe(item.rhythm)}</small>`}
+                        </div>
+                    </div>
+                </td>
+                <td>${fmtNum(item.total)}</td>
+                <td>${fmtPct(item.share, 1)}</td>
+                <td>${dashboardSafe(item.peakMonth)}</td>
+                <td>${fmtPct(item.q4Share, 1)}</td>
+                <td>${fmtPct(item.h2Share, 1)}</td>
+            </tr>
+        `).join('');
+
+        const archiveRowsHtml = archiveRows.map(item => `
+            <tr>
+                <td><strong>${item.year}</strong></td>
+                <td>${fmtNum(item.total)}</td>
+                <td>${fmtNum(item.q1)}</td>
+                <td>${fmtNum(item.q2)}</td>
+                <td>${fmtNum(item.q3)}</td>
+                <td>${fmtNum(item.q4)}</td>
+                <td class="${item.yoy != null ? getTarmakPressureClass(0, item.yoy) : 'is-neutral'}">${item.yoy != null ? formatSignedPct(item.yoy, 1) : '-'}</td>
+            </tr>
+        `).join('');
+
+        const modelRowsHtml = modelRows.length > 0 ? modelRows.map(item => `
+            <tr>
+                <td><strong>${dashboardSafe(item.modelYear)}</strong></td>
+                <td>${fmtNum(item.total)}</td>
+                <td>${fmtPct(item.share, 1)}</td>
+                <td>${dashboardSafe(item.peakMonth)}</td>
+                ${item.monthly.map(value => `<td>${value > 0 ? fmtNum(value) : '-'}</td>`).join('')}
+            </tr>
+        `).join('') : `
+            <tr><td colspan="16" class="tbx-table-empty">Seçili yil için model yili kirilimi bulunamadi.</td></tr>
+        `;
+
+        const pressureRowsHtml = pressureRows.map(item => `
+            <tr>
+                <td><strong>${dashboardSafe(item.month)}</strong></td>
+                <td>${fmtNum(item.filteredTotal)}</td>
+                <td>${fmtNum(item.fullTotal)}</td>
+                <td>${fmtNum(item.gap)}</td>
+                <td>${fmtPct(item.gapShare, 1)}</td>
+                <td class="${dashboardSafe(item.tone)}">${item.yoy != null ? formatSignedPct(item.yoy, 1) : '-'}</td>
+                <td>${dashboardSafe(item.action)}</td>
+            </tr>
+        `).join('');
+
+        document.getElementById('pageContent').innerHTML = `
+            <div class="tbx-shell">
+                <section class="tbx-hero">
+                    <div class="tbx-hero-grid">
+                        <div class="tbx-hero-copy">
+                            <div class="tbx-overline">Market Rhythm Command</div>
+                            <h2>TarmakBir Komuta Merkezi</h2>
+                            <p>N+N1 filtreli ritim ile butun model yili havuzunu ayni ekranda okuyup carryover baskısını, marka yoğunluğunu ve ticari aksiyon alanlarini yönetim seviyesinde görünür hale getirir.</p>
+                            <div class="tbx-control-row">
+                                <label class="tbx-field">
+                                    <span>Veri yili</span>
+                                    <select id="tarmakCommandYearFilter" onchange="reloadTarmakCommand(this.value)">
+                                        ${yearOptionsHtml}
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="tbx-chip-row">${chipHtml}</div>
+                        </div>
+
+                        <div class="tbx-hero-side">
+                            <div class="tbx-memo ${dashboardSafe(memo.tone)}">
+                                <div class="tbx-memo-pill">${dashboardSafe(memo.label)}</div>
+                                <h3>${dashboardSafe(memo.headline)}</h3>
+                                <ul class="tbx-bullets">${memoPointsHtml}</ul>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="tbx-kpi-grid">${kpiHtml}</section>
+
+                <section class="tbx-grid tbx-grid-wide">
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Pazar ritmi</h3>
+                                <p>N+N1 filtreli satir ile butun madde akışıni ayni zaman ekseninde okur.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-chart-wrap"><canvas id="tbxTrendChart"></canvas></div>
+                    </article>
+
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Odak paneli</h3>
+                                <p>Seçili marka varsa onun ritmi; yoksa pazar yoğunluğu onde gösterilir.</p>
+                            </div>
+                        </div>
+                        ${focusPanelHtml}
+                    </article>
+                </section>
+
+                <section class="tbx-grid">
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Carryover basinci</h3>
+                                <p>Filtre disi hacmin aylara gore nerede yukselip dustugunu gosterir.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-chart-wrap"><canvas id="tbxPressureChart"></canvas></div>
+                    </article>
+
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Marka liderlik haritasi</h3>
+                                <p>Butun madde havuzunda en yüksek hacmi toplayan markalar.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-chart-wrap"><canvas id="tbxBrandChart"></canvas></div>
+                    </article>
+                </section>
+
+                <section class="tbx-grid">
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Marka liderlik matrisi</h3>
+                                <p>Hacim, pay, zirve ay ve ikinci yari agirligi ile saha ritmi ayni tabloda.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-table-wrap">
+                            <table class="tbx-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Marka</th>
+                                        <th>Toplam</th>
+                                        <th>Pay</th>
+                                        <th>Zirve ay</th>
+                                        <th>Q4</th>
+                                        <th>H2</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${brandRowsHtml}</tbody>
+                            </table>
+                        </div>
+                    </article>
+
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Tescil yili arsivi</h3>
+                                <p>Son 6 yilin N+N1 filtreli ritmi ceyrek bazli okunur.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-table-wrap">
+                            <table class="tbx-table">
+                                <thead>
+                                    <tr>
+                                        <th>Yil</th>
+                                        <th>Toplam</th>
+                                        <th>Q1</th>
+                                        <th>Q2</th>
+                                        <th>Q3</th>
+                                        <th>Q4</th>
+                                        <th>YoY</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${archiveRowsHtml}</tbody>
+                            </table>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="tbx-grid">
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Model yili kirilimi</h3>
+                                <p>${selectedYearResolved} tescil yilinda filtreye giren model yıllarınin aylık dağılımı.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-table-wrap">
+                            <table class="tbx-table tbx-table-wide">
+                                <thead>
+                                    <tr>
+                                        <th>Model yili</th>
+                                        <th>Toplam</th>
+                                        <th>Pay</th>
+                                        <th>Zirve ay</th>
+                                        ${monthNames.map(item => `<th>${item}</th>`).join('')}
+                                    </tr>
+                                </thead>
+                                <tbody>${modelRowsHtml}</tbody>
+                            </table>
+                        </div>
+                    </article>
+
+                    <article class="tbx-panel">
+                        <div class="tbx-panel-head">
+                            <div>
+                                <h3>Aylik baski matrisi</h3>
+                                <p>Carryover farki, N+N1 temposu ve aksiyon notu ayni satirda.</p>
+                            </div>
+                        </div>
+                        <div class="tbx-table-wrap">
+                            <table class="tbx-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ay</th>
+                                        <th>N+N1</th>
+                                        <th>Butun madde</th>
+                                        <th>Fark</th>
+                                        <th>Fark %</th>
+                                        <th>YoY</th>
+                                        <th>Aksiyon notu</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${pressureRowsHtml}</tbody>
+                            </table>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="ai-action-bar tbx-action-bar">
+                    <button class="ai-btn" onclick="requestAiAnalysis('tarmakbir-command', window._tarmakAiContext, 'tbxAiPanel')">
+                        <i class="fas fa-brain"></i>
+                        <span>AI TarmakBir strateji brifi</span>
+                    </button>
+                    <span class="ai-powered">N+N1 ritmi, butun madde baskısı ve marka yoğunluğu tek AI brifinde</span>
+                </section>
+                <div id="tbxAiPanel" class="ai-panel" style="display:none"></div>
+            </div>
+        `;
+
+        window._tarmakAiContext = {
+            year: selectedYearResolved,
+            filteredTotal,
+            fullTotal,
+            carryoverTotal,
+            carryoverShare: Number(carryoverShare.toFixed(1)),
+            filteredYoy: filteredYoy != null ? Number(filteredYoy.toFixed(1)) : 0,
+            topBrands: brandRows.slice(0, 8).map(item => ({
+                name: item.name,
+                total: item.total,
+                share: Number(item.share.toFixed(1)),
+                peakMonth: item.peakMonth,
+                q4Share: Number(item.q4Share.toFixed(1))
+            })),
+            focusBrand: focusRow ? {
+                name: focusRow.name,
+                rank: focusRow.rank,
+                total: focusRow.total,
+                share: Number(focusRow.share.toFixed(1)),
+                peakMonth: focusRow.peakMonth,
+                rhythm: focusRow.rhythm
+            } : null,
+            pressureMonths: pressureRows
+                .slice()
+                .sort((left, right) => right.gapShare - left.gapShare || right.gap - left.gap)
+                .slice(0, 6)
+                .map(item => ({
+                    month: item.month,
+                    fullTotal: item.fullTotal,
+                    filteredTotal: item.filteredTotal,
+                    gap: item.gap,
+                    gapShare: Number(item.gapShare.toFixed(1))
+                }))
+        };
+
+        renderTarmakCommandCharts({
+            monthNames,
+            filteredCurrent,
+            fullMonthly,
+            carryoverMonthly,
+            brandRows,
+            focusBrandName
+        });
+    } catch (err) {
+        showError(err);
+    }
+}
+
+function loadTarmakBir2Page() {
+    return loadTarmakBirPage();
+}
+
+// ============================================
 // ERROR HANDLER
 // ============================================
 function showError(err) {
@@ -4620,4 +20561,7 @@ function showError(err) {
 // ============================================
 // INIT
 // ============================================
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    initTurkishCopyGuard();
+    init();
+});

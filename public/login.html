@@ -3,207 +3,1193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Giriş - Traktör Sektör Analizi</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>Giriş & Üyelik · Traktör Sektör Analizi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary: #38bdf8;
+            --primary-rgb: 56, 189, 248;
+            --accent: #fbbf24;
+            --bg: #020617;
+            --surface: rgba(15, 23, 42, 0.85);
+            --surface-strong: rgba(2, 6, 23, 0.92);
+            --border: rgba(148, 163, 184, 0.18);
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+        * { box-sizing: border-box; }
         body {
-            font-family: 'Inter', sans-serif;
+            margin: 0;
             min-height: 100vh;
+            font-family: 'Manrope', sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(var(--primary-rgb), 0.18), transparent 32%),
+                radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.12), transparent 30%),
+                linear-gradient(135deg, #020617 0%, #0f172a 48%, #111827 100%);
+        }
+        .auth-shell {
+            max-width: 1380px;
+            margin: 0 auto;
+            padding: 28px 20px;
+            min-height: 100vh;
+            display: grid;
+            grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
+            gap: 28px;
+            align-items: start;
+        }
+        @media (max-width: 1080px) { .auth-shell { grid-template-columns: 1fr; } }
+
+        /* SOL: Plan Önizleme Paneli */
+        .auth-hero {
+            padding: 28px;
+            border-radius: 22px;
+            border: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.85));
+            box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+            position: sticky; top: 28px;
+        }
+        .auth-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(var(--primary-rgb), 0.18);
+            border: 1px solid rgba(var(--primary-rgb), 0.4);
+            color: var(--primary);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .auth-hero h1 {
+            margin: 14px 0 10px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 30px;
+            line-height: 1.2;
+        }
+        .auth-hero p { color: var(--muted); font-size: 14px; line-height: 1.6; margin: 0 0 20px; }
+
+        .preview-toolbar {
             display: flex;
+            gap: 8px;
+            padding: 6px;
+            border-radius: 14px;
+            background: rgba(2, 6, 23, 0.55);
+            border: 1px solid var(--border);
+            margin-bottom: 18px;
+            overflow-x: auto;
+        }
+        .preview-tab {
+            flex: 1;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--muted);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.18s;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+        }
+        .preview-tab small { font-weight: 600; font-size: 10px; opacity: 0.7; }
+        .preview-tab.is-active {
+            background: linear-gradient(180deg, rgba(var(--primary-rgb), 0.32), rgba(var(--primary-rgb), 0.16));
+            border-color: rgba(var(--primary-rgb), 0.5);
+            color: var(--text);
+            box-shadow: 0 6px 14px rgba(2, 8, 23, 0.32);
+        }
+        .preview-tab.tier-2.is-active {
+            background: linear-gradient(180deg, rgba(251, 191, 36, 0.32), rgba(251, 191, 36, 0.14));
+            border-color: rgba(251, 191, 36, 0.55);
+        }
+        .preview-tab.tier-3.is-active {
+            background: linear-gradient(180deg, rgba(167, 139, 250, 0.32), rgba(167, 139, 250, 0.14));
+            border-color: rgba(167, 139, 250, 0.55);
+        }
+
+        .preview-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        .preview-content.is-active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+        .preview-price {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .preview-price strong {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 36px;
+            color: var(--primary);
+            font-weight: 800;
+        }
+        .preview-price span { color: var(--muted); font-size: 14px; }
+        .preview-price small {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--muted);
+            background: rgba(2, 6, 23, 0.5);
+            padding: 4px 10px;
+            border-radius: 999px;
+        }
+
+        .preview-features {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 18px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        @media (max-width: 700px) { .preview-features { grid-template-columns: 1fr; } }
+        .preview-features li {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            font-size: 12px;
+            color: #cbd5e1;
+            line-height: 1.5;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(2, 6, 23, 0.4);
+            border: 1px solid rgba(148, 163, 184, 0.08);
+        }
+        .preview-features li i { color: #22c55e; margin-top: 3px; font-size: 11px; flex-shrink: 0; }
+        .preview-features li.is-disabled { opacity: 0.45; }
+        .preview-features li.is-disabled i { color: #ef4444; }
+
+        .preview-screens {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .preview-screen {
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            text-align: center;
+            font-size: 11px;
+            color: #cbd5e1;
+        }
+        .preview-screen i { display: block; font-size: 18px; margin-bottom: 6px; color: var(--primary); }
+        .preview-screen.is-locked { opacity: 0.45; }
+        .preview-screen.is-locked i { color: #94a3b8; }
+
+        .security-badges {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border);
+        }
+        .security-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.12);
+            border: 1px solid rgba(34, 197, 94, 0.32);
+            color: #86efac;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+
+        /* SAĞ: Auth Paneli */
+        .auth-panel {
+            padding: 28px;
+            border-radius: 22px;
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .auth-tabs {
+            display: flex;
+            gap: 4px;
+            padding: 4px;
+            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border);
+        }
+        .auth-tab {
+            flex: 1;
+            padding: 10px 14px;
+            border-radius: 9px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.18s;
+        }
+        .auth-tab.is-active {
+            background: linear-gradient(180deg, rgba(var(--primary-rgb), 0.32), rgba(var(--primary-rgb), 0.16));
+            color: var(--text);
+            box-shadow: 0 4px 10px rgba(2, 8, 23, 0.32);
+        }
+
+        .auth-form { display: none; flex-direction: column; gap: 12px; }
+        .auth-form.is-active { display: flex; }
+
+        .field { display: flex; flex-direction: column; gap: 5px; }
+        .field label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .field input, .field select, .field textarea {
+            padding: 11px 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: rgba(2, 6, 23, 0.6);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
+            transition: border-color 0.18s, box-shadow 0.18s;
+        }
+        .field input:focus, .field select:focus, .field textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.18);
+        }
+        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .password-strength {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+        .password-strength.is-weak { color: #fca5a5; }
+        .password-strength.is-medium { color: #fde68a; }
+        .password-strength.is-strong { color: #86efac; }
+
+        .btn-primary {
+            margin-top: 6px;
+            padding: 13px 18px;
+            border-radius: 12px;
+            border: none;
+            background: linear-gradient(180deg, var(--primary), #0ea5e9);
+            color: #0b1220;
+            font-weight: 800;
+            font-size: 14px;
+            cursor: pointer;
+            font-family: inherit;
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
-            color: #fff;
+            gap: 8px;
+            transition: transform 0.16s, box-shadow 0.16s;
         }
-        .login-container {
-            width: 100%;
-            max-width: 440px;
-            padding: 20px;
-        }
-        .login-header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        .login-header .logo-icon {
-            font-size: 64px;
-            margin-bottom: 16px;
-        }
-        .login-header h1 {
-            font-size: 28px;
-            font-weight: 800;
-            margin-bottom: 8px;
-            background: linear-gradient(135deg, #60a5fa, #34d399);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .login-header p {
-            color: #94a3b8;
-            font-size: 14px;
-        }
-        .login-card {
-            background: rgba(255,255,255,0.05);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 16px;
-            padding: 40px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        .form-group label {
-            display: block;
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(var(--primary-rgb), 0.32); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-google {
+            padding: 12px 16px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: rgba(2, 6, 23, 0.5);
+            color: var(--text);
+            font-family: inherit;
+            font-weight: 700;
             font-size: 13px;
-            font-weight: 500;
-            color: #94a3b8;
-            margin-bottom: 8px;
-        }
-        .form-group input {
-            width: 100%;
-            padding: 14px 16px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 10px;
-            color: #fff;
-            font-size: 15px;
-            font-family: 'Inter', sans-serif;
-            transition: all 0.3s;
-        }
-        .form-group input:focus {
-            outline: none;
-            border-color: #60a5fa;
-            box-shadow: 0 0 0 3px rgba(96,165,250,0.15);
-        }
-        .form-group input::placeholder { color: #475569; }
-        .btn-login {
-            width: 100%;
-            padding: 14px;
-            background: linear-gradient(135deg, #3b82f6, #2563eb);
-            border: none;
-            border-radius: 10px;
-            color: #fff;
-            font-size: 16px;
-            font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s;
-            font-family: 'Inter', sans-serif;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: background 0.16s, border-color 0.18s;
         }
-        .btn-login:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 25px rgba(37,99,235,0.3);
+        .btn-google:hover { background: rgba(15, 23, 42, 0.85); border-color: rgba(255,255,255,0.4); }
+        .btn-google img, .btn-google svg { width: 18px; height: 18px; }
+
+        .auth-divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 4px 0;
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
         }
-        .btn-login:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .auth-divider::before, .auth-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
         .error-msg {
-            display: none;
-            padding: 12px;
-            background: rgba(239,68,68,0.15);
-            border: 1px solid rgba(239,68,68,0.3);
-            border-radius: 8px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.32);
             color: #fca5a5;
             font-size: 13px;
-            margin-bottom: 16px;
+            display: none;
         }
-        .brand-logos {
+        .info-msg {
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.32);
+            color: #7dd3fc;
+            font-size: 13px;
+            display: none;
+        }
+
+        /* Wizard adımları */
+        .wizard-steps {
             display: flex;
-            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        .wizard-step {
+            flex: 1;
+            height: 4px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.2);
+            transition: background 0.18s;
+        }
+        .wizard-step.is-active { background: var(--primary); }
+        .wizard-step.is-done { background: #22c55e; }
+
+        .wizard-title {
+            margin: 0;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 18px;
+        }
+        .wizard-step-label {
+            font-size: 12px;
+            color: var(--muted);
+            margin: -6px 0 6px;
+        }
+
+        .auth-foot {
+            text-align: center;
+            font-size: 12px;
+            color: var(--muted);
+            padding-top: 4px;
+        }
+        .auth-foot a { color: var(--primary); text-decoration: none; cursor: pointer; }
+
+        .superuser-banner {
+            display: none;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: linear-gradient(90deg, rgba(251, 191, 36, 0.16), rgba(167, 139, 250, 0.12));
+            border: 1px solid rgba(251, 191, 36, 0.32);
+            color: #fde68a;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .brand-grid-mini {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 6px;
+            max-height: 220px;
+            overflow-y: auto;
+            padding: 8px;
+            border-radius: 10px;
+            background: rgba(2, 6, 23, 0.4);
+            border: 1px solid var(--border);
+        }
+        .brand-mini-card {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(15, 23, 42, 0.6);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+            color: #cbd5e1;
+            text-align: center;
+            transition: all 0.16s;
+        }
+        .brand-mini-card:hover { border-color: rgba(var(--primary-rgb), 0.5); }
+        .brand-mini-card.is-selected {
+            background: linear-gradient(180deg, rgba(var(--primary-rgb), 0.22), rgba(var(--primary-rgb), 0.1));
+            border-color: var(--primary);
+            color: var(--text);
+        }
+
+        /* Kompakt giriş kartı (görseldeki sade düzen) */
+        .login-welcome {
+            margin: 4px 0 18px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 28px;
+            font-weight: 800;
+            text-align: center;
+            letter-spacing: -0.01em;
+        }
+        .field.compact { gap: 0; }
+        .field.compact input {
+            padding: 14px 16px;
+            font-size: 15px;
+            background: rgba(15, 23, 42, 0.65);
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+        }
+        .password-field { position: relative; }
+        .password-field input { padding-right: 44px; }
+        .pw-toggle {
+            position: absolute;
+            top: 50%;
+            right: 10px;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .pw-toggle:hover { color: var(--text); background: rgba(148,163,184,0.1); }
+
+        .login-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 2px 0 4px;
+            font-size: 13px;
+        }
+        .remember-me {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #cbd5e1;
+            cursor: pointer;
+            user-select: none;
+        }
+        .remember-me input {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+        .forgot-link {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .forgot-link:hover { text-decoration: underline; }
+
+        .btn-login-primary {
+            margin-top: 4px;
+            padding: 14px 18px;
+            border-radius: 12px;
+            border: none;
+            background: linear-gradient(180deg, #16a34a, #15803d);
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 15px;
+            cursor: pointer;
+            font-family: inherit;
+            display: inline-flex;
+            align-items: center;
             justify-content: center;
             gap: 8px;
-            margin-top: 30px;
-            opacity: 0.4;
+            transition: transform 0.16s, box-shadow 0.16s;
+            letter-spacing: 0.01em;
         }
-        .brand-logos span {
-            font-size: 10px;
-            padding: 4px 8px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 4px;
+        .btn-login-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 24px rgba(22, 163, 74, 0.32); }
+        .btn-login-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-google-strong {
+            margin-top: 4px;
+            padding: 12px 18px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.18);
+            background: #ffffff;
+            color: #1f2937;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            font-family: inherit;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            transition: transform 0.16s, box-shadow 0.16s, border-color 0.16s;
         }
-        .demo-info {
-            margin-top: 24px;
-            padding: 16px;
-            background: rgba(52,211,153,0.1);
-            border: 1px solid rgba(52,211,153,0.2);
-            border-radius: 10px;
-            font-size: 12px;
-            color: #6ee7b7;
+        .btn-google-strong:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(0,0,0,0.32); border-color: rgba(255,255,255,0.4); }
+        .btn-google-strong svg { flex-shrink: 0; }
+        .btn-google-strong.is-disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            background: #e2e8f0;
+            color: #475569;
         }
-        .demo-info strong { color: #34d399; }
+        .btn-google-strong.is-disabled:hover { transform: none; box-shadow: none; }
+
+        .more-ways {
+            text-align: center;
+            margin-top: 6px;
+            font-size: 13px;
+        }
+        .more-ways a {
+            color: var(--muted);
+            text-decoration: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .more-ways a:hover { color: var(--text); text-decoration: underline; }
     </style>
 </head>
 <body>
-    <div class="login-container">
-        <div class="login-header">
-            <div class="logo-icon">🚜</div>
-            <h1>Traktör Sektör Analizi</h1>
-            <p>Marka Bazlı Dashboard & AI Analiz Platformu</p>
-        </div>
+    <div class="auth-shell">
+        <!-- SOL: Plan Önizleme Paneli -->
+        <section class="auth-hero">
+            <span class="auth-pill"><i class="fas fa-sparkles"></i> 3 Paket · Canlı Önizleme</span>
+            <h1>Türkiye Traktör Pazarı sizin için açılıyor</h1>
+            <p>Üye olmadan önce hangi paketin size uygun olduğunu yan yana inceleyin. Hangi sekmeleri açıyor, hangi raporlar geliyor, ne kadar derinlik sunuyor — bir tıkla görün.</p>
 
-        <div class="login-card">
-            <div class="error-msg" id="errorMsg"></div>
-
-            <form id="loginForm">
-                <div class="form-group">
-                    <label>E-posta Adresi</label>
-                    <input type="email" id="email" placeholder="ornek@marka.com" required autocomplete="email">
-                </div>
-                <div class="form-group">
-                    <label>Şifre</label>
-                    <input type="password" id="password" placeholder="Şifrenizi girin" required autocomplete="current-password">
-                </div>
-                <button type="submit" class="btn-login" id="btnLogin">
-                    <i class="fas fa-sign-in-alt"></i> Giriş Yap
+            <div class="preview-toolbar">
+                <button class="preview-tab is-active tier-1" data-preview="starter" onclick="showPreview('starter')">
+                    <strong>STARTER</strong><small>₺990 / ay</small>
                 </button>
+                <button class="preview-tab tier-2" data-preview="growth" onclick="showPreview('growth')">
+                    <strong>GROWTH</strong><small>₺2.990 / ay</small>
+                </button>
+                <button class="preview-tab tier-3" data-preview="enterprise" onclick="showPreview('enterprise')">
+                    <strong>ENTERPRISE</strong><small>₺9.990 / ay</small>
+                </button>
+            </div>
+
+            <!-- STARTER -->
+            <div class="preview-content is-active" id="preview-starter">
+                <div class="preview-price">
+                    <strong>₺990</strong><span>/ ay</span>
+                    <small>yıllık ödeme — 2,4 ay hediye</small>
+                </div>
+                <p style="font-size: 13px; color: #cbd5e1;">Bayi ve küçük distribütörler için: kendi markanızın temel saha verisi tek panoda.</p>
+                <div class="preview-screens">
+                    <div class="preview-screen"><i class="fas fa-chart-pie"></i>Dashboard</div>
+                    <div class="preview-screen"><i class="fas fa-map"></i>Türkiye Haritası</div>
+                    <div class="preview-screen"><i class="fas fa-tractor"></i>Model Kataloğu</div>
+                    <div class="preview-screen is-locked"><i class="fas fa-lock"></i>Rakip Analizi</div>
+                    <div class="preview-screen is-locked"><i class="fas fa-lock"></i>AI Öngörüler</div>
+                    <div class="preview-screen is-locked"><i class="fas fa-lock"></i>WhatsApp</div>
+                </div>
+                <ul class="preview-features">
+                    <li><i class="fas fa-check"></i><span>Kendi marka satış + pazar payı</span></li>
+                    <li><i class="fas fa-check"></i><span>İl analizi + harita</span></li>
+                    <li><i class="fas fa-check"></i><span>Son 12 ay tarihsel veri</span></li>
+                    <li><i class="fas fa-check"></i><span>HP segment dağılımı</span></li>
+                    <li><i class="fas fa-check"></i><span>50 satır export / ay</span></li>
+                    <li><i class="fas fa-check"></i><span>2 kullanıcı koltuğu</span></li>
+                    <li class="is-disabled"><i class="fas fa-times"></i><span>Rakip analizi</span></li>
+                    <li class="is-disabled"><i class="fas fa-times"></i><span>AI Öngörüler</span></li>
+                </ul>
+            </div>
+
+            <!-- GROWTH -->
+            <div class="preview-content" id="preview-growth">
+                <div class="preview-price">
+                    <strong>₺2.990</strong><span>/ ay</span>
+                    <small>en popüler · 2,4 ay hediye</small>
+                </div>
+                <p style="font-size: 13px; color: #cbd5e1;">Marka pazarlama ve strateji birimi: rakip baskısı, AI öngörüler ve medya radarı.</p>
+                <div class="preview-screens">
+                    <div class="preview-screen"><i class="fas fa-chart-pie"></i>Dashboard</div>
+                    <div class="preview-screen"><i class="fas fa-users"></i>Rakip Analizi</div>
+                    <div class="preview-screen"><i class="fas fa-exchange-alt"></i>Marka Karşılaştırma</div>
+                    <div class="preview-screen"><i class="fas fa-satellite-dish"></i>Medya Radarı</div>
+                    <div class="preview-screen"><i class="fas fa-robot"></i>AI Öngörüler</div>
+                    <div class="preview-screen is-locked"><i class="fas fa-lock"></i>WhatsApp</div>
+                </div>
+                <ul class="preview-features">
+                    <li><i class="fas fa-check"></i><span>Tüm Starter özellikleri</span></li>
+                    <li><i class="fas fa-check"></i><span>Rakip analizi (5 rakip)</span></li>
+                    <li><i class="fas fa-check"></i><span>Marka + Model karşılaştırma</span></li>
+                    <li><i class="fas fa-check"></i><span>Marka Medya Radarı</span></li>
+                    <li><i class="fas fa-check"></i><span>İklim Komuta Merkezi</span></li>
+                    <li><i class="fas fa-check"></i><span>AI Öngörüler (50 sorgu/ay)</span></li>
+                    <li><i class="fas fa-check"></i><span>Son 36 ay veri</span></li>
+                    <li><i class="fas fa-check"></i><span>8 kullanıcı koltuğu</span></li>
+                </ul>
+            </div>
+
+            <!-- ENTERPRISE -->
+            <div class="preview-content" id="preview-enterprise">
+                <div class="preview-price">
+                    <strong>₺9.990</strong><span>/ ay</span>
+                    <small>full enterprise · API + WhatsApp</small>
+                </div>
+                <p style="font-size: 13px; color: #cbd5e1;">Marka GM, distribütör grup CFO: sınırsız rakip, AI savaş odası, WhatsApp + API.</p>
+                <div class="preview-screens">
+                    <div class="preview-screen"><i class="fas fa-infinity"></i>Sınırsız Rakip</div>
+                    <div class="preview-screen"><i class="fas fa-brain"></i>AI Sınırsız</div>
+                    <div class="preview-screen"><i class="fab fa-whatsapp"></i>WhatsApp 3 Hat</div>
+                    <div class="preview-screen"><i class="fas fa-code"></i>API 10K/ay</div>
+                    <div class="preview-screen"><i class="fas fa-chart-line"></i>12A Tahmin</div>
+                    <div class="preview-screen"><i class="fas fa-headset"></i>4sa SLA</div>
+                </div>
+                <ul class="preview-features">
+                    <li><i class="fas fa-check"></i><span>Tüm Growth özellikleri</span></li>
+                    <li><i class="fas fa-check"></i><span>Sınırsız rakip görünürlüğü</span></li>
+                    <li><i class="fas fa-check"></i><span>Sınırsız AI Öngörüler</span></li>
+                    <li><i class="fas fa-check"></i><span>WhatsApp 3 telefon hattı</span></li>
+                    <li><i class="fas fa-check"></i><span>API erişimi (10K/ay)</span></li>
+                    <li><i class="fas fa-check"></i><span>12 ay + uzun vade tahmin</span></li>
+                    <li><i class="fas fa-check"></i><span>Otomasyon yol haritası</span></li>
+                    <li><i class="fas fa-check"></i><span>Tüm tarihsel veri + erken erişim</span></li>
+                </ul>
+            </div>
+
+            <div class="security-badges">
+                <span class="security-badge"><i class="fas fa-lock"></i> SSL/TLS</span>
+                <span class="security-badge"><i class="fas fa-shield-halved"></i> Bcrypt 12</span>
+                <span class="security-badge"><i class="fas fa-credit-card"></i> Iyzico/Stripe</span>
+                <span class="security-badge"><i class="fas fa-user-shield"></i> Brute-force koruma</span>
+                <span class="security-badge"><i class="fab fa-google"></i> Google OAuth</span>
+            </div>
+        </section>
+
+        <!-- SAĞ: Auth Paneli -->
+        <section class="auth-panel">
+            <div class="superuser-banner" id="superuserBanner">
+                <i class="fas fa-crown"></i> Yönetici e-postası tanımlandı — giriş sonrası tüm paketler önizlenebilir.
+            </div>
+
+            <div class="auth-tabs">
+                <button class="auth-tab is-active" data-tab="login" onclick="showTab('login')">Giriş Yap</button>
+                <button class="auth-tab" data-tab="signup" onclick="showTab('signup')">Üye Ol</button>
+            </div>
+
+            <div class="error-msg" id="errorMsg"></div>
+            <div class="info-msg" id="infoMsg"></div>
+
+            <!-- LOGIN FORM (kompakt) -->
+            <form class="auth-form is-active" id="loginForm" data-form="login">
+                <h2 class="login-welcome">Tekrar Hoş Geldiniz</h2>
+
+                <div class="field compact">
+                    <input type="email" name="email" required autocomplete="email" placeholder="Kurumsal e-posta adresiniz">
+                </div>
+                <div class="field compact password-field">
+                    <input type="password" name="password" required autocomplete="current-password" placeholder="Şifre">
+                    <button type="button" class="pw-toggle" aria-label="Şifreyi göster/gizle" onclick="togglePassword(this)"><i class="fas fa-eye"></i></button>
+                </div>
+
+                <div class="login-row">
+                    <label class="remember-me">
+                        <input type="checkbox" name="remember_me" id="rememberMe">
+                        <span>Beni hatırla</span>
+                    </label>
+                    <a class="forgot-link" onclick="onForgotPassword()">Şifremi unuttum?</a>
+                </div>
+
+                <button type="submit" class="btn-login-primary"><i class="fas fa-right-to-bracket"></i> Giriş Yap</button>
+
+                <button type="button" class="btn-google-strong" onclick="triggerGooglePrompt()">
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    <span>Google ile Giriş Yap</span>
+                </button>
+
+                <div id="googleLoginContainer" style="display:none;"></div>
+
+                <div class="more-ways">
+                    <a onclick="showMoreSignInWays()">Diğer giriş yolları</a>
+                </div>
+
+                <div class="auth-foot">
+                    Hesabınız yok mu? <a onclick="showTab('signup')">Üye Ol</a>
+                </div>
             </form>
 
-            <div class="demo-info">
-                <strong>Demo Giriş:</strong><br>
-                Admin: admin@traktorsektoranalizi.com / admin2024<br>
-                Marka: demo@john-deere.com / demo2024
-            </div>
-        </div>
+            <!-- SIGNUP WIZARD -->
+            <form class="auth-form" id="signupForm" data-form="signup">
+                <div class="wizard-steps">
+                    <div class="wizard-step is-active" data-step="1"></div>
+                    <div class="wizard-step" data-step="2"></div>
+                    <div class="wizard-step" data-step="3"></div>
+                    <div class="wizard-step" data-step="4"></div>
+                </div>
 
-        <div class="brand-logos">
-            <span>BAŞAK</span><span>CASE IH</span><span>DEUTZ-FAHR</span><span>ERKUNT</span>
-            <span>HATTAT</span><span>JOHN DEERE</span><span>KUBOTA</span><span>LANDINI</span>
-            <span>MASSEY FERGUSON</span><span>NEW HOLLAND</span><span>SAME</span><span>TÜMOSAN</span>
-            <span>SOLIS</span><span>FENDT</span><span>VALTRA</span><span>CLAAS</span>
-        </div>
+                <!-- ADIM 1: Plan Seç -->
+                <div class="wizard-stage" data-stage="1">
+                    <h2 class="wizard-title">1. Paket seçin</h2>
+                    <p class="wizard-step-label">Sol panelde detayları inceleyebilirsiniz. Sonradan değiştirebilirsiniz.</p>
+                    <div class="field">
+                        <label>Plan</label>
+                        <select name="plan_slug" id="signupPlan" required onchange="syncPreview(this.value)">
+                            <option value="starter">Starter — ₺990 / ay</option>
+                            <option value="growth" selected>Growth — ₺2.990 / ay (en popüler)</option>
+                            <option value="enterprise">Enterprise — ₺9.990 / ay</option>
+                        </select>
+                    </div>
+                    <button type="button" class="btn-primary" onclick="wizardNext(1)"><i class="fas fa-arrow-right"></i> Devam et</button>
+                </div>
+
+                <!-- ADIM 2: Hesap Bilgileri -->
+                <div class="wizard-stage" data-stage="2" style="display:none;">
+                    <h2 class="wizard-title">2. Hesap bilgileri</h2>
+                    <p class="wizard-step-label">Kurumsal e-posta + güçlü şifre ile kayıt olun veya Google hesabınızı bağlayın — ikisi de tam yetki verir.</p>
+
+                    <div id="googleSignupContainer" style="display:flex; justify-content:center;"></div>
+                    <div class="auth-divider">veya kurumsal e-posta ile kayıt</div>
+
+                    <div class="field">
+                        <label>Ad ve Soyad</label>
+                        <input type="text" name="full_name" required placeholder="Mehmet Demir">
+                    </div>
+                    <div class="field">
+                        <label>Kurumsal E-posta</label>
+                        <input type="email" name="email" required autocomplete="email" placeholder="ad.soyad@firma.com">
+                    </div>
+                    <div class="field">
+                        <label>Şifre (min 10 karakter, 1 büyük + 1 sayı + 1 özel)</label>
+                        <input type="password" name="password" required minlength="10" autocomplete="new-password" oninput="checkPasswordStrength(this)">
+                        <div class="password-strength" id="passwordStrength">Şifre güvenliği değerlendirilecek</div>
+                    </div>
+                    <div class="field-row">
+                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" onclick="wizardBack(2)"><i class="fas fa-arrow-left"></i> Geri</button>
+                        <button type="button" class="btn-primary" onclick="wizardNext(2)"><i class="fas fa-arrow-right"></i> Devam</button>
+                    </div>
+                </div>
+
+                <!-- ADIM 3: Marka Seçimi -->
+                <div class="wizard-stage" data-stage="3" style="display:none;">
+                    <h2 class="wizard-title">3. Marka seçimi</h2>
+                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu).</p>
+                    <div class="field">
+                        <input type="text" id="brandSearch" placeholder="Marka ara..." onkeyup="filterBrands(this.value)">
+                    </div>
+                    <div class="brand-grid-mini" id="brandGrid"></div>
+                    <input type="hidden" name="brand_id" id="brandIdHidden" required>
+                    <div class="field-row" style="margin-top: 10px;">
+                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" onclick="wizardBack(3)"><i class="fas fa-arrow-left"></i> Geri</button>
+                        <button type="button" class="btn-primary" onclick="wizardNext(3)"><i class="fas fa-arrow-right"></i> Devam</button>
+                    </div>
+                </div>
+
+                <!-- ADIM 4: Firma & Unvan -->
+                <div class="wizard-stage" data-stage="4" style="display:none;">
+                    <h2 class="wizard-title">4. Firma bilgileri</h2>
+                    <p class="wizard-step-label">Yetkilisi olduğunuz firmanın bilgileri ve sizin pozisyonunuz.</p>
+                    <div class="field">
+                        <label>Firma Adı</label>
+                        <input type="text" name="company_name" required placeholder="ABC Tarım Ltd.">
+                    </div>
+                    <div class="field">
+                        <label>Pozisyon / Unvan</label>
+                        <select name="job_title" required>
+                            <option value="">Pozisyon seçin...</option>
+                            <option value="Genel Müdür">Genel Müdür</option>
+                            <option value="Pazarlama Müdürü">Pazarlama Müdürü</option>
+                            <option value="Satış Müdürü">Satış Müdürü</option>
+                            <option value="Bayi Sahibi">Bayi Sahibi</option>
+                            <option value="Distribütör Yöneticisi">Distribütör Yöneticisi</option>
+                            <option value="Strateji / İş Geliştirme">Strateji / İş Geliştirme</option>
+                            <option value="CFO">CFO</option>
+                            <option value="Diğer">Diğer</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Firma Türü</label>
+                        <select name="dealer_or_distributor" required>
+                            <option value="bayi">Bayi</option>
+                            <option value="distributor">Distribütör</option>
+                            <option value="oem">OEM / Marka HQ</option>
+                            <option value="diger">Diğer</option>
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label>Vergi Dairesi (ops.)</label>
+                            <input type="text" name="company_tax_office" placeholder="Beşiktaş VD">
+                        </div>
+                        <div class="field">
+                            <label>Vergi/VKN (ops.)</label>
+                            <input type="text" name="company_tax_number" placeholder="1234567890">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label>Telefon (ops.)</label>
+                            <input type="tel" name="phone" placeholder="+90 5xx ...">
+                        </div>
+                        <div class="field">
+                            <label>Şehir (ops.)</label>
+                            <input type="text" name="city" placeholder="Konya">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" onclick="wizardBack(4)"><i class="fas fa-arrow-left"></i> Geri</button>
+                        <button type="submit" class="btn-primary" id="btnSignup"><i class="fas fa-check-circle"></i> Üyeliği Tamamla</button>
+                    </div>
+                    <div class="auth-foot" style="margin-top: 6px;">
+                        <i class="fas fa-shield-halved"></i> Bilgileriniz şifreli kanal üzerinden iletilir, kredi kartı bilgisi alınmaz.
+                    </div>
+                </div>
+            </form>
+        </section>
     </div>
 
-    <script src="api_v3.js?v=5.0"></script>
+    <script src="api_v3.js?v=5.85-mc"></script>
     <script>
-        // Eski/bozuk token varsa önce doğrula, geçersizse temizle
-        if (API.token) {
-            API.me().then(user => {
-                if (user) window.location.href = '/';
-                else { localStorage.removeItem('auth_token'); localStorage.removeItem('user_data'); API.token = null; }
-            }).catch(() => { localStorage.removeItem('auth_token'); localStorage.removeItem('user_data'); API.token = null; });
+        const SUPERUSER_HINT = ['yukselozdek@gmail.com'];
+        let allBrands = [];
+        let signupCurrentStage = 1;
+
+        function showPreview(slug) {
+            document.querySelectorAll('.preview-tab').forEach(t => t.classList.toggle('is-active', t.dataset.preview === slug));
+            document.querySelectorAll('.preview-content').forEach(c => c.classList.toggle('is-active', c.id === `preview-${slug}`));
         }
 
+        function syncPreview(slug) { showPreview(slug); }
+
+        function showTab(name) {
+            document.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === name));
+            document.querySelectorAll('.auth-form').forEach(f => f.classList.toggle('is-active', f.dataset.form === name));
+            hideMessages();
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg; el.style.display = 'block';
+            document.getElementById('infoMsg').style.display = 'none';
+        }
+        function showInfo(msg) {
+            const el = document.getElementById('infoMsg');
+            el.textContent = msg; el.style.display = 'block';
+            document.getElementById('errorMsg').style.display = 'none';
+        }
+        function hideMessages() {
+            document.getElementById('errorMsg').style.display = 'none';
+            document.getElementById('infoMsg').style.display = 'none';
+        }
+
+        function checkPasswordStrength(input) {
+            const v = input.value;
+            const strength = document.getElementById('passwordStrength');
+            const len = v.length, hasUpper = /[A-ZÇĞİÖŞÜ]/.test(v), hasNum = /\d/.test(v), hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(v);
+            if (len === 0) { strength.textContent = 'Şifre güvenliği değerlendirilecek'; strength.className = 'password-strength'; return; }
+            if (len < 10 || !hasUpper || !hasNum || !hasSpecial) {
+                strength.textContent = `Eksik: ${[len<10?'10+ karakter':null, !hasUpper?'büyük harf':null, !hasNum?'rakam':null, !hasSpecial?'özel karakter':null].filter(Boolean).join(', ')}`;
+                strength.className = 'password-strength is-weak';
+            } else if (len < 14) {
+                strength.textContent = '✓ Güvenli — daha güçlü için 14+ karakter önerilir'; strength.className = 'password-strength is-medium';
+            } else {
+                strength.textContent = '✓ Çok güçlü'; strength.className = 'password-strength is-strong';
+            }
+        }
+
+        function checkSuperuserHint() {
+            const emailInput = document.querySelector('#loginForm input[name="email"]');
+            const banner = document.getElementById('superuserBanner');
+            if (!emailInput) return;
+            emailInput.addEventListener('input', () => {
+                const v = emailInput.value.trim().toLowerCase();
+                banner.style.display = SUPERUSER_HINT.includes(v) ? 'block' : 'none';
+            });
+        }
+
+        function wizardGoTo(stage) {
+            signupCurrentStage = stage;
+            document.querySelectorAll('.wizard-stage').forEach(s => s.style.display = (Number(s.dataset.stage) === stage ? 'flex' : 'none'));
+            document.querySelectorAll('.wizard-stage').forEach(s => s.style.flexDirection = 'column');
+            document.querySelectorAll('.wizard-stage').forEach(s => s.style.gap = '12px');
+            document.querySelectorAll('.wizard-step').forEach(el => {
+                const n = Number(el.dataset.step);
+                el.classList.toggle('is-done', n < stage);
+                el.classList.toggle('is-active', n === stage);
+            });
+            hideMessages();
+        }
+
+        function wizardNext(currentStage) {
+            const form = document.getElementById('signupForm');
+            const stage = form.querySelector(`.wizard-stage[data-stage="${currentStage}"]`);
+            // Validate stage inputs
+            if (currentStage === 2) {
+                const required = ['full_name', 'email', 'password'];
+                for (const f of required) {
+                    const inp = stage.querySelector(`[name="${f}"]`);
+                    if (!inp.value || !inp.checkValidity()) { showError(`${inp.previousElementSibling?.textContent || f} alanı eksik veya geçersiz`); return; }
+                }
+                const pw = stage.querySelector('[name="password"]').value;
+                const policy = /^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/;
+                if (!policy.test(pw)) { showError('Şifre politikasını karşılamıyor (10+ karakter, büyük harf, sayı, özel karakter)'); return; }
+            }
+            if (currentStage === 3) {
+                const brandId = document.getElementById('brandIdHidden').value;
+                if (!brandId) { showError('Marka seçimi zorunludur'); return; }
+            }
+            wizardGoTo(currentStage + 1);
+        }
+
+        function wizardBack(currentStage) {
+            wizardGoTo(currentStage - 1);
+        }
+
+        async function loadBrandsForSignup() {
+            try {
+                const r = await fetch('/api/brand-portals/directory').then(r => r.json());
+                allBrands = (Array.isArray(r) ? r : []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'tr'));
+                renderBrands(allBrands);
+            } catch (e) {
+                showError('Marka listesi yüklenemedi');
+            }
+        }
+
+        function renderBrands(list) {
+            const grid = document.getElementById('brandGrid');
+            grid.innerHTML = list.map(b => `<div class="brand-mini-card" data-brand-id="${b.id}" onclick="selectBrand(${b.id}, '${(b.name || '').replace(/'/g, "\\'")}')">${escapeHtml(b.name || '')}</div>`).join('') || '<p style="color: var(--muted); font-size: 12px;">Marka bulunamadı.</p>';
+        }
+
+        function filterBrands(query) {
+            const q = String(query || '').toLowerCase();
+            renderBrands(allBrands.filter(b => (b.name || '').toLowerCase().includes(q)));
+        }
+
+        function selectBrand(id, name) {
+            document.getElementById('brandIdHidden').value = id;
+            document.querySelectorAll('.brand-mini-card').forEach(el => el.classList.toggle('is-selected', Number(el.dataset.brandId) === Number(id)));
+        }
+
+        function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+        function togglePassword(btn) {
+            const input = btn.parentElement.querySelector('input[type="password"], input[type="text"]');
+            if (!input) return;
+            const isHidden = input.type === 'password';
+            input.type = isHidden ? 'text' : 'password';
+            btn.querySelector('i').className = isHidden ? 'fas fa-eye-slash' : 'fas fa-eye';
+        }
+
+        function triggerGooglePrompt() {
+            if (!window.GOOGLE_OAUTH_CLIENT_ID) {
+                showError('Google girişi henüz yapılandırılmamış (GOOGLE_OAUTH_CLIENT_ID boş). Yönetici .env dosyasına Google OAuth Client ID ekledikten sonra çalışacak. Şu an kurumsal e-posta + şifre ile giriş yapabilir veya Üye Ol sekmesinden kayıt olabilirsiniz.');
+                return;
+            }
+            if (!window.google || !google.accounts || !google.accounts.id) {
+                showError('Google kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edip sayfayı yenileyin.');
+                return;
+            }
+            try {
+                // One-tap promptu tetikle; kullanıcı reddederse popup butonu fallback olarak görünür hale getir
+                google.accounts.id.prompt((notification) => {
+                    if (notification.isNotDisplayed && notification.isNotDisplayed()) {
+                        // Pop-up engellendi ya da kullanıcı zaten kapattı → görünür native butona geç
+                        const native = document.getElementById('googleLoginContainer');
+                        if (native) {
+                            native.style.display = 'flex';
+                            showInfo('Google penceresi açılmadı. Beyaz Google butonu yerine altta beliren resmi Google butonunu kullanın.');
+                        }
+                    }
+                });
+            } catch (e) {
+                console.warn('Google prompt hatası', e);
+                showError('Google penceresi açılamadı: ' + (e.message || 'bilinmeyen hata'));
+            }
+        }
+
+        function updateGoogleButtonState() {
+            const btn = document.querySelector('.btn-google-strong');
+            if (!btn) return;
+            if (!window.GOOGLE_OAUTH_CLIENT_ID) {
+                btn.classList.add('is-disabled');
+                btn.title = 'Google OAuth henüz yapılandırılmamış';
+            } else {
+                btn.classList.remove('is-disabled');
+                btn.title = '';
+            }
+        }
+
+        function onForgotPassword() {
+            showInfo('Şifre sıfırlama yakında. Lütfen yukselozdek@gmail.com adresine ulaşın veya Üye Ol sekmesinden yeni hesap açın.');
+        }
+
+        function showMoreSignInWays() {
+            showInfo('Şu anda Google ve kurumsal e-posta + şifre giriş yolları desteklenir. Kurumsal SSO/SAML Enterprise paketlere özel olarak yapılandırılabilir.');
+        }
+
+        // Login submit
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const btn = document.getElementById('btnLogin');
-            const errEl = document.getElementById('errorMsg');
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Giriş yapılıyor...';
-            errEl.style.display = 'none';
-
+            hideMessages();
+            const fd = new FormData(e.target);
+            const email = fd.get('email').trim().toLowerCase();
+            const remember = !!fd.get('remember_me');
             try {
-                const data = await API.login(
-                    document.getElementById('email').value,
-                    document.getElementById('password').value
-                );
+                const data = await API.login(email, fd.get('password'));
                 if (data?.token) {
+                    if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
+                    if (remember) localStorage.setItem('remember_email', email);
+                    else localStorage.removeItem('remember_email');
                     window.location.href = '/';
                 }
             } catch (err) {
-                errEl.textContent = err.message || 'Giriş başarısız';
-                errEl.style.display = 'block';
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Giriş Yap';
+                showError(err.message || 'Giriş başarısız');
             }
         });
+
+        // Beni hatırla — sayfa açılışında doldur
+        (function prefillRememberedEmail() {
+            const remembered = localStorage.getItem('remember_email');
+            if (remembered) {
+                const emailInput = document.querySelector('#loginForm input[name="email"]');
+                const cb = document.getElementById('rememberMe');
+                if (emailInput) emailInput.value = remembered;
+                if (cb) cb.checked = true;
+            }
+        })();
+
+        // Signup submit (final stage)
+        document.getElementById('signupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessages();
+            const btn = document.getElementById('btnSignup');
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Hesap oluşturuluyor...';
+            const fd = new FormData(e.target);
+            const payload = {
+                email: fd.get('email').trim().toLowerCase(),
+                password: fd.get('password'),
+                full_name: fd.get('full_name').trim(),
+                brand_id: Number(document.getElementById('brandIdHidden').value),
+                plan_slug: fd.get('plan_slug') || 'growth',
+                company_name: fd.get('company_name').trim(),
+                company_tax_office: fd.get('company_tax_office') || null,
+                company_tax_number: fd.get('company_tax_number') || null,
+                job_title: fd.get('job_title'),
+                dealer_or_distributor: fd.get('dealer_or_distributor'),
+                phone: fd.get('phone') || null,
+                city: fd.get('city') || null
+            };
+            try {
+                const data = await API.signup(payload);
+                if (data?.token) {
+                    showInfo('Üyeliğiniz oluşturuldu. Ödeme adımına yönlendiriliyorsunuz...');
+                    setTimeout(() => { window.location.href = `/?page=subscription&plan=${payload.plan_slug}&billing=start`; }, 800);
+                }
+            } catch (err) {
+                btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> Üyeliği Tamamla';
+                showError(err.message || 'Kayıt başarısız');
+            }
+        });
+
+        // Google Sign-in
+        function initGoogle() {
+            if (!window.google) return setTimeout(initGoogle, 500);
+            const clientId = window.GOOGLE_OAUTH_CLIENT_ID || '';
+            if (!clientId) {
+                document.getElementById('googleLoginContainer').innerHTML = '<small style="color: var(--muted); font-size: 11px;">Google OAuth yapılandırılmadı</small>';
+                document.getElementById('googleSignupContainer').innerHTML = '';
+                return;
+            }
+            try {
+                google.accounts.id.initialize({
+                    client_id: clientId,
+                    callback: handleGoogleCredential,
+                    auto_select: false,
+                    cancel_on_tap_outside: true
+                });
+                ['googleLoginContainer', 'googleSignupContainer'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        google.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', text: 'continue_with', shape: 'rectangular', width: 320 });
+                    }
+                });
+            } catch (e) {
+                console.warn('Google init hatası', e);
+            }
+        }
+
+        async function handleGoogleCredential(response) {
+            hideMessages();
+            try {
+                const fd = new FormData(document.getElementById('signupForm'));
+                const payload = {
+                    id_token: response.credential,
+                    brand_id: document.getElementById('brandIdHidden').value ? Number(document.getElementById('brandIdHidden').value) : null,
+                    plan_slug: fd.get('plan_slug') || 'growth',
+                    company_name: fd.get('company_name') || null,
+                    job_title: fd.get('job_title') || null
+                };
+                const r = await fetch('/api/auth/google', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await r.json();
+                if (r.status === 202 && data.code === 'GOOGLE_NEEDS_PROFILE') {
+                    showInfo(`Google hesabınız tanımlandı (${data.google_email}). Üye Ol sekmesinde marka ve firma bilgisi girin.`);
+                    showTab('signup');
+                    return;
+                }
+                if (!r.ok) { showError(data.error || 'Google girişi başarısız'); return; }
+                if (data?.token) {
+                    API.setToken(data.token);
+                    localStorage.setItem('user_data', JSON.stringify(data.user));
+                    if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
+                    if (data.is_new && data.pending_subscription) {
+                        window.location.href = `/?page=subscription&plan=${data.pending_subscription.plan_slug || 'growth'}&billing=start`;
+                    } else {
+                        window.location.href = '/';
+                    }
+                }
+            } catch (err) {
+                showError(err.message || 'Google işlemi başarısız');
+            }
+        }
+
+        // Init
+        loadBrandsForSignup();
+        checkSuperuserHint();
+        initGoogle();
+
+        // Auto-redirect if already logged in
+        if (API.token) {
+            API.me().then(u => { if (u) window.location.href = '/'; }).catch(() => { localStorage.removeItem('auth_token'); API.token = null; });
+        }
+    </script>
+    <script>
+        // Backend'den Google client ID'sini opsiyonel olarak al, butonun durumunu güncelle
+        fetch('/api/auth/google-config')
+            .then(r => r.ok ? r.json() : {})
+            .then(c => {
+                if (c && c.client_id) {
+                    window.GOOGLE_OAUTH_CLIENT_ID = c.client_id;
+                    initGoogle();
+                }
+                if (typeof updateGoogleButtonState === 'function') updateGoogleButtonState();
+            })
+            .catch(() => { if (typeof updateGoogleButtonState === 'function') updateGoogleButtonState(); });
     </script>
 </body>
 </html>

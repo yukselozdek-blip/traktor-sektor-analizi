@@ -6,8 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "deploy-bridge": "node deploy-bridge.js",
+    "media-watch-bridge": "node media-watch-bridge.js",
+    "media-watch-register": "node scripts/register-media-watch-workflows.js",
+    "model-image-bridge": "node model-image-bridge.js",
     "seed": "node database/seed.js",
-    "migrate": "node database/migrate.js"
+    "migrate": "node database/migrate.js",
+    "check:ui-copy": "node scripts/check-ui-copy.js"
   },
   "dependencies": {
     "axios": "^1.6.7",
@@ -25,6 +30,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "markdown-pdf": "^11.0.0",
     "nodemon": "^3.0.2"
   },
   "engines": {

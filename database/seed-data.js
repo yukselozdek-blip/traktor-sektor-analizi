@@ -2,30 +2,44 @@
 // TRAKTÖR SEKTÖR ANALİZİ - SEED DATA
 // ============================================
 
+// Marka kurumsal renk paleti — RESMI KAYNAKLI doğrulama
+// Her primary/secondary/accent için kaynak referansı .claude/skills/marka-kurumsal-renk-anayasasi/SKILL.md içinde.
+// Doğrulama kaynakları: brandcolorcode.com (brand book derlemeleri), usbrandcolors.com,
+// kioti.eu brand-guideline (resmi), Pantone karşılıkları belirtildi.
 const brands = [
-    { name: 'BAŞAK', slug: 'basak', primary_color: '#D32F2F', secondary_color: '#B71C1C', accent_color: '#FF5252', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'BAŞAK Traktör' },
-    { name: 'CASE IH', slug: 'case-ih', primary_color: '#CC0000', secondary_color: '#990000', accent_color: '#FF3333', text_color: '#FFFFFF', country_of_origin: 'ABD', parent_company: 'CNH Industrial' },
-    { name: 'DEUTZ-FAHR', slug: 'deutz-fahr', primary_color: '#4CAF50', secondary_color: '#2E7D32', accent_color: '#81C784', text_color: '#FFFFFF', country_of_origin: 'Almanya', parent_company: 'SDF Group' },
+    // Türk markalar (resmi web sitesi: logo + hero band'den)
+    { name: 'BAŞAK', slug: 'basak', primary_color: '#D32F2F', secondary_color: '#B71C1C', accent_color: '#FFC107', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'BAŞAK Traktör' },
+    { name: 'TÜMOSAN', slug: 'tumosan', primary_color: '#E30613', secondary_color: '#B30510', accent_color: '#F39200', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'Tümosan Motor' },
     { name: 'ERKUNT', slug: 'erkunt', primary_color: '#1565C0', secondary_color: '#0D47A1', accent_color: '#42A5F5', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'Erkunt Traktör' },
     { name: 'HATTAT', slug: 'hattat', primary_color: '#E65100', secondary_color: '#BF360C', accent_color: '#FF8A65', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'Hattat Holding' },
-    { name: 'JOHN DEERE', slug: 'john-deere', primary_color: '#367C2B', secondary_color: '#1B5E20', accent_color: '#FFDE03', text_color: '#FFFFFF', country_of_origin: 'ABD', parent_company: 'Deere & Company' },
-    { name: 'KUBOTA', slug: 'kubota', primary_color: '#FF6600', secondary_color: '#E65100', accent_color: '#FFB74D', text_color: '#FFFFFF', country_of_origin: 'Japonya', parent_company: 'Kubota Corporation' },
-    { name: 'LANDINI', slug: 'landini', primary_color: '#1976D2', secondary_color: '#0D47A1', accent_color: '#64B5F6', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'ARGO Tractors' },
-    { name: 'MASSEY FERGUSON', slug: 'massey-ferguson', primary_color: '#D32F2F', secondary_color: '#B71C1C', accent_color: '#9E9E9E', text_color: '#FFFFFF', country_of_origin: 'ABD', parent_company: 'AGCO Corporation' },
-    { name: 'NEW HOLLAND', slug: 'new-holland', primary_color: '#1565C0', secondary_color: '#0D47A1', accent_color: '#FDD835', text_color: '#FFFFFF', country_of_origin: 'İtalya/ABD', parent_company: 'CNH Industrial' },
-    { name: 'SAME', slug: 'same', primary_color: '#2E7D32', secondary_color: '#1B5E20', accent_color: '#A5D6A7', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'SDF Group' },
-    { name: 'TÜMOSAN', slug: 'tumosan', primary_color: '#880E4F', secondary_color: '#4A0028', accent_color: '#F06292', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'Tümosan Motor' },
-    { name: 'SOLIS', slug: 'solis', primary_color: '#00695C', secondary_color: '#004D40', accent_color: '#4DB6AC', text_color: '#FFFFFF', country_of_origin: 'Hindistan', parent_company: 'International Tractors Ltd' },
-    { name: 'ANTONIO CARRARO', slug: 'antonio-carraro', primary_color: '#FF8F00', secondary_color: '#E65100', accent_color: '#FFB300', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'Antonio Carraro S.p.A.' },
-    { name: 'McCORMICK', slug: 'mccormick', primary_color: '#C62828', secondary_color: '#8E0000', accent_color: '#FF5252', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'ARGO Tractors' },
-    { name: 'FENDT', slug: 'fendt', primary_color: '#2E7D32', secondary_color: '#1B5E20', accent_color: '#76FF03', text_color: '#FFFFFF', country_of_origin: 'Almanya', parent_company: 'AGCO Corporation' },
-    { name: 'VALTRA', slug: 'valtra', primary_color: '#C62828', secondary_color: '#8E0000', accent_color: '#BDBDBD', text_color: '#FFFFFF', country_of_origin: 'Finlandiya', parent_company: 'AGCO Corporation' },
-    { name: 'CLAAS', slug: 'claas', primary_color: '#7CB342', secondary_color: '#558B2F', accent_color: '#C6FF00', text_color: '#000000', country_of_origin: 'Almanya', parent_company: 'CLAAS Group' },
-    { name: 'FIAT', slug: 'fiat', primary_color: '#E65100', secondary_color: '#BF360C', accent_color: '#FFAB40', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'CNH Industrial' },
-    { name: 'YANMAR', slug: 'yanmar', primary_color: '#D32F2F', secondary_color: '#9A0007', accent_color: '#FF6659', text_color: '#FFFFFF', country_of_origin: 'Japonya', parent_company: 'Yanmar Holdings' },
-    { name: 'FERRARI', slug: 'ferrari-tractors', primary_color: '#FF6F00', secondary_color: '#E65100', accent_color: '#FFA726', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'BCS Group' },
     { name: 'KARATAŞ', slug: 'karatas', primary_color: '#37474F', secondary_color: '#263238', accent_color: '#78909C', text_color: '#FFFFFF', country_of_origin: 'Türkiye', parent_company: 'Karataş Traktör' },
-    { name: 'KIOTI', slug: 'kioti', primary_color: '#E53935', secondary_color: '#C62828', accent_color: '#FF8A80', text_color: '#FFFFFF', country_of_origin: 'Güney Kore', parent_company: 'Daedong Corporation' },
+    // CNH Industrial (CASE IH, New Holland, Fiat) — brandcolorcode.com
+    { name: 'CASE IH', slug: 'case-ih', primary_color: '#D0002D', secondary_color: '#9E0021', accent_color: '#000000', text_color: '#FFFFFF', country_of_origin: 'ABD', parent_company: 'CNH Industrial' },
+    { name: 'NEW HOLLAND', slug: 'new-holland', primary_color: '#003F7D', secondary_color: '#002A57', accent_color: '#FECD1A', text_color: '#FFFFFF', country_of_origin: 'İtalya/ABD', parent_company: 'CNH Industrial' },
+    { name: 'FIAT', slug: 'fiat', primary_color: '#B11116', secondary_color: '#8B0E12', accent_color: '#1F1F1F', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'CNH Industrial' },
+    // SDF Group (Deutz-Fahr, Same, Lamborghini, Hürlimann) — brandcolorcode.com
+    { name: 'DEUTZ-FAHR', slug: 'deutz-fahr', primary_color: '#76B824', secondary_color: '#5C9418', accent_color: '#185081', text_color: '#FFFFFF', country_of_origin: 'Almanya', parent_company: 'SDF Group' },
+    { name: 'SAME', slug: 'same', primary_color: '#00712F', secondary_color: '#004D1E', accent_color: '#A5D6A7', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'SDF Group' },
+    // AGCO Corporation (Massey Ferguson, Fendt, Valtra) — brandcolorcode.com
+    { name: 'MASSEY FERGUSON', slug: 'massey-ferguson', primary_color: '#C71121', secondary_color: '#8E0E18', accent_color: '#606163', text_color: '#FFFFFF', country_of_origin: 'ABD', parent_company: 'AGCO Corporation' },
+    { name: 'FENDT', slug: 'fendt', primary_color: '#004713', secondary_color: '#003510', accent_color: '#006225', text_color: '#FFFFFF', country_of_origin: 'Almanya', parent_company: 'AGCO Corporation' },
+    { name: 'VALTRA', slug: 'valtra', primary_color: '#DC0029', secondary_color: '#9A001D', accent_color: '#BDBDBD', text_color: '#FFFFFF', country_of_origin: 'Finlandiya', parent_company: 'AGCO Corporation' },
+    // John Deere — usbrandcolors.com (Pantone 364 + 109)
+    { name: 'JOHN DEERE', slug: 'john-deere', primary_color: '#367C2B', secondary_color: '#1B5E20', accent_color: '#FFDE00', text_color: '#FFFFFF', country_of_origin: 'ABD', parent_company: 'Deere & Company' },
+    // CLAAS — brandcolorcode.com (Pantone 583 lime green + Pantone 2347 red)
+    { name: 'CLAAS', slug: 'claas', primary_color: '#B4C618', secondary_color: '#8FA014', accent_color: '#FE0000', text_color: '#000000', country_of_origin: 'Almanya', parent_company: 'CLAAS Group' },
+    // Kubota — brand identity orange (resmi web sitesi)
+    { name: 'KUBOTA', slug: 'kubota', primary_color: '#FF7900', secondary_color: '#CC5F00', accent_color: '#FFB74D', text_color: '#FFFFFF', country_of_origin: 'Japonya', parent_company: 'Kubota Corporation' },
+    // ARGO Tractors (Landini, McCormick) — resmi web siteleri
+    { name: 'LANDINI', slug: 'landini', primary_color: '#003E7E', secondary_color: '#002A57', accent_color: '#0070C0', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'ARGO Tractors' },
+    { name: 'McCORMICK', slug: 'mccormick', primary_color: '#B81F23', secondary_color: '#7E1417', accent_color: '#E53935', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'ARGO Tractors' },
+    // Diğer
+    { name: 'ANTONIO CARRARO', slug: 'antonio-carraro', primary_color: '#FF8F00', secondary_color: '#E65100', accent_color: '#FFB300', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'Antonio Carraro S.p.A.' },
+    { name: 'YANMAR', slug: 'yanmar', primary_color: '#DC1E37', secondary_color: '#B5172E', accent_color: '#FF6659', text_color: '#FFFFFF', country_of_origin: 'Japonya', parent_company: 'Yanmar Holdings' },
+    { name: 'SOLIS', slug: 'solis', primary_color: '#00853F', secondary_color: '#005C2A', accent_color: '#F39200', text_color: '#FFFFFF', country_of_origin: 'Hindistan', parent_company: 'International Tractors Ltd' },
+    { name: 'FERRARI', slug: 'ferrari-tractors', primary_color: '#FF6F00', secondary_color: '#E65100', accent_color: '#FFA726', text_color: '#FFFFFF', country_of_origin: 'İtalya', parent_company: 'BCS Group' },
+    // KIOTI — resmi brand guideline (kioti.eu) — TURUNCU değil kırmızı (DÜZELTME!)
+    { name: 'KIOTI', slug: 'kioti', primary_color: '#DE4826', secondary_color: '#B53A1F', accent_color: '#8D9093', text_color: '#FFFFFF', country_of_origin: 'Güney Kore', parent_company: 'Daedong Corporation' },
     { name: 'TAFE', slug: 'tafe', primary_color: '#1565C0', secondary_color: '#0D47A1', accent_color: '#42A5F5', text_color: '#FFFFFF', country_of_origin: 'Hindistan', parent_company: 'TAFE Limited' }
 ];
 
@@ -114,23 +128,131 @@ const provinces = [
     { name: 'Düzce', plate_code: '81', region: 'Karadeniz', lat: 40.8438, lng: 31.1565, pop: 395679 }
 ];
 
-// Abonelik planları
+// ============================================
+// ABONELİK MİMARİSİ (3 paket: Starter / Growth / Enterprise)
+// ============================================
+// Karar gerekçesi: TÜİK aylık veri ritmi (T+15 gün), Türkiye B2B SaaS fiyat anchor noktaları,
+// pazarlama-finans dengesi (sabit MRR + esnek ARPU). AI sorgu sayısı kotalı (token değil),
+// kapsam (rakip sayısı, geriye dönük yıl) tier başına farklı, WhatsApp sadece Enterprise.
+
+const PLAN_FEATURE_CATALOG = {
+    starter: [
+        'dashboard_basic',
+        'map_basic',
+        'historical_basic',         // 12 ay limit (limit ayrı kontrol edilir)
+        'province_basic',
+        'model_catalog',
+        'hp_segment_basic',
+        'brand_summary',
+        'export_limited'            // 50 satır/ay
+    ],
+    growth: [
+        'competitor_analysis',      // 5 rakipe kadar
+        'brand_compare',
+        'model_compare',
+        'province_top_brand',
+        'model_region_analysis',
+        'media_watch',
+        'export_basic',             // sınırsız
+        'weather_data',
+        'tarmakbir_view',
+        'historical_extended',      // 36 ay
+        'ai_insights_limited'       // ayda 50 sorgu
+    ],
+    enterprise: [
+        'ai_insights',              // sınırsız (fair use)
+        'ai_forecast',
+        'ai_brief',
+        'automation_roadmap',
+        'whatsapp_query',           // 3 telefon hattı
+        'priority_support',
+        'api_access',               // 10K istek/ay
+        'custom_reports',
+        'scheduled_exports',        // zamanlanmış otomatik export
+        'historical_full',          // tüm geçmiş
+        'unlimited_competitors',    // sınırsız rakip
+        'province_diff_alerts'      // il bazlı diff alarmı
+    ]
+};
+
+const growthFeatures = [...PLAN_FEATURE_CATALOG.starter, ...PLAN_FEATURE_CATALOG.growth];
+const enterpriseFeatures = [...growthFeatures, ...PLAN_FEATURE_CATALOG.enterprise];
+
+// Kapsam (scope) limitleri — feature_keys yetmez, sayısal limitler buradan okunur
+const PLAN_LIMITS = {
+    starter:    { max_rivals: 0,   history_months: 12,   ai_queries_monthly: 0,    export_rows_monthly: 50,   api_requests_monthly: 0,     whatsapp_phones: 0 },
+    growth:     { max_rivals: 5,   history_months: 36,   ai_queries_monthly: 50,   export_rows_monthly: -1,   api_requests_monthly: 0,     whatsapp_phones: 0 },
+    enterprise: { max_rivals: -1,  history_months: -1,   ai_queries_monthly: -1,   export_rows_monthly: -1,   api_requests_monthly: 10000, whatsapp_phones: 3 }
+};
+
 const subscriptionPlans = [
     {
-        name: 'Temel', slug: 'temel', price_monthly: 4999.00, price_yearly: 49990.00,
-        features: JSON.stringify(['Temel dashboard', 'İl bazlı satış verileri', 'Pazar payı görüntüleme', 'Aylık rapor']),
-        max_users: 2, has_ai_insights: false, has_competitor_analysis: false, has_weather_data: false, has_export: false
+        name: 'Starter', slug: 'starter', tier_rank: 1,
+        price_monthly: 990.00, price_yearly: 9990.00, currency: 'TRY',
+        description: 'Kendi markanızın saha verisini tek panoda izleyin',
+        features: JSON.stringify([
+            'Kendi marka satış ve pazar payı verileri',
+            'İl analizi ve Türkiye haritası',
+            'Son 12 ay tarihsel veri',
+            'HP segment dağılımı',
+            'Model kataloğu',
+            'Aylık tescil güncellemesi (TÜİK T+15 gün)',
+            'Aylık 50 satır Excel/PDF export',
+            'E-posta bildirimi (yeni veri yayımlandığında)',
+            '2 kullanıcı koltuğu'
+        ]),
+        feature_keys: JSON.stringify(PLAN_FEATURE_CATALOG.starter),
+        plan_limits: JSON.stringify(PLAN_LIMITS.starter),
+        max_users: 2,
+        has_ai_insights: false, has_competitor_analysis: false, has_weather_data: false, has_export: true
     },
     {
-        name: 'Profesyonel', slug: 'profesyonel', price_monthly: 9999.00, price_yearly: 99990.00,
-        features: JSON.stringify(['Gelişmiş dashboard', 'Tüm satış verileri', 'Rakip analizi', 'Hava durumu', 'AI öngörüler', 'Excel export', 'Haftalık rapor']),
-        max_users: 5, has_ai_insights: true, has_competitor_analysis: true, has_weather_data: true, has_export: true
+        name: 'Growth', slug: 'growth', tier_rank: 2,
+        price_monthly: 2990.00, price_yearly: 29990.00, currency: 'TRY',
+        description: 'Rakip baskısını izleyin, marka/model kıyaslayın, AI ile derinleşin',
+        features: JSON.stringify([
+            'Tüm Starter özellikleri',
+            'Rakip analizi (5 rakibe kadar)',
+            'Marka ve model karşılaştırma stüdyoları',
+            'İl liderlik merkezi',
+            'Model-Bölge analizi',
+            'Marka Medya Radarı (TR kaynaklar)',
+            'İklim Komuta Merkezi',
+            'Sınırsız Excel/PDF export',
+            'Son 36 ay tarihsel veri',
+            'AI Öngörüler (ayda 50 sorgu dahil)',
+            'Aylık yönetici brifi PDF',
+            '8 kullanıcı koltuğu'
+        ]),
+        feature_keys: JSON.stringify(growthFeatures),
+        plan_limits: JSON.stringify(PLAN_LIMITS.growth),
+        max_users: 8,
+        has_ai_insights: true, has_competitor_analysis: true, has_weather_data: true, has_export: true
     },
     {
-        name: 'Kurumsal', slug: 'kurumsal', price_monthly: 19999.00, price_yearly: 199990.00,
-        features: JSON.stringify(['Tam dashboard', 'Sınırsız veri', 'Gelişmiş AI analiz', 'Özel raporlama', 'API erişimi', 'Öncelikli destek', 'Eğitim', 'Günlük rapor']),
-        max_users: 20, has_ai_insights: true, has_competitor_analysis: true, has_weather_data: true, has_export: true
+        name: 'Enterprise', slug: 'enterprise', tier_rank: 3,
+        price_monthly: 9990.00, price_yearly: 99990.00, currency: 'TRY',
+        description: 'Sınırsız rakip, AI savaş odası, WhatsApp sorgu kanalı ve API erişimi',
+        features: JSON.stringify([
+            'Tüm Growth özellikleri',
+            'Sınırsız rakip analizi',
+            'Sınırsız AI Öngörüler (fair use)',
+            '12 aylık + uzun vade tahmin omurgası',
+            'AI yönetici brifi (kişiye özel)',
+            'WhatsApp sorgu kanalı (3 telefon)',
+            'API erişimi (10.000 istek/ay)',
+            'Otomasyon yol haritası',
+            'Zamanlanmış otomatik raporlar',
+            'İl bazlı diff alarmları',
+            'Tüm tarihsel veri + erken erişim',
+            'Öncelikli destek (4 saat SLA)',
+            '25 kullanıcı koltuğu'
+        ]),
+        feature_keys: JSON.stringify(enterpriseFeatures),
+        plan_limits: JSON.stringify(PLAN_LIMITS.enterprise),
+        max_users: 25,
+        has_ai_insights: true, has_competitor_analysis: true, has_weather_data: true, has_export: true
     }
 ];
 
-module.exports = { brands, provinces, subscriptionPlans };
+module.exports = { brands, provinces, subscriptionPlans, PLAN_FEATURE_CATALOG, PLAN_LIMITS };

@@ -1,7 +1,17 @@
 ---
 name: Traktor Sektor Analizi - Sistem Anayasasi
-description: Türkiye Traktör Sektör Analizi uygulamasına (Node.js, PostgreSQL, Vanilla JS) ait temel mimari kurallar, veritabanı ilişkileri, TUIK veri entegrasyonu, model yılı mantığı, sayfa standartları ve sunucu (Railway/Docker) dağıtım prensipleri. Herhangi bir yapay zeka asistanı bu projede geliştirme yapmadan önce MUTLAKA bu kılavuzu okumalı ve kurallara uymalıdır.
+description: Türkiye Traktör Sektör Analizi uygulamasına (Node.js, PostgreSQL, Vanilla JS) ait temel mimari kurallar, veritabanı ilişkileri, TUIK veri entegrasyonu, model yılı mantığı, sayfa standartları, veri kaynağı seçim kuralları ve sunucu (Railway/Docker) dağıtım prensipleri. Bu repo üzerinde geliştirme, SQL, import, dashboard, raporlama veya veri eşleştirme yapan herhangi bir yapay zeka asistanı projeye başlamadan önce bu kılavuzu okumalı; TeknikVeri ve TuikVeri alan detayları gerektiğinde eş skill olarak `traktor-veri-sozlugu` ile birlikte kullanmalıdır.
 ---
+
+## PROJE GIRIS NOKTASI
+
+- Bu repo uzerinde herhangi bir gelistirme yapmadan once bu skill'i temel proje baglami olarak kullan.
+- TeknikVeri, TuikVeri, alan anlamlari, eslestirme anahtarlari, fiyat kurallari ve sehir normalizasyonlari icin `../traktor-veri-sozlugu/SKILL.md` ve `../traktor-veri-sozlugu/references/veri-sozlugu.md` dosyalarini da oku.
+- Kullanıcıya görünen UI, dashboard, rapor, seed veya backend yanıt metni değişiyorsa `../turkce-karakter-anayasasi/SKILL.md` dosyasını da oku; görünür kopyada ASCII Türkçe bırakma.
+- Model fotoğrafı, galeri verisi, n8n görsel otomasyonu veya kullanıcıya görünen traktör görseli değişiyorsa `../model-gorsel-dogruluk-anayasasi/SKILL.md` dosyasını da oku; marka/seri/benzer model görselini ana model fotoğrafı gibi yayınlama.
+- SQL, import, dashboard, raporlama ve veri eslestirme islerinde hangi bilginin `teknik_veri`, `tuik_veri`, `sales_data` veya `sales_view` tablosundan gelecegini bu anayasa ile veri sozlugu birlikte belirler.
+- Projeyi her seferinde yeniden anlatmak yerine bu skill ve veri sozlugu skill'i sabit giris dokumani olarak kabul edilmelidir.
+- Uygulamanin lokal olarak nerede calistigi, hangi dosyanin hangi ortamda etkili oldugu ve Railway deploy akisi icin `references/deployment-runtime.md` dosyasini da oku.
 
 # TRAKTÖR SEKTÖR ANALİZİ - SİSTEM ANAYASASI ("YAPAY ZEKA KURALLARI")
 Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarşisini ve kodlama ilkelerini belirler. Projeye dahil olan tüm yapay zeka asistanlarının (ve geliştiricilerin), projede kod yazmadan veya değişiklik yapmadan önce bu "Anayasa" kurallarını benimsemesi **ZORUNLUDUR.**
@@ -22,6 +32,15 @@ Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarş
 - **Dağıtım:** Railway Cloud, `railway up --detach` ile deploy
 
 **YASAK:** React, Vue, Angular, Tailwind CSS, inline style (mevcut CSS sınıfları kullanılmalı).
+
+## 1.1 CALISMA ORTAMI VE GUNCELLEME GERCEGI
+- Lokal olarak esas uygulama `http://localhost:3002` adresinde calisir.
+- Production uygulama `https://affectionate-blessing-production-f2fe.up.railway.app/` adresindedir.
+- Bu projede `localhost:3000` baska bir uygulamaya ait olabilir; gelistirme ve dogrulama yaparken varsayilan adres olarak daima `localhost:3002` kullan.
+- Frontend dosyalari `public/` altindadir ve lokal Docker uygulamasina bagli volume uzerinden servis edilir; bu nedenle frontend degisiklikleri genelde tarayici yenilemesi ile gorunur.
+- Backend davranislari agirlikla `server.js` icindedir; bu dosyadaki degisikliklerin lokal calisan uygulamaya yansimasi icin runtime yeniden baslatmasi gerekebilir.
+- Lokal Railway deploy butonu hostta calisan `deploy-bridge.js` servisini kullanir; bu servis `http://127.0.0.1:3010` uzerinden calisir ve gerektiginde `npm run deploy-bridge` ile baslatilir.
+- Lokal deploy butonu sadece lokal uygulamada (`localhost:3002`) ve admin oturumunda kullanilmak uzere tasarlanmistir.
 
 ---
 
@@ -285,12 +304,37 @@ Bu pattern tüm endpoint'lerde tutarlı kullanılır. Sabit yıl yazılmaz, veri
 
 ## 8. DAĞITIM VE DEPLOYMENT
 
+### 8.0 Gerçek Runtime Adresleri
+- Lokal uygulama: `http://localhost:3002`
+- Lokal deploy bridge: `http://127.0.0.1:3010`
+- Production uygulama: `https://affectionate-blessing-production-f2fe.up.railway.app/`
+- Ayrıntılı runtime ve deploy rehberi: `references/deployment-runtime.md`
+
 ### 8.1 Railway Deployment Akışı
 ```bash
 git add . && git commit -m "mesaj" && git push origin master
 railway up --detach
 ```
 GitHub Actions deploy **çalışmıyor** (RAILWAY_TOKEN eksik). Deploy her zaman manuel Railway CLI ile yapılır.
+
+### 8.1.1 Lokal UI Üzerinden Deploy
+- `http://localhost:3002` üzerinden admin olarak giriş yap.
+- `Ayarlar` sayfasındaki `Railway'e Güncelle` butonunu kullan.
+- Bu buton hostta çalışan `deploy-bridge.js` servisine istek gönderir ve `railway up --detach` komutunu repo kökünden çalıştırır.
+- Buton deploy durumunu ve son Railway çıktısını aynı kartta gösterir.
+- Buton çalışmıyorsa önce deploy bridge'in ayakta olduğunu doğrula: `npm run deploy-bridge`
+
+### 8.1.2 Manuel CLI Deploy
+- Repo kök dizininde çalış: `c:\03-PROJELERİM\03-TraktorSektorAnalizi`
+- Host makinede Railway CLI ile `railway up --detach` çalıştır.
+- Deploy komutu Docker container içinden değil, host ortamdan çalıştırılmalıdır.
+
+### 8.1.3 Deploy Öncesi ve Sonrası Kontrol Listesi
+1. Değişikliğin lokal olarak `http://localhost:3002` üzerinde doğru göründüğünü doğrula.
+2. Frontend cache sorunlarında `public/index.html` içindeki script versiyonlarını güncellemeyi düşün.
+3. `server.js` veya backend davranışı değişti ise lokal runtime'in güncel kodla çalıştığından emin ol.
+4. Deploy sonrasında production URL üzerinde ilgili ekranı veya endpoint'i tekrar kontrol et.
+5. Production değişikliğini doğrulamadan "deploy tamam" varsayımı yapma.
 
 ### 8.2 initDB Akışı
 Server başlangıcında `initDB()` şu sırayla çalışır:

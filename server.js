@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,16 +18,35 @@ const WHATSAPP_QUERY_API_KEY = process.env.WHATSAPP_QUERY_API_KEY || '';
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+const MEDIA_WATCH_WEBHOOK_KEY = process.env.MEDIA_WATCH_WEBHOOK_KEY || process.env.WHATSAPP_QUERY_API_KEY || '';
 const N8N_WHATSAPP_PROCESSOR_URL = (
     process.env.N8N_WHATSAPP_PROCESSOR_URL
     || (process.env.RAILWAY_SERVICE_N8N_URL ? `https://${process.env.RAILWAY_SERVICE_N8N_URL}/webhook/whatsapp-sales-assistant-process-v4` : '')
 ).replace(/\/$/, '');
+const N8N_MODEL_INTEL_WEBHOOK_URL = (process.env.N8N_MODEL_INTEL_WEBHOOK_URL || '').replace(/\/$/, '');
+const MODEL_IMAGE_BRIDGE_URL = (process.env.MODEL_IMAGE_BRIDGE_URL || 'http://127.0.0.1:3012').replace(/\/$/, '');
+
+function shouldUseDatabaseSsl(connectionString) {
+    if (process.env.NODE_ENV !== 'production' || !connectionString) return false;
+
+    try {
+        const hostname = (new URL(connectionString).hostname || '').toLowerCase();
+        const localHosts = ['localhost', '127.0.0.1', 'postgres', 'host.docker.internal'];
+        if (!hostname) return false;
+        if (localHosts.includes(hostname)) return false;
+        if (hostname.endsWith('.internal')) return false;
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 // Database
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL?.includes('.railway.internal')
-        ? { rejectUnauthorized: false } : false
+    ssl: shouldUseDatabaseSsl(process.env.DATABASE_URL)
+        ? { rejectUnauthorized: false }
+        : false
 });
 
 // Middleware
@@ -34,7 +54,22 @@ app.set('trust proxy', 1);
 app.use(cors());
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
+app.use(express.static(path.join(__dirname, 'public'), {
+    etag: false,
+    maxAge: 0,
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.set('Pragma', 'no-cache');
+            res.set('Expires', '0');
+            return;
+        }
+
+        if (/\.(js|css)$/i.test(filePath)) {
+            res.set('Cache-Control', 'public, max-age=0, must-revalidate');
+        }
+    }
+}));
 
 // Prevent browser caching of HTML files
 app.use((req, res, next) => {
@@ -43,6 +78,10 @@ app.use((req, res, next) => {
         res.set('Pragma', 'no-cache');
     }
     next();
+});
+
+app.get(['/giris/:brandSlug', '/login/:brandSlug', '/portal/:brandSlug'], (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300 });
@@ -75,10 +114,700 @@ app.get('/api/auth/diagnostic', async (req, res) => {
             status: '✅ Sunucu Aktif',
             database_users: users.rows,
             database_schema: schema.rows.map(r => r.column_name),
-            expected_admin: 'admin@traktorsektoranalizi.com / admin2024'
+            superuser_email: 'yukselozdek@gmail.com'
         });
     } catch (err) {
         res.status(500).json({ status: '❌ Hata', message: err.message });
+    }
+});
+
+app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
+    try {
+        await ensureProvincesSeeded();
+
+        const requestedBrandId = req.query.brand_id ? parseInt(req.query.brand_id, 10) : null;
+        const requestedModelKey = String(req.query.model_key || '').trim();
+        const monthNames = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik'];
+        const modelWindowFilter = `
+            tv.tescil_yil IS NOT NULL
+            AND tv.tescil_ay IS NOT NULL
+            AND (tv.model_yili IS NULL OR tv.tescil_yil = tv.model_yili OR tv.tescil_yil = tv.model_yili + 1)
+        `;
+        const normalizedTuikBrandExpr = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE UPPER(tv.marka)
+            END
+        `;
+        const normalizedTeknikBrandExpr = `
+            CASE
+                WHEN UPPER(tk.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tk.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tk.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE UPPER(tk.marka)
+            END
+        `;
+        const hpRangeExpr = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                ELSE '120+'
+            END
+        `;
+
+        const latestPeriodRes = await pool.query(`
+            SELECT MAX(MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1)) AS latest_period
+            FROM tuik_veri tv
+            WHERE ${modelWindowFilter}
+        `);
+        const latestPeriod = latestPeriodRes.rows[0]?.latest_period;
+        if (!latestPeriod) {
+            return res.json({
+                meta: null,
+                brands: [],
+                selected_brand_id: null,
+                selected_model_key: null,
+                models: [],
+                focus: null
+            });
+        }
+
+        const latestDate = new Date(latestPeriod);
+        const maxYear = latestDate.getUTCFullYear();
+        const maxMonth = latestDate.getUTCMonth() + 1;
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query(`
+            SELECT MIN(tv.tescil_yil) AS min_year
+            FROM tuik_veri tv
+            WHERE ${modelWindowFilter}
+        `);
+        const minYear = parseInt(minYearRes.rows[0]?.min_year || maxYear, 10);
+        const years = Array.from({ length: Math.max(maxYear - minYear + 1, 1) }, (_, index) => minYear + index);
+
+        const [provinceRes, supportRes, catalogRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    id, name, plate_code, region, latitude, longitude, population,
+                    agricultural_area_hectare, primary_crops, soil_type, climate_zone,
+                    annual_rainfall_mm, avg_temperature, elevation_m
+                FROM provinces
+                ORDER BY name
+            `),
+            pool.query(`
+                SELECT
+                    spc.province_id,
+                    STRING_AGG(sp.program_name, ', ' ORDER BY sp.program_name) AS support_programs
+                FROM support_program_coverage spc
+                JOIN support_programs sp ON sp.id = spc.program_id
+                WHERE sp.status IN ('announced', 'active')
+                GROUP BY spc.province_id
+            `),
+            pool.query(`
+                WITH model_base AS (
+                    SELECT
+                        b.id AS brand_id,
+                        b.name AS brand_name,
+                        b.slug AS brand_slug,
+                        b.primary_color,
+                        tv.tuik_model_adi,
+                        COALESCE(NULLIF(MAX(tk.model), ''), tv.tuik_model_adi) AS model_name,
+                        ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) AS horsepower,
+                        ROUND(AVG(NULLIF(tk.fiyat_usd, 0))::numeric, 2) AS price_usd,
+                        COALESCE(
+                            MODE() WITHIN GROUP (
+                                ORDER BY CASE
+                                    WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bah%' THEN 'bahce'
+                                    WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%hib%' THEN 'hibrit'
+                                    ELSE 'tarla'
+                                END
+                            ),
+                            'tarla'
+                        ) AS category,
+                        COALESCE(
+                            MODE() WITHIN GROUP (ORDER BY UPPER(COALESCE(NULLIF(tk.cekis_tipi, ''), '4WD'))),
+                            '4WD'
+                        ) AS drive_type,
+                        COALESCE(
+                            MODE() WITHIN GROUP (
+                                ORDER BY CASE
+                                    WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                                    ELSE 'rollbar'
+                                END
+                            ),
+                            'rollbar'
+                        ) AS cabin_type,
+                        COALESCE(
+                            MODE() WITHIN GROUP (ORDER BY COALESCE(NULLIF(tk.vites_sayisi, ''), 'Standart')),
+                            'Standart'
+                        ) AS gear_config,
+                        SUM(tv.satis_adet)::int AS total_sales,
+                        SUM(CASE WHEN tv.tescil_yil = $1 AND tv.tescil_ay <= $2 THEN tv.satis_adet ELSE 0 END)::int AS current_year_sales,
+                        SUM(CASE WHEN tv.tescil_yil = $3 AND tv.tescil_ay <= $2 THEN tv.satis_adet ELSE 0 END)::int AS prev_year_sales,
+                        COUNT(DISTINCT p.id)::int AS province_count,
+                        COUNT(DISTINCT p.region)::int AS region_count
+                    FROM tuik_veri tv
+                    JOIN brands b
+                      ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+                    LEFT JOIN provinces p
+                      ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                    LEFT JOIN teknik_veri tk
+                      ON ${normalizedTeknikBrandExpr} = ${normalizedTuikBrandExpr}
+                     AND UPPER(COALESCE(tk.tuik_model_adi, '')) = UPPER(COALESCE(tv.tuik_model_adi, ''))
+                    WHERE ${modelWindowFilter}
+                    GROUP BY b.id, b.name, b.slug, b.primary_color, tv.tuik_model_adi
+                )
+                SELECT
+                    *,
+                    CASE
+                        WHEN horsepower IS NULL THEN NULL
+                        WHEN horsepower <= 39 THEN '1-39'
+                        WHEN horsepower <= 49 THEN '40-49'
+                        WHEN horsepower <= 54 THEN '50-54'
+                        WHEN horsepower <= 59 THEN '55-59'
+                        WHEN horsepower <= 69 THEN '60-69'
+                        WHEN horsepower <= 79 THEN '70-79'
+                        WHEN horsepower <= 89 THEN '80-89'
+                        WHEN horsepower <= 99 THEN '90-99'
+                        WHEN horsepower <= 109 THEN '100-109'
+                        WHEN horsepower <= 119 THEN '110-119'
+                        ELSE '120+'
+                    END AS hp_range
+                FROM model_base
+                ORDER BY total_sales DESC, brand_name ASC, model_name ASC
+            `, [maxYear, maxMonth, prevYear])
+        ]);
+
+        const supportMap = new Map(supportRes.rows.map(row => [Number(row.province_id), row.support_programs]));
+        const provinceMap = new Map(provinceRes.rows.map(row => {
+            const enriched = enrichProvinceWithReference({
+                ...row,
+                primary_crops: row.primary_crops || [],
+                support_programs: supportMap.get(Number(row.id)) || ''
+            });
+            return [Number(row.id), { ...enriched, support_programs: supportMap.get(Number(row.id)) || '' }];
+        }));
+
+        const modelCatalog = catalogRes.rows.map(row => ({
+            brand_id: Number(row.brand_id),
+            brand_name: row.brand_name,
+            brand_slug: row.brand_slug,
+            primary_color: row.primary_color,
+            model_key: row.tuik_model_adi,
+            tuik_model_adi: row.tuik_model_adi,
+            model_name: row.model_name || row.tuik_model_adi,
+            horsepower: row.horsepower == null ? null : Number(row.horsepower),
+            hp_range: row.hp_range || hpRangeFromHorsepower(row.horsepower),
+            category: row.category || 'tarla',
+            drive_type: row.drive_type || '4WD',
+            cabin_type: row.cabin_type || 'rollbar',
+            gear_config: row.gear_config || 'Standart',
+            price_usd: row.price_usd == null ? null : Number(row.price_usd),
+            total_sales: Number(row.total_sales || 0),
+            current_year_sales: Number(row.current_year_sales || 0),
+            prev_year_sales: Number(row.prev_year_sales || 0),
+            province_count: Number(row.province_count || 0),
+            region_count: Number(row.region_count || 0),
+            yoy_growth_pct: calculateYoY(Number(row.current_year_sales || 0), Number(row.prev_year_sales || 0))
+        })).filter(row => row.total_sales > 0);
+
+        if (!modelCatalog.length) {
+            return res.json({
+                meta: {
+                    max_year: maxYear,
+                    max_month: maxMonth,
+                    prev_year: prevYear,
+                    years,
+                    latest_period_label: `${maxYear} ${monthNames[maxMonth - 1]}`,
+                    latest_window_label: `${maxYear} Ocak-${monthNames[maxMonth - 1]}`,
+                    model_window_note: 'Model bazlı veriler N ve N-1 kuralına göre tuik_veri üzerinden okunur.'
+                },
+                brands: [],
+                selected_brand_id: null,
+                selected_model_key: null,
+                models: [],
+                focus: null
+            });
+        }
+
+        const brandAggregateMap = new Map();
+        modelCatalog.forEach(model => {
+            if (!brandAggregateMap.has(model.brand_id)) {
+                brandAggregateMap.set(model.brand_id, {
+                    id: model.brand_id,
+                    name: model.brand_name,
+                    slug: model.brand_slug,
+                    primary_color: model.primary_color,
+                    total_sales: 0,
+                    model_count: 0,
+                    current_year_sales: 0,
+                    prev_year_sales: 0,
+                    top_model_name: model.model_name,
+                    top_model_sales: model.total_sales
+                });
+            }
+            const brand = brandAggregateMap.get(model.brand_id);
+            brand.total_sales += model.total_sales;
+            brand.model_count += 1;
+            brand.current_year_sales += model.current_year_sales;
+            brand.prev_year_sales += model.prev_year_sales;
+            if (model.total_sales > brand.top_model_sales) {
+                brand.top_model_name = model.model_name;
+                brand.top_model_sales = model.total_sales;
+            }
+        });
+
+        const brands = Array.from(brandAggregateMap.values())
+            .map(item => ({
+                ...item,
+                yoy_growth_pct: calculateYoY(item.current_year_sales, item.prev_year_sales)
+            }))
+            .sort((left, right) => right.total_sales - left.total_sales || String(left.name || '').localeCompare(String(right.name || ''), 'tr'));
+
+        let selectedBrandId = requestedBrandId && brands.some(item => item.id === requestedBrandId)
+            ? requestedBrandId
+            : (req.user?.role !== 'admin' && req.user?.brand_id && brands.some(item => item.id === Number(req.user.brand_id))
+                ? Number(req.user.brand_id)
+                : brands[0]?.id);
+
+        let selectedBrandModels = modelCatalog
+            .filter(item => item.brand_id === selectedBrandId)
+            .sort((left, right) => right.total_sales - left.total_sales || String(left.model_name || '').localeCompare(String(right.model_name || ''), 'tr'));
+
+        if (!selectedBrandModels.length) {
+            selectedBrandId = modelCatalog[0].brand_id;
+            selectedBrandModels = modelCatalog
+                .filter(item => item.brand_id === selectedBrandId)
+                .sort((left, right) => right.total_sales - left.total_sales || String(left.model_name || '').localeCompare(String(right.model_name || ''), 'tr'));
+        }
+
+        let selectedModel = selectedBrandModels.find(item => item.model_key === requestedModelKey)
+            || selectedBrandModels.find(item => String(item.tuik_model_adi || '').toUpperCase() === requestedModelKey.toUpperCase())
+            || selectedBrandModels[0];
+
+        if (!selectedModel) {
+            selectedModel = modelCatalog[0];
+            selectedBrandId = selectedModel.brand_id;
+            selectedBrandModels = modelCatalog
+                .filter(item => item.brand_id === selectedBrandId)
+                .sort((left, right) => right.total_sales - left.total_sales || String(left.model_name || '').localeCompare(String(right.model_name || ''), 'tr'));
+        }
+
+        const [modelProvinceSalesRes, provinceMarketRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    p.id AS province_id,
+                    p.name AS province_name,
+                    p.plate_code,
+                    p.region,
+                    p.latitude,
+                    p.longitude,
+                    p.population,
+                    p.agricultural_area_hectare,
+                    p.primary_crops,
+                    p.soil_type,
+                    p.climate_zone,
+                    p.annual_rainfall_mm,
+                    p.avg_temperature,
+                    p.elevation_m,
+                    tv.tescil_yil,
+                    tv.tescil_ay,
+                    SUM(tv.satis_adet)::int AS total_sales
+                FROM tuik_veri tv
+                JOIN brands b
+                  ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+                JOIN provinces p
+                  ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                WHERE b.id = $1
+                  AND UPPER(COALESCE(tv.tuik_model_adi, '')) = UPPER($2)
+                  AND ${modelWindowFilter}
+                GROUP BY
+                    p.id, p.name, p.plate_code, p.region, p.latitude, p.longitude, p.population,
+                    p.agricultural_area_hectare, p.primary_crops, p.soil_type, p.climate_zone,
+                    p.annual_rainfall_mm, p.avg_temperature, p.elevation_m,
+                    tv.tescil_yil, tv.tescil_ay
+                ORDER BY tv.tescil_yil, tv.tescil_ay, p.name
+            `, [selectedBrandId, selectedModel.model_key]),
+            pool.query(`
+                SELECT
+                    p.id AS province_id,
+                    SUM(CASE WHEN tv.tescil_yil = $1 AND tv.tescil_ay <= $2 THEN tv.satis_adet ELSE 0 END)::int AS current_market_sales,
+                    SUM(CASE WHEN tv.tescil_yil = $3 AND tv.tescil_ay <= $2 THEN tv.satis_adet ELSE 0 END)::int AS prev_market_sales,
+                    SUM(tv.satis_adet)::int AS total_market_sales
+                FROM tuik_veri tv
+                JOIN provinces p
+                  ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                WHERE ${modelWindowFilter}
+                GROUP BY p.id
+            `, [maxYear, maxMonth, prevYear])
+        ]);
+
+        const marketMap = new Map(provinceMarketRes.rows.map(row => [Number(row.province_id), {
+            current_market_sales: Number(row.current_market_sales || 0),
+            prev_market_sales: Number(row.prev_market_sales || 0),
+            total_market_sales: Number(row.total_market_sales || 0)
+        }]));
+
+        const modelProvinceMap = new Map();
+        const monthlyCurveMap = new Map();
+        modelProvinceSalesRes.rows.forEach(row => {
+            const provinceId = Number(row.province_id);
+            const province = provinceMap.get(provinceId) || enrichProvinceWithReference({
+                id: provinceId,
+                name: row.province_name,
+                plate_code: row.plate_code,
+                region: row.region,
+                latitude: row.latitude,
+                longitude: row.longitude,
+                population: row.population,
+                agricultural_area_hectare: row.agricultural_area_hectare,
+                primary_crops: row.primary_crops || [],
+                soil_type: row.soil_type,
+                climate_zone: row.climate_zone,
+                annual_rainfall_mm: row.annual_rainfall_mm,
+                avg_temperature: row.avg_temperature,
+                elevation_m: row.elevation_m,
+                support_programs: supportMap.get(provinceId) || ''
+            });
+
+            if (!modelProvinceMap.has(provinceId)) {
+                modelProvinceMap.set(provinceId, {
+                    province_id: provinceId,
+                    province_name: province.name,
+                    plate_code: province.plate_code,
+                    region: province.region,
+                    latitude: province.latitude,
+                    longitude: province.longitude,
+                    population: province.population,
+                    agricultural_area_hectare: province.agricultural_area_hectare,
+                    soil_type: province.soil_type,
+                    climate_zone: province.climate_zone,
+                    annual_rainfall_mm: province.annual_rainfall_mm,
+                    avg_temperature: province.avg_temperature,
+                    elevation_m: province.elevation_m,
+                    primary_crops: province.primary_crops,
+                    support_programs: province.support_programs || '',
+                    yearly: new Map(),
+                    monthly: new Map(),
+                    total_sales: 0
+                });
+            }
+
+            const provinceItem = modelProvinceMap.get(provinceId);
+            const sales = Number(row.total_sales || 0);
+            const year = Number(row.tescil_yil);
+            const month = Number(row.tescil_ay);
+            provinceItem.total_sales += sales;
+            provinceItem.yearly.set(year, (provinceItem.yearly.get(year) || 0) + sales);
+            provinceItem.monthly.set(`${year}-${String(month).padStart(2, '0')}`, (provinceItem.monthly.get(`${year}-${String(month).padStart(2, '0')}`) || 0) + sales);
+            monthlyCurveMap.set(`${year}-${String(month).padStart(2, '0')}`, (monthlyCurveMap.get(`${year}-${String(month).padStart(2, '0')}`) || 0) + sales);
+        });
+
+        const provinceMarketMax = Array.from(marketMap.values()).reduce((maxValue, item) => Math.max(maxValue, Number(item.current_market_sales || 0)), 0);
+        const provinceInsights = Array.from(provinceMap.values()).map(province => {
+            const modelSales = modelProvinceMap.get(Number(province.id));
+            const compatibility = computeModelProvinceCompatibility(selectedModel, province);
+            const market = marketMap.get(Number(province.id)) || { current_market_sales: 0, prev_market_sales: 0, total_market_sales: 0 };
+            const totalSales = Number(modelSales?.total_sales || 0);
+            const currentPartialSales = Array.from(modelSales?.monthly?.entries() || [])
+                .filter(([key]) => {
+                    const [yearText, monthText] = key.split('-');
+                    return Number(yearText) === maxYear && Number(monthText) <= maxMonth;
+                })
+                .reduce((sum, [, value]) => sum + Number(value || 0), 0);
+            const prevPartialSales = Array.from(modelSales?.monthly?.entries() || [])
+                .filter(([key]) => {
+                    const [yearText, monthText] = key.split('-');
+                    return Number(yearText) === prevYear && Number(monthText) <= maxMonth;
+                })
+                .reduce((sum, [, value]) => sum + Number(value || 0), 0);
+            const provinceSharePct = Number(market.current_market_sales || 0) > 0
+                ? Number(((currentPartialSales * 100) / Number(market.current_market_sales || 0)).toFixed(2))
+                : 0;
+            const marketNorm = provinceMarketMax > 0 ? Number(market.current_market_sales || 0) / provinceMarketMax : 0;
+            const supportBonus = province.support_programs ? 6 : 0;
+            const penetrationPenalty = Number(market.current_market_sales || 0) > 0
+                ? Math.min(1, currentPartialSales / Number(market.current_market_sales || 1))
+                : 0;
+            const opportunityScore = Math.max(0, Math.min(100, Number(((compatibility.score * 0.68) + (marketNorm * 24) + supportBonus - (penetrationPenalty * 22)).toFixed(1))));
+            const yoyGrowthPct = prevPartialSales > 0 ? Number((((currentPartialSales - prevPartialSales) / prevPartialSales) * 100).toFixed(1)) : null;
+
+            return {
+                province_id: Number(province.id),
+                province_name: province.name,
+                plate_code: province.plate_code,
+                region: province.region,
+                latitude: province.latitude == null ? null : Number(province.latitude),
+                longitude: province.longitude == null ? null : Number(province.longitude),
+                total_sales: totalSales,
+                current_sales: currentPartialSales,
+                prev_sales: prevPartialSales,
+                yoy_growth_pct: yoyGrowthPct,
+                province_market_units: Number(market.current_market_sales || 0),
+                province_share_pct: provinceSharePct,
+                fit_score: compatibility.score,
+                fit_label: compatibility.label,
+                opportunity_score: opportunityScore,
+                mission_label: buildModelRegionMission({
+                    fitScore: compatibility.score,
+                    modelSharePct: provinceSharePct,
+                    yoyPct: yoyGrowthPct,
+                    opportunityScore
+                }),
+                dominant_crop: compatibility.dominant_crop,
+                reference_label: compatibility.reference_label,
+                soil_type: compatibility.soil_type,
+                climate_zone: compatibility.climate_zone,
+                annual_rainfall_mm: compatibility.annual_rainfall_mm,
+                avg_temperature: compatibility.avg_temperature,
+                elevation_m: compatibility.elevation_m,
+                agricultural_area_hectare: compatibility.agricultural_area_hectare,
+                primary_crops: compatibility.primary_crops,
+                recommended_hp_range: compatibility.recommended_hp_range,
+                recommended_drive_type: compatibility.recommended_drive_type,
+                recommended_tractor_type: compatibility.recommended_tractor_type,
+                fit_note: compatibility.note,
+                support_programs: province.support_programs || '',
+                yearly_trend: years.map(year => ({
+                    year,
+                    sales: Number(modelSales?.yearly?.get(year) || 0)
+                }))
+            };
+        });
+
+        const soldProvinceArena = provinceInsights
+            .filter(item => item.total_sales > 0)
+            .sort((left, right) => right.total_sales - left.total_sales || right.fit_score - left.fit_score || String(left.province_name || '').localeCompare(String(right.province_name || ''), 'tr'));
+
+        const whitespaceProvinces = provinceInsights
+            .filter(item => item.opportunity_score >= 58 && item.current_sales <= Math.max(12, item.province_market_units * 0.06))
+            .sort((left, right) => right.opportunity_score - left.opportunity_score || right.province_market_units - left.province_market_units || String(left.province_name || '').localeCompare(String(right.province_name || ''), 'tr'))
+            .slice(0, 8);
+
+        const regionMap = new Map();
+        soldProvinceArena.forEach(item => {
+            const regionKey = item.region || 'Bilinmiyor';
+            if (!regionMap.has(regionKey)) {
+                regionMap.set(regionKey, {
+                    region: regionKey,
+                    total_sales: 0,
+                    current_sales: 0,
+                    prev_sales: 0,
+                    province_count: 0,
+                    fit_weighted: 0,
+                    dominant_crop_map: new Map()
+                });
+            }
+            const region = regionMap.get(regionKey);
+            region.total_sales += item.total_sales;
+            region.current_sales += item.current_sales;
+            region.prev_sales += item.prev_sales;
+            region.province_count += 1;
+            region.fit_weighted += item.fit_score * Math.max(item.total_sales, 1);
+            if (!region.dominant_crop_map.has(item.dominant_crop)) region.dominant_crop_map.set(item.dominant_crop, 0);
+            region.dominant_crop_map.set(item.dominant_crop, region.dominant_crop_map.get(item.dominant_crop) + item.total_sales);
+        });
+
+        const totalModelSales = soldProvinceArena.reduce((sum, item) => sum + item.total_sales, 0);
+        const totalCurrentSales = soldProvinceArena.reduce((sum, item) => sum + item.current_sales, 0);
+        const totalPrevSales = soldProvinceArena.reduce((sum, item) => sum + item.prev_sales, 0);
+        const totalCurrentMarket = provinceInsights.reduce((sum, item) => sum + Number(item.province_market_units || 0), 0);
+        const regionLadder = Array.from(regionMap.values())
+            .map(region => {
+                const avgFitScore = region.total_sales > 0 ? Number((region.fit_weighted / region.total_sales).toFixed(1)) : 0;
+                const dominantCrop = Array.from(region.dominant_crop_map.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] || null;
+                const sharePct = totalModelSales > 0 ? Number(((region.total_sales * 100) / totalModelSales).toFixed(1)) : 0;
+                const yoyGrowthPct = region.prev_sales > 0 ? Number((((region.current_sales - region.prev_sales) / region.prev_sales) * 100).toFixed(1)) : null;
+                const regionOpportunityScore = Math.max(0, Math.min(100, Number(((avgFitScore * 0.72) + (sharePct * 0.25)).toFixed(1))));
+                return {
+                    region: region.region,
+                    total_sales: region.total_sales,
+                    current_sales: region.current_sales,
+                    prev_sales: region.prev_sales,
+                    share_pct: sharePct,
+                    yoy_growth_pct: yoyGrowthPct,
+                    province_count: region.province_count,
+                    avg_fit_score: avgFitScore,
+                    dominant_crop: dominantCrop,
+                    mission_label: buildModelRegionMission({
+                        fitScore: avgFitScore,
+                        modelSharePct: sharePct,
+                        yoyPct: yoyGrowthPct,
+                        opportunityScore: regionOpportunityScore
+                    })
+                };
+            })
+            .sort((left, right) => right.total_sales - left.total_sales || right.avg_fit_score - left.avg_fit_score || String(left.region || '').localeCompare(String(right.region || ''), 'tr'));
+
+        const dominantRegion = regionLadder[0] || null;
+        const dominantCrop = soldProvinceArena[0]?.dominant_crop || dominantRegion?.dominant_crop || null;
+        const supportDrivenUnits = soldProvinceArena.filter(item => item.support_programs).reduce((sum, item) => sum + Number(item.current_sales || 0), 0);
+        const supportDrivenSharePct = totalCurrentSales > 0 ? Number(((supportDrivenUnits * 100) / totalCurrentSales).toFixed(1)) : 0;
+        const avgProvinceSharePct = soldProvinceArena.length > 0
+            ? Number((soldProvinceArena.reduce((sum, item) => sum + Number(item.province_share_pct || 0), 0) / soldProvinceArena.length).toFixed(1))
+            : 0;
+
+        const siblingStack = selectedBrandModels
+            .filter(item => item.model_key !== selectedModel.model_key)
+            .map(item => {
+                const hpDistance = Math.abs(Number(item.horsepower || 0) - Number(selectedModel.horsepower || 0));
+                let roleNote = 'Portföy tamamlayıcı';
+                if (hpDistance <= 8) roleNote = 'Aynı koridorda saha ikizi';
+                else if (Number(item.horsepower || 0) > Number(selectedModel.horsepower || 0)) roleNote = 'Daha yüksek güç koridoru';
+                else if (Number(item.horsepower || 0) < Number(selectedModel.horsepower || 0)) roleNote = 'Daha ekonomik alt koridor';
+                return { ...item, hp_distance: hpDistance, role_note: roleNote };
+            })
+            .sort((left, right) => left.hp_distance - right.hp_distance || right.total_sales - left.total_sales)
+            .slice(0, 6);
+
+        const monthlyCurve = Array.from(monthlyCurveMap.entries())
+            .map(([periodKey, totalUnits]) => {
+                const [yearText, monthText] = periodKey.split('-');
+                return {
+                    year: Number(yearText),
+                    month: Number(monthText),
+                    period_label: `${monthNames[Number(monthText) - 1]} ${yearText}`,
+                    total_units: Number(totalUnits || 0)
+                };
+            })
+            .sort((left, right) => (left.year - right.year) || (left.month - right.month))
+            .slice(-24);
+
+        const hpBand = parseHpBand(selectedModel.hp_range || hpRangeFromHorsepower(selectedModel.horsepower));
+        const hpMin = Number.isFinite(hpBand.min) ? Math.max(1, hpBand.min - 5) : Math.max(1, Number(selectedModel.horsepower || 0) - 12);
+        const hpMax = Number.isFinite(hpBand.max) ? hpBand.max + 5 : Number(selectedModel.horsepower || 0) + 12;
+        const focusRegions = Array.from(new Set(soldProvinceArena.slice(0, 8).map(item => item.region).filter(Boolean))).slice(0, 3);
+        const rivalParams = [selectedBrandId, selectedModel.hp_range || '', hpMin, hpMax];
+        const regionClause = focusRegions.length > 0 ? ` AND p.region = ANY($5::text[])` : '';
+        if (focusRegions.length > 0) rivalParams.push(focusRegions);
+        const rivalRes = await pool.query(`
+            SELECT
+                b.name AS brand_name,
+                b.primary_color,
+                tv.tuik_model_adi,
+                COALESCE(NULLIF(MAX(tk.model), ''), tv.tuik_model_adi) AS model_name,
+                SUM(tv.satis_adet)::int AS total_sales,
+                COALESCE(MODE() WITHIN GROUP (ORDER BY p.region), 'Bilinmiyor') AS dominant_region
+            FROM tuik_veri tv
+            JOIN brands b
+              ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+            JOIN provinces p
+              ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            LEFT JOIN teknik_veri tk
+              ON ${normalizedTeknikBrandExpr} = ${normalizedTuikBrandExpr}
+             AND UPPER(COALESCE(tk.tuik_model_adi, '')) = UPPER(COALESCE(tv.tuik_model_adi, ''))
+            WHERE b.id <> $1
+              ${regionClause}
+              AND ${modelWindowFilter}
+              AND (
+                    ($2 <> '' AND ${hpRangeExpr} = $2)
+                    OR ($3 > 0 AND $4 > 0 AND tk.motor_gucu_hp BETWEEN $3 AND $4)
+                  )
+            GROUP BY b.name, b.primary_color, tv.tuik_model_adi
+            ORDER BY total_sales DESC, brand_name ASC, model_name ASC
+            LIMIT 8
+        `, rivalParams);
+
+        const rivalStack = rivalRes.rows.map(row => ({
+            brand_name: row.brand_name,
+            primary_color: row.primary_color,
+            model_key: row.tuik_model_adi,
+            model_name: row.model_name || row.tuik_model_adi,
+            total_sales: Number(row.total_sales || 0),
+            dominant_region: row.dominant_region
+        }));
+
+        const agroCards = [
+            {
+                label: 'Doğal habitat',
+                value: dominantRegion?.region || '-',
+                note: dominantRegion
+                    ? `${dominantRegion.share_pct}% model yoğunluğu ile ${dominantRegion.region} ana habitat olarak ayrışıyor.`
+                    : 'Bölgesel habitat henüz oluşmadı.',
+                tone: 'is-up'
+            },
+            {
+                label: 'Agro eksen',
+                value: dominantCrop || '-',
+                note: dominantCrop
+                    ? `${dominantCrop} etrafında saha uyumu kuruluyor ve ürün deseni modeli taşıyor.`
+                    : 'Ürün ekseni henüz netleşmedi.',
+                tone: 'is-opportunity'
+            },
+            {
+                label: 'Mekanik duruş',
+                value: `${selectedModel.hp_range || '-'} · ${selectedModel.drive_type || '-'} · ${selectedModel.category || '-'}`,
+                note: `${selectedModel.cabin_type || '-'} kabin ve ${selectedModel.gear_config || 'Standart'} şanzımanla operasyona çıkıyor.`,
+                tone: 'is-analysis'
+            },
+            {
+                label: 'Beyaz alan',
+                value: `${whitespaceProvinces.length} il`,
+                note: whitespaceProvinces[0]
+                    ? `${whitespaceProvinces[0].province_name} en yüksek fırsat skoru ile ilk hamle ili.`
+                    : 'Beyaz alan adayı oluşmadı.',
+                tone: 'is-forecast'
+            }
+        ];
+
+        const selectedBrand = brands.find(item => item.id === selectedBrandId) || brands[0];
+
+        res.json({
+            meta: {
+                max_year: maxYear,
+                max_month: maxMonth,
+                prev_year: prevYear,
+                years,
+                latest_period_label: `${maxYear} ${monthNames[maxMonth - 1]}`,
+                latest_window_label: `${maxYear} Ocak-${monthNames[maxMonth - 1]}`,
+                model_window_note: 'Model bazlı veriler N ve N-1 kuralına göre tuik_veri üzerinden okunur.'
+            },
+            brands,
+            selected_brand_id: selectedBrandId,
+            selected_model_key: selectedModel.model_key,
+            models: selectedBrandModels,
+            focus: {
+                brand: selectedBrand,
+                model: selectedModel,
+                overview: {
+                    total_sales: totalModelSales,
+                    current_year_sales: totalCurrentSales,
+                    prev_year_sales: totalPrevSales,
+                    yoy_growth_pct: calculateYoY(totalCurrentSales, totalPrevSales),
+                    active_provinces: soldProvinceArena.length,
+                    active_regions: new Set(soldProvinceArena.map(item => item.region).filter(Boolean)).size,
+                    avg_price_usd: selectedModel.price_usd,
+                    estimated_revenue_usd: selectedModel.price_usd ? Number((totalModelSales * selectedModel.price_usd).toFixed(2)) : null,
+                    national_model_share_pct: totalCurrentMarket > 0 ? Number(((totalCurrentSales * 100) / totalCurrentMarket).toFixed(2)) : 0,
+                    avg_province_share_pct: avgProvinceSharePct,
+                    dominant_region: dominantRegion?.region || null,
+                    dominant_crop: dominantCrop,
+                    support_driven_share_pct: supportDrivenSharePct,
+                    fit_label: soldProvinceArena[0]?.fit_label || 'Uyum hesaplandı',
+                    latest_window_label: `${maxYear} Ocak-${monthNames[maxMonth - 1]}`
+                },
+                agro_cards: agroCards,
+                monthly_curve: monthlyCurve,
+                region_ladder: regionLadder,
+                province_arena: soldProvinceArena.slice(0, 12),
+                whitespace_provinces: whitespaceProvinces,
+                sibling_stack: siblingStack,
+                rival_stack: rivalStack
+            }
+        });
+    } catch (err) {
+        console.error('Model-region error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
 
@@ -96,6 +825,18 @@ const BRAND_ALIAS_MAP = {
     'deutz-fahr': ['deutz fahr', 'deutzfahr'],
     'antonio-carraro': ['antonio carraro', 'antoniocarraro'],
     'ferrari-tractors': ['ferrari traktor', 'ferrari tractor']
+};
+const BRAND_SQL_ALIAS_MAP = {
+    'tumosan': ['TUMOSAN', 'TÜMOSAN'],
+    'basak': ['BASAK', 'BAŞAK'],
+    'karatas': ['KARATAS', 'KARATAŞ'],
+    'kioti': ['KIOTI', 'KİOTİ'],
+    'new-holland': ['NEW HOLLAND'],
+    'john-deere': ['JOHN DEERE'],
+    'massey-ferguson': ['MASSEY FERGUSON'],
+    'antonio-carraro': ['ANTONIO CARRARO'],
+    'case': ['CASE', 'CASE IH'],
+    'deutz': ['DEUTZ', 'DEUTZ-FAHR']
 };
 
 function escapeRegExp(value) {
@@ -127,12 +868,1345 @@ function formatShare(value) {
 
 function formatPeriodLabel(year, monthCount, latestYear, latestMonth) {
     if (year === latestYear && latestMonth < 12) {
-        return `${year} (${MONTH_NAMES_TR[0]}-${MONTH_NAMES_TR[latestMonth - 1]} donemi)`;
+        return `${year} (${MONTH_NAMES_TR[0]}-${MONTH_NAMES_TR[latestMonth - 1]} dönemi)`;
     }
     if (monthCount > 0 && monthCount < 12) {
-        return `${year} (${monthCount} ay kayitli)`;
+        return `${year} (${monthCount} ay kayıtlı)`;
     }
     return `${year}`;
+}
+
+function parsePortalJson(value, fallback) {
+    if (value === undefined || value === null) return fallback;
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return fallback;
+        }
+    }
+    return fallback;
+}
+
+const TURKISH_SERVER_COPY_REPLACEMENTS = [
+    [/\bPazara gore\b/g, 'Pazara göre'],
+    [/\bpazara gore\b/g, 'pazara göre'],
+    [/\bPazar payi\b/g, 'Pazar payı'],
+    [/\bpazar payi\b/g, 'pazar payı'],
+    [/\bportfoyunu\b/g, 'portföyünü'],
+    [/\bportfoyundeki\b/g, 'portföyündeki'],
+    [/\bPortfoy\b/g, 'Portföy'],
+    [/\bportfoy\b/g, 'portföy'],
+    [/\bDagilim\b/g, 'Dağılım'],
+    [/\bdagilim\b/g, 'dağılım'],
+    [/\bSiralama\b/g, 'Sıralama'],
+    [/\bsira\b/g, 'sıra'],
+    [/\bSira\b/g, 'Sıra'],
+    [/\bSektor\b/g, 'Sektör'],
+    [/\bsektor\b/g, 'sektör'],
+    [/\bBolgesel\b/g, 'Bölgesel'],
+    [/\bbolgesel\b/g, 'bölgesel'],
+    [/\bGuncel\b/g, 'Güncel'],
+    [/\bguncel\b/g, 'güncel'],
+    [/\bGecmis\b/g, 'Geçmiş'],
+    [/\bgecmis\b/g, 'geçmiş'],
+    [/\bKarsilastirma\b/g, 'Karşılaştırma'],
+    [/\bkarsilastirma\b/g, 'karşılaştırma'],
+    [/\bCanli\b/g, 'Canlı'],
+    [/\bcanli\b/g, 'canlı'],
+    [/\bakislarini\b/g, 'akışlarını'],
+    [/\bakislar\b/g, 'akışlar'],
+    [/\bakisi\b/g, 'akışı'],
+    [/\bAkisi\b/g, 'Akışı'],
+    [/\bbaglantilari\b/g, 'bağlantıları'],
+    [/\bBaglantilari\b/g, 'Bağlantıları'],
+    [/\bbaglantilar\b/g, 'bağlantılar'],
+    [/\bBaglantilar\b/g, 'Bağlantılar'],
+    [/\bbaglantisi\b/g, 'bağlantısı'],
+    [/\bbaglanti\b/g, 'bağlantı'],
+    [/\bbaglanir\b/g, 'bağlanır'],
+    [/\bbaglam\b/g, 'bağlam'],
+    [/\bbagli\b/g, 'bağlı'],
+    [/\bbirlesimi\b/g, 'birleşimi'],
+    [/\bbirlestirildi\b/g, 'birleştirildi'],
+    [/\bbirlestiren\b/g, 'birleştiren'],
+    [/\bbulusturan\b/g, 'buluşturan'],
+    [/\bbulusturur\b/g, 'buluşturur'],
+    [/\bzenginlestirilir\b/g, 'zenginleştirilir'],
+    [/\bgoreli\b/g, 'göreli'],
+    [/\bgore\b/g, 'göre'],
+    [/\bsaglam\b/g, 'sağlam'],
+    [/\bkaldi\b/g, 'kaldı'],
+    [/\bayni\b/g, 'aynı'],
+    [/\bAyni\b/g, 'Aynı'],
+    [/\bdonemde\b/g, 'dönemde'],
+    [/\bdoneme\b/g, 'döneme'],
+    [/\bdonemi\b/g, 'dönemi'],
+    [/\bdonem\b/g, 'dönem'],
+    [/\byukari\b/g, 'yukarı'],
+    [/\bdondu\b/g, 'döndü'],
+    [/\bgucu\b/g, 'gücü'],
+    [/\bguc\b/g, 'güç'],
+    [/\bguclu\b/g, 'güçlü'],
+    [/\bBahce\b/g, 'Bahçe'],
+    [/\bbahce\b/g, 'bahçe'],
+    [/\bayagi\b/g, 'ayağı'],
+    [/\bolusturuyor\b/g, 'oluşturuyor'],
+    [/\bolusturan\b/g, 'oluşturan'],
+    [/\bsikismayan\b/g, 'sıkışmayan'],
+    [/\byaygin\b/g, 'yaygın'],
+    [/\bYaygin\b/g, 'Yaygın'],
+    [/\bmarkanin\b/g, 'markanın'],
+    [/\bMarkanin\b/g, 'Markanın'],
+    [/\bis birligi\b/g, 'iş birliği'],
+    [/\bIs birligi\b/g, 'İş birliği'],
+    [/\baksini\b/g, 'aksını'],
+    [/\buretiyor\b/g, 'üretiyor'],
+    [/\buretir\b/g, 'üretir'],
+    [/\bureten\b/g, 'üreten'],
+    [/\buretim\b/g, 'üretim'],
+    [/\bUretim\b/g, 'Üretim'],
+    [/\burunleri\b/g, 'ürünleri'],
+    [/\bUrunleri\b/g, 'Ürünleri'],
+    [/\burunler\b/g, 'ürünler'],
+    [/\burun\b/g, 'ürün'],
+    [/\bUrun\b/g, 'Ürün'],
+    [/\bozel\b/g, 'özel'],
+    [/\bOzel\b/g, 'Özel'],
+    [/\bone cikiyor\b/g, 'öne çıkıyor'],
+    [/\bone cikti\b/g, 'öne çıktı'],
+    [/\bone cikariyor\b/g, 'öne çıkarıyor'],
+    [/\bone cikarir\b/g, 'öne çıkarır'],
+    [/\bone cikar\b/g, 'öne çıkar'],
+    [/\boncesi\b/g, 'öncesi'],
+    [/\bonceki\b/g, 'önceki'],
+    [/\bsonrasi\b/g, 'sonrası'],
+    [/\bGiris\b/g, 'Giriş'],
+    [/\bgiris\b/g, 'giriş'],
+    [/\bzayif\b/g, 'zayıf'],
+    [/\bicin\b/g, 'için'],
+    [/\bIcin\b/g, 'İçin'],
+    [/\bveritabani\b/g, 'veritabanı'],
+    [/\bkaynaklari\b/g, 'kaynakları'],
+    [/\bkaydi\b/g, 'kaydı'],
+    [/\bkayit\b/g, 'kayıt'],
+    [/\bguncellemeleri\b/g, 'güncellemeleri'],
+    [/\bguncelleme\b/g, 'güncelleme'],
+    [/\bGuncelleme\b/g, 'Güncelleme'],
+    [/\bkatmanlari\b/g, 'katmanları'],
+    [/\bkatmani\b/g, 'katmanı'],
+    [/\bKatmani\b/g, 'Katmanı'],
+    [/\btarafindaki\b/g, 'tarafındaki'],
+    [/\btarafinda\b/g, 'tarafında'],
+    [/\bcekis\b/g, 'çekiş'],
+    [/\bdegisim\b/g, 'değişim'],
+    [/\bdegisimlerini\b/g, 'değişimlerini'],
+    [/\bgorunumu\b/g, 'görünümü'],
+    [/\bgorunurlugunu\b/g, 'görünürlüğünü'],
+    [/\bgorunur\b/g, 'görünür'],
+    [/\bgorebilir\b/g, 'görebilir'],
+    [/\bYonetim\b/g, 'Yönetim'],
+    [/\byonetim\b/g, 'yönetim'],
+    [/\bFirsat\b/g, 'Fırsat'],
+    [/\bfirsat\b/g, 'fırsat'],
+    [/\bIklim\b/g, 'İklim'],
+    [/\bIl\b/g, 'İl'],
+    [/\bSubat\b/g, 'Şubat'],
+    [/\bMayis\b/g, 'Mayıs'],
+    [/\bAgustos\b/g, 'Ağustos'],
+    [/\bKasim\b/g, 'Kasım'],
+    [/\bAralik\b/g, 'Aralık'],
+    [/\bIstanbul\b/g, 'İstanbul'],
+    [/\bTurkiye\b/g, 'Türkiye'],
+    [/\bTUIK\b/g, 'TÜİK'],
+    [/\bTUMOSAN\b/g, 'TÜMOSAN'],
+    [/\bBASAK\b/g, 'BAŞAK'],
+    [/\bTraktor\b/g, 'Traktör'],
+    [/\btraktor\b/g, 'traktör'],
+    [/\btarim\b/g, 'tarım'],
+    [/\bTarim\b/g, 'Tarım'],
+    [/\byillik\b/g, 'yıllık'],
+    [/\bYillik\b/g, 'Yıllık'],
+    [/\byil\b/g, 'yıl'],
+    [/\bYil\b/g, 'Yıl'],
+    [/\baylik\b/g, 'aylık'],
+    [/\bAylik\b/g, 'Aylık'],
+    [/\bagi\b/g, 'ağı'],
+    [/\bAgi\b/g, 'Ağı'],
+    [/\berisimi\b/g, 'erişimi'],
+    [/\bErisimi\b/g, 'Erişimi'],
+    [/\bkapali\b/g, 'kapalı'],
+    [/\bgenis\b/g, 'geniş'],
+    [/\bGenis\b/g, 'Geniş'],
+    [/\bodakli\b/g, 'odaklı'],
+    [/\bOdakli\b/g, 'Odaklı'],
+    [/\bbazli\b/g, 'bazlı'],
+    [/\bBazli\b/g, 'Bazlı'],
+    [/\bsiniflari\b/g, 'sınıfları'],
+    [/\btoplanmis\b/g, 'toplanmış'],
+    [/\balani\b/g, 'alanı'],
+    [/\baltyapisi\b/g, 'altyapısı'],
+    [/\byapisi\b/g, 'yapısı'],
+    [/\bcalisan\b/g, 'çalışan'],
+    [/\bCikarilmis\b/g, 'Çıkarılmış'],
+    [/\bKurulus\b/g, 'Kuruluş'],
+    [/\bTarihce\b/g, 'Tarihçe'],
+    [/\bOrtaklik\b/g, 'Ortaklık'],
+    [/\bYatirimci\b/g, 'Yatırımcı'],
+    [/\byatirimci\b/g, 'yatırımcı'],
+    [/\bIletisim\b/g, 'İletişim'],
+    [/\biletisim\b/g, 'iletişim'],
+    [/\bUst\b/g, 'Üst'],
+    [/\bust\b/g, 'üst'],
+    [/\bBagimsiz\b/g, 'Bağımsız'],
+    [/\bBaskani\b/g, 'Başkanı'],
+    [/\bBaskan\b/g, 'Başkan'],
+    [/\bBulent\b/g, 'Bülent'],
+    [/\bAygun\b/g, 'Aygün'],
+    [/\bIsmail\b/g, 'İsmail'],
+    [/\bYUKSEK\b/g, 'YÜKSEK'],
+    [/\bKazim\b/g, 'Kazım'],
+    [/\bDiger\b/g, 'Diğer'],
+    [/\bUyesi\b/g, 'Üyesi'],
+    [/\buyesi\b/g, 'üyesi']
+];
+
+const TURKISH_DISPLAY_SKIP_KEYS = new Set([
+    'id', 'brand_id', 'province_id', 'slug', 'brand_slug', 'db_slug',
+    'url', 'entry_url', 'website_url', 'brand_website', 'dealer_locator_url',
+    'price_list_url', 'portal_url', 'cta_url', 'source_url', 'photo_source_url',
+    'logo_url', 'image_url', 'contact_email', 'email', 'phone', 'contact_phone',
+    'whatsapp_url', 'handle', 'item_type', 'tone', 'source', 'key'
+]);
+
+function normalizeTurkishDisplayText(value = '') {
+    let text = String(value ?? '');
+    TURKISH_SERVER_COPY_REPLACEMENTS.forEach(([pattern, replacement]) => {
+        text = text.replace(pattern, replacement);
+    });
+    return text;
+}
+
+function normalizeTurkishDisplayObject(value, key = '') {
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') {
+        return TURKISH_DISPLAY_SKIP_KEYS.has(key) ? value : normalizeTurkishDisplayText(value);
+    }
+    if (Array.isArray(value)) {
+        return value.map(item => normalizeTurkishDisplayObject(item, key));
+    }
+    if (typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([entryKey, entryValue]) => [
+                entryKey,
+                normalizeTurkishDisplayObject(entryValue, entryKey)
+            ])
+        );
+    }
+    return value;
+}
+
+function normalizePortalArray(value) {
+    const parsed = parsePortalJson(value, []);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+}
+
+function roundMetric(value, digits = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return Number(numeric.toFixed(digits));
+}
+
+function calculateYoY(currentValue, previousValue) {
+    const current = Number(currentValue || 0);
+    const previous = Number(previousValue || 0);
+    if (!previous) return null;
+    return Number((((current - previous) * 100) / previous).toFixed(1));
+}
+
+function getBrandSqlAliases(brand = {}) {
+    const canonical = getCanonicalBrandPortalSlug(brand.slug || brand.name || '');
+    const aliases = new Set();
+
+    (BRAND_SQL_ALIAS_MAP[canonical] || []).forEach(alias => aliases.add(String(alias).toUpperCase()));
+    if (brand.name) aliases.add(String(brand.name).toUpperCase());
+    if (brand.db_slug) aliases.add(String(brand.db_slug).toUpperCase());
+
+    return Array.from(aliases).filter(Boolean);
+}
+
+function normalizePortalSlug(value = '') {
+    return normalizeSearchText(value).replace(/\s+/g, '-');
+}
+
+function getCanonicalBrandPortalSlug(value = '') {
+    const normalized = normalizeSearchText(value);
+    const canonicalMap = {
+        'tumosan': 'tumosan',
+        'basak': 'basak',
+        'new holland': 'new-holland',
+        'john deere': 'john-deere',
+        'massey ferguson': 'massey-ferguson',
+        'antonio carraro': 'antonio-carraro',
+        'case': 'case',
+        'deutz': 'deutz',
+        'erkunt': 'erkunt',
+        'hattat': 'hattat',
+        'kubota': 'kubota',
+        'landini': 'landini',
+        'same': 'same',
+        'solis': 'solis',
+        'fendt': 'fendt',
+        'valtra': 'valtra',
+        'claas': 'claas',
+        'fiat': 'fiat',
+        'yanmar': 'yanmar',
+        'ferrari': 'ferrari',
+        'mccormick': 'mccormick',
+        'kioti': 'kioti',
+        'tafe': 'tafe',
+        'karatas': 'karatas'
+    };
+
+    return canonicalMap[normalized] || normalizePortalSlug(value);
+}
+
+function getBrandPortalSlugCandidates(brandRow) {
+    return Array.from(new Set([
+        String(brandRow.brand_slug || brandRow.slug || ''),
+        normalizePortalSlug(brandRow.brand_slug || brandRow.slug || ''),
+        normalizePortalSlug(brandRow.brand_name || brandRow.name || ''),
+        getCanonicalBrandPortalSlug(brandRow.brand_name || brandRow.name || '')
+    ].filter(Boolean)));
+}
+
+function buildPortalProfile(brandRow, options = {}) {
+    const modelCount = Number(options.modelCount || 0);
+    const heroStats = normalizePortalArray(brandRow.hero_stats_json);
+    const socialLinks = normalizePortalArray(brandRow.social_links_json);
+    const productLines = normalizePortalArray(brandRow.product_lines_json);
+    const focusRegions = normalizePortalArray(brandRow.focus_regions_json);
+    const sourceNotes = normalizePortalArray(brandRow.source_notes_json);
+
+    if (!heroStats.length) {
+        if (modelCount > 0) {
+            heroStats.push({ label: 'Aktif model', value: String(modelCount), note: 'Mevcut katalog' });
+        }
+        if (brandRow.country_of_origin) {
+            heroStats.push({ label: 'Ulke', value: brandRow.country_of_origin, note: 'Marka kaydi' });
+        }
+        if (brandRow.parent_company) {
+            heroStats.push({ label: 'Grup', value: brandRow.parent_company, note: 'Marka kaydi' });
+        }
+    }
+
+    if (!socialLinks.length && (brandRow.website_url || brandRow.brand_website)) {
+        socialLinks.push({
+            platform: 'Website',
+            handle: (brandRow.website_url || brandRow.brand_website || '').replace(/^https?:\/\//, ''),
+            url: brandRow.website_url || brandRow.brand_website
+        });
+    }
+
+    if (!productLines.length && modelCount > 0) {
+        productLines.push({
+            label: 'Model portfoyu',
+            items: [`${modelCount} aktif model katalogdan geliyor`]
+        });
+    }
+
+    if (!focusRegions.length && Array.isArray(options.topRegions) && options.topRegions.length > 0) {
+        options.topRegions.slice(0, 4).forEach(regionItem => {
+            focusRegions.push({
+                region: regionItem.region_name,
+                note: `${formatNumberTR(regionItem.total_sales)} adet ile son dönemde öne çıkıyor`
+            });
+        });
+    }
+
+    const websiteUrl = brandRow.website_url || brandRow.brand_website || '';
+
+    return {
+        tagline: brandRow.tagline || `${brandRow.brand_name} için özel marka deneyimi`,
+        hero_title: brandRow.hero_title || `${brandRow.brand_name} Marka Merkezi`,
+        hero_subtitle: brandRow.hero_subtitle || `${brandRow.brand_name} ekibi için marka, ürün ve saha bilgisini bir araya getiren yönetim katmanı.`,
+        overview: brandRow.overview || brandRow.brand_description || `${brandRow.brand_name} markasına ait resmi bağlantılar, ürün portföyü ve saha sinyalleri bu alanda toplanır.`,
+        website_url: websiteUrl,
+        dealer_locator_url: brandRow.dealer_locator_url || '',
+        price_list_url: brandRow.price_list_url || '',
+        portal_url: brandRow.portal_url || '',
+        contact_phone: brandRow.contact_phone || '',
+        contact_email: brandRow.contact_email || '',
+        whatsapp_url: brandRow.whatsapp_url || '',
+        headquarters: brandRow.headquarters || '',
+        hero_stats: heroStats.slice(0, 6),
+        social_links: socialLinks.slice(0, 8),
+        product_lines: productLines.slice(0, 6),
+        focus_regions: focusRegions.slice(0, 6),
+        source_notes: sourceNotes.slice(0, 8),
+        updated_at: brandRow.portal_updated_at || null
+    };
+}
+
+function buildPortalFallbackItems(brand, portalItems, showcaseModels, profile) {
+    const normalizedItems = (portalItems || []).map(item => ({
+        ...item,
+        meta: parsePortalJson(item.meta_json, {})
+    }));
+
+    if (normalizedItems.length > 0) {
+        return normalizedItems;
+    }
+
+    const fallbackItems = [];
+
+    if (showcaseModels.length > 0) {
+        const sampleNames = showcaseModels.slice(0, 3).map(model => model.model_name).join(', ');
+        fallbackItems.push({
+            item_type: 'product',
+            title: `${brand.name} ürün vitrininde teknik odak`,
+            summary: `${sampleNames} gibi güncel modeller katalogdan otomatik olarak öne çıkarılıyor.`,
+            cta_label: 'Model listesi',
+            cta_url: profile.website_url || '',
+            published_at: null,
+            priority: 10,
+            is_featured: true,
+            meta: { source: 'internal-model-catalog', tone: 'portfolio' }
+        });
+    }
+
+    if (profile.dealer_locator_url) {
+        fallbackItems.push({
+            item_type: 'network',
+            title: `${brand.name} bayi ve servis erişimi`,
+            summary: 'Markanın resmi saha yapısı, dealer locator ve servis ağı bağlantıları üzerinden ulaşılabilir.',
+            cta_label: 'Ağı aç',
+            cta_url: profile.dealer_locator_url,
+            published_at: null,
+            priority: 20,
+            is_featured: false,
+            meta: { source: 'portal-profile', tone: 'network' }
+        });
+    }
+
+    if (profile.website_url) {
+        fallbackItems.push({
+            item_type: 'corporate',
+            title: `${brand.name} resmi dijital varlığı`,
+            summary: 'Resmi site, ürün bağlantıları ve kurumsal kaynaklar login öncesi vitrine bağlanır.',
+            cta_label: 'Resmi site',
+            cta_url: profile.website_url,
+            published_at: null,
+            priority: 30,
+            is_featured: false,
+            meta: { source: 'portal-profile', tone: 'official' }
+        });
+    }
+
+    return fallbackItems;
+}
+
+function buildPortalFallbackContacts(brand, portalContacts, profile) {
+    if ((portalContacts || []).length > 0) {
+        return portalContacts;
+    }
+
+    const fallbackContacts = [];
+
+    if (profile.headquarters || profile.contact_phone || profile.contact_email) {
+        fallbackContacts.push({
+            contact_type: 'hq',
+            label: `${brand.name} iletisim hatti`,
+            city: '',
+            title: 'Kurumsal temas noktasi',
+            phone: profile.contact_phone || '',
+            email: profile.contact_email || '',
+            url: profile.website_url || '',
+            sort_order: 1
+        });
+    }
+
+    if (profile.dealer_locator_url) {
+        fallbackContacts.push({
+            contact_type: 'network',
+            label: 'Bayi ve servis agi',
+            city: 'Turkiye',
+            title: 'Resmi saha erisimi',
+            phone: profile.contact_phone || '',
+            email: profile.contact_email || '',
+            url: profile.dealer_locator_url,
+            sort_order: 2
+        });
+    }
+
+    return fallbackContacts;
+}
+
+async function getBrandPortalBase({ brandId = null, brandSlug = null } = {}) {
+    const brandResult = await pool.query(`
+        SELECT
+            b.id AS brand_id,
+            b.name AS brand_name,
+            b.slug AS brand_slug,
+            b.logo_url,
+            b.primary_color,
+            b.secondary_color,
+            b.accent_color,
+            b.text_color,
+            b.country_of_origin,
+            b.parent_company,
+            b.website AS brand_website,
+            b.description AS brand_description,
+            p.tagline,
+            p.hero_title,
+            p.hero_subtitle,
+            p.overview,
+            p.website_url,
+            p.dealer_locator_url,
+            p.price_list_url,
+            p.portal_url,
+            p.contact_phone,
+            p.contact_email,
+            p.whatsapp_url,
+            p.headquarters,
+            p.hero_stats_json,
+            p.social_links_json,
+            p.product_lines_json,
+            p.focus_regions_json,
+            p.source_notes_json,
+            p.updated_at AS portal_updated_at
+        FROM brands b
+        LEFT JOIN brand_portal_profiles p ON p.brand_id = b.id
+        WHERE b.is_active = true
+        ${brandId ? 'AND b.id = $1' : ''}
+        ORDER BY b.name
+    `, brandId ? [brandId] : []);
+
+    if (brandResult.rows.length === 0) {
+        return null;
+    }
+
+    let brandRow = null;
+    if (brandId) {
+        brandRow = brandResult.rows[0];
+    } else {
+        const requestedSlug = normalizePortalSlug(brandSlug);
+        brandRow = brandResult.rows.find(row => getBrandPortalSlugCandidates(row).includes(requestedSlug)) || null;
+    }
+
+    if (!brandRow) {
+        return null;
+    }
+
+    const brandIdInt = parseInt(brandRow.brand_id, 10);
+    const canonicalSlug = getCanonicalBrandPortalSlug(brandRow.brand_name);
+
+    const [itemsRes, contactsRes, showcaseModelsRes, catalogSummaryRes] = await Promise.all([
+        pool.query(`
+            SELECT item_type, title, summary, cta_label, cta_url, image_url, meta_json, published_at, priority, is_featured
+            FROM brand_portal_items
+            WHERE brand_id = $1 AND is_active = true
+            ORDER BY is_featured DESC, priority ASC, COALESCE(published_at, created_at) DESC
+            LIMIT 12
+        `, [brandIdInt]),
+        pool.query(`
+            SELECT contact_type, label, region_name, city, contact_name, title, phone, email, url, sort_order
+            FROM brand_portal_contacts
+            WHERE brand_id = $1 AND is_active = true
+            ORDER BY sort_order ASC, label ASC
+        `, [brandIdInt]),
+        pool.query(`
+            SELECT model_name, horsepower, price_usd, category, drive_type, cabin_type, gear_config
+            FROM tractor_models
+            WHERE brand_id = $1 AND is_current_model = true
+            ORDER BY horsepower DESC NULLS LAST, model_name ASC
+            LIMIT 8
+        `, [brandIdInt]),
+        pool.query(`
+            SELECT
+                COUNT(*)::int AS model_count,
+                ROUND(AVG(horsepower)::numeric, 1) AS avg_hp,
+                MAX(horsepower) AS max_hp,
+                MIN(price_usd) FILTER (WHERE price_usd IS NOT NULL AND price_usd > 0) AS min_price_usd,
+                MAX(price_usd) FILTER (WHERE price_usd IS NOT NULL AND price_usd > 0) AS max_price_usd
+            FROM tractor_models
+            WHERE brand_id = $1 AND is_current_model = true
+        `, [brandIdInt])
+    ]);
+
+    const catalogSummaryRow = catalogSummaryRes.rows[0] || {};
+    const catalogSummary = {
+        model_count: parseInt(catalogSummaryRow.model_count || 0, 10),
+        avg_hp: roundMetric(catalogSummaryRow.avg_hp, 1),
+        max_hp: roundMetric(catalogSummaryRow.max_hp, 1),
+        min_price_usd: roundMetric(catalogSummaryRow.min_price_usd, 0),
+        max_price_usd: roundMetric(catalogSummaryRow.max_price_usd, 0)
+    };
+
+    const brand = {
+        id: brandIdInt,
+        name: brandRow.brand_name,
+        slug: canonicalSlug,
+        db_slug: brandRow.brand_slug,
+        logo_url: brandRow.logo_url,
+        primary_color: brandRow.primary_color,
+        secondary_color: brandRow.secondary_color,
+        accent_color: brandRow.accent_color,
+        text_color: brandRow.text_color,
+        country_of_origin: brandRow.country_of_origin,
+        parent_company: brandRow.parent_company
+    };
+
+    const profile = buildPortalProfile(brandRow, { modelCount: catalogSummary.model_count });
+    const showcaseModels = showcaseModelsRes.rows.map(model => ({
+        ...model,
+        horsepower: roundMetric(model.horsepower, 1),
+        price_usd: roundMetric(model.price_usd, 0)
+    }));
+
+    const items = buildPortalFallbackItems(brand, itemsRes.rows, showcaseModels, profile);
+    const contacts = buildPortalFallbackContacts(brand, contactsRes.rows, profile);
+
+    return {
+        brand,
+        profile,
+        items,
+        contacts,
+        showcase_models: showcaseModels,
+        catalog_summary: catalogSummary
+    };
+}
+
+async function getLatestSalesPeriod() {
+    const latestYearRes = await pool.query('SELECT MAX(year) AS max_year FROM sales_view');
+    const maxYear = parseInt(latestYearRes.rows[0]?.max_year || 0, 10);
+    if (!maxYear) {
+        return { maxYear: null, maxMonth: null, prevYear: null };
+    }
+
+    const latestMonthRes = await pool.query('SELECT MAX(month) AS max_month FROM sales_view WHERE year = $1', [maxYear]);
+    const maxMonth = parseInt(latestMonthRes.rows[0]?.max_month || 12, 10);
+
+    return {
+        maxYear,
+        maxMonth,
+        prevYear: maxYear - 1
+    };
+}
+
+async function buildBrandExecutiveReport(brand, options = {}) {
+    const canonicalSlug = getCanonicalBrandPortalSlug(brand?.slug || brand?.name || '');
+    const curatedPortalSeed = require('./database/brand-portal-seed');
+    const curatedReport = curatedPortalSeed?.[canonicalSlug]?.executive_report || {};
+    const profile = options.profile || {};
+    const portalItems = Array.isArray(options.items) ? options.items : [];
+    const reportBrandName = brand?.name || 'Marka';
+
+    const latestPeriod = {
+        maxYear: parseInt(options.maxYear || 0, 10),
+        maxMonth: parseInt(options.maxMonth || 0, 10),
+        prevYear: parseInt(options.prevYear || 0, 10)
+    };
+    const resolvedPeriod = latestPeriod.maxYear && latestPeriod.maxMonth
+        ? latestPeriod
+        : await getLatestSalesPeriod();
+
+    if (!resolvedPeriod.maxYear || !resolvedPeriod.maxMonth) {
+        return {
+            brand_slug: canonicalSlug,
+            generated_at: new Date().toISOString(),
+            latest_period: null,
+            executive_kpis: [],
+            storyline_cards: [],
+            sales: null,
+            portfolio: null,
+            corporate: curatedReport.corporate || {},
+            news: curatedReport.news || [],
+            automation_roadmap: curatedReport.automation_roadmap || [
+                {
+                    title: `${reportBrandName} Pulse Agent`,
+                    summary: 'Aylik TUIK tescil ritmini otomatik izler ve yonetime fark raporu uretir.',
+                    owner: 'n8n + SQL'
+                }
+            ],
+            source_links: curatedReport.source_links || profile.source_notes || [],
+            freshness: []
+        };
+    }
+
+    const maxYear = resolvedPeriod.maxYear;
+    const maxMonth = resolvedPeriod.maxMonth;
+    const prevYear = resolvedPeriod.prevYear || (maxYear - 1);
+    const periodLabel = formatPeriodLabel(maxYear, maxMonth, maxYear, maxMonth);
+    const brandAliases = getBrandSqlAliases(brand);
+
+    const [
+        currentSalesRes,
+        previousSalesRes,
+        currentMarketRes,
+        previousMarketRes,
+        rankingRes,
+        yearlyBrandRes,
+        yearlyMarketRes,
+        monthlyBrandRes,
+        monthlyMarketRes,
+        currentProvinceRes,
+        previousProvinceRes,
+        currentRegionRes,
+        previousRegionRes,
+        categoryRes,
+        cabinRes,
+        driveRes,
+        hpRes,
+        gearRes,
+        technicalSummaryRes,
+        configurationSplitRes,
+        topModelsRes,
+        technicalMatrixRes
+    ] = await Promise.all([
+        pool.query(`
+            SELECT
+                COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales,
+                COUNT(DISTINCT p.id)::int AS active_provinces
+            FROM tuik_veri tv
+            JOIN provinces p
+                ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+        `, [brandAliases, maxYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales
+            FROM tuik_veri tv
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+        `, [brandAliases, prevYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(SUM(satis_adet), 0)::int AS total_sales
+            FROM tuik_veri
+            WHERE tescil_yil = $1 AND tescil_ay <= $2
+        `, [maxYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(SUM(satis_adet), 0)::int AS total_sales
+            FROM tuik_veri
+            WHERE tescil_yil = $1 AND tescil_ay <= $2
+        `, [prevYear, maxMonth]),
+        pool.query(`
+            WITH ranked AS (
+                SELECT
+                    brand_id,
+                    SUM(quantity)::int AS total_sales,
+                    DENSE_RANK() OVER (ORDER BY SUM(quantity) DESC) AS ranking
+                FROM sales_view
+                WHERE year = $1 AND month <= $2
+                GROUP BY brand_id
+            )
+            SELECT ranking, total_sales
+            FROM ranked
+            WHERE brand_id = $3
+        `, [maxYear, maxMonth, brand.id]),
+        pool.query(`
+            SELECT year, SUM(quantity)::int AS brand_sales
+            FROM sales_view
+            WHERE brand_id = $1
+            GROUP BY year
+            ORDER BY year
+        `, [brand.id]),
+        pool.query(`
+            SELECT year, SUM(quantity)::int AS market_sales
+            FROM sales_view
+            GROUP BY year
+            ORDER BY year
+        `),
+        pool.query(`
+            SELECT year, month, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE brand_id = $1 AND year IN ($2, $3)
+            GROUP BY year, month
+            ORDER BY year, month
+        `, [brand.id, prevYear, maxYear]),
+        pool.query(`
+            SELECT year, month, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE year IN ($1, $2)
+            GROUP BY year, month
+            ORDER BY year, month
+        `, [prevYear, maxYear]),
+        pool.query(`
+            SELECT p.id AS province_id, p.name AS province_name, p.region, SUM(tv.satis_adet)::int AS total_sales
+            FROM tuik_veri tv
+            JOIN provinces p
+                ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+            GROUP BY p.id, p.name, p.region
+            ORDER BY total_sales DESC, p.name ASC
+        `, [brandAliases, maxYear, maxMonth]),
+        pool.query(`
+            SELECT p.id AS province_id, p.name AS province_name, p.region, SUM(tv.satis_adet)::int AS total_sales
+            FROM tuik_veri tv
+            JOIN provinces p
+                ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+            GROUP BY p.id, p.name, p.region
+            ORDER BY total_sales DESC, p.name ASC
+        `, [brandAliases, prevYear, maxMonth]),
+        pool.query(`
+            SELECT p.region AS region_name, SUM(tv.satis_adet)::int AS total_sales
+            FROM tuik_veri tv
+            JOIN provinces p
+                ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+            GROUP BY p.region
+            ORDER BY total_sales DESC, p.region ASC
+        `, [brandAliases, maxYear, maxMonth]),
+        pool.query(`
+            SELECT p.region AS region_name, SUM(tv.satis_adet)::int AS total_sales
+            FROM tuik_veri tv
+            JOIN provinces p
+                ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+            GROUP BY p.region
+            ORDER BY total_sales DESC, p.region ASC
+        `, [brandAliases, prevYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(category, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY category
+            ORDER BY total_sales DESC, label ASC
+        `, [brand.id, maxYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(cabin_type, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY cabin_type
+            ORDER BY total_sales DESC, label ASC
+        `, [brand.id, maxYear, maxMonth]),
+        pool.query(`
+            SELECT UPPER(COALESCE(drive_type, 'belirsiz')) AS label, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY drive_type
+            ORDER BY total_sales DESC, label ASC
+        `, [brand.id, maxYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(hp_range, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY hp_range
+            ORDER BY total_sales DESC, label ASC
+        `, [brand.id, maxYear, maxMonth]),
+        pool.query(`
+            SELECT COALESCE(gear_config, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+            FROM sales_view
+            WHERE brand_id = $1 AND year = $2 AND month <= $3
+            GROUP BY gear_config
+            ORDER BY total_sales DESC, label ASC
+        `, [brand.id, maxYear, maxMonth]),
+        pool.query(`
+            WITH grouped_models AS (
+                SELECT
+                    COALESCE(NULLIF(model, ''), tuik_model_adi) AS model_name,
+                    ROUND(AVG(motor_gucu_hp)::numeric, 1) AS avg_hp,
+                    MIN(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS min_price_usd,
+                    MAX(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS max_price_usd
+                FROM teknik_veri
+                WHERE UPPER(marka) = ANY($1::text[])
+                GROUP BY COALESCE(NULLIF(model, ''), tuik_model_adi)
+            )
+            SELECT
+                COUNT(*)::int AS technical_model_count,
+                (SELECT COUNT(*)::int FROM teknik_veri WHERE UPPER(marka) = ANY($1::text[])) AS variant_count,
+                ROUND(AVG(avg_hp)::numeric, 1) AS avg_hp,
+                (SELECT ROUND(AVG(fiyat_usd)::numeric, 2) FROM teknik_veri WHERE UPPER(marka) = ANY($1::text[]) AND fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS avg_price_usd,
+                MIN(min_price_usd) AS min_price_usd,
+                MAX(max_price_usd) AS max_price_usd
+            FROM grouped_models
+        `, [brandAliases]),
+        pool.query(`
+            SELECT
+                COALESCE(koruma, '-') AS protection,
+                UPPER(COALESCE(cekis_tipi, '-')) AS drive_type,
+                COUNT(*)::int AS model_count
+            FROM teknik_veri
+            WHERE UPPER(marka) = ANY($1::text[])
+            GROUP BY COALESCE(koruma, '-'), UPPER(COALESCE(cekis_tipi, '-'))
+            ORDER BY model_count DESC, protection ASC
+        `, [brandAliases]),
+        pool.query(`
+            SELECT
+                COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi) AS model_name,
+                SUM(tv.satis_adet)::int AS total_sales,
+                ROUND(AVG(tk.motor_gucu_hp)::numeric, 1) AS avg_hp,
+                MIN(tk.fiyat_usd) FILTER (WHERE tk.fiyat_usd IS NOT NULL AND tk.fiyat_usd > 0) AS min_price_usd,
+                MAX(tk.fiyat_usd) FILTER (WHERE tk.fiyat_usd IS NOT NULL AND tk.fiyat_usd > 0) AS max_price_usd,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT UPPER(COALESCE(tk.cekis_tipi, ''))), '') AS drive_types,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(tk.koruma, '')), '') AS protections,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(tk.vites_sayisi, '')), '') AS gear_configs,
+                MAX(NULLIF(tk.emisyon_seviyesi, '')) AS emission_standard
+            FROM tuik_veri tv
+            LEFT JOIN teknik_veri tk
+                ON UPPER(tk.marka) = ANY($4::text[])
+               AND UPPER(tk.tuik_model_adi) = UPPER(tv.tuik_model_adi)
+            WHERE UPPER(tv.marka) = ANY($1::text[])
+              AND tv.tescil_yil = $2
+              AND tv.tescil_ay <= $3
+            GROUP BY COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi)
+            ORDER BY total_sales DESC, model_name ASC
+            LIMIT 12
+        `, [brandAliases, maxYear, maxMonth, brandAliases]),
+        pool.query(`
+            SELECT
+                COALESCE(NULLIF(model, ''), tuik_model_adi) AS model_name,
+                ROUND(AVG(motor_gucu_hp)::numeric, 1) AS avg_hp,
+                MIN(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS min_price_usd,
+                MAX(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS max_price_usd,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT UPPER(COALESCE(cekis_tipi, ''))), '') AS drive_types,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(koruma, '')), '') AS protections,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(vites_sayisi, '')), '') AS gear_configs,
+                MAX(NULLIF(emisyon_seviyesi, '')) AS emission_standard,
+                MAX(NULLIF(mensei, '')) AS origin
+            FROM teknik_veri
+            WHERE UPPER(marka) = ANY($1::text[])
+            GROUP BY COALESCE(NULLIF(model, ''), tuik_model_adi)
+            ORDER BY avg_hp ASC NULLS LAST, model_name ASC
+            LIMIT 18
+        `, [brandAliases])
+    ]);
+
+    const currentSalesRow = currentSalesRes.rows[0] || {};
+    const technicalSummaryRow = technicalSummaryRes.rows[0] || {};
+    const currentSales = parseInt(currentSalesRow.total_sales || 0, 10);
+    const previousSales = parseInt(previousSalesRes.rows[0]?.total_sales || 0, 10);
+    const currentMarket = parseInt(currentMarketRes.rows[0]?.total_sales || 0, 10);
+    const previousMarket = parseInt(previousMarketRes.rows[0]?.total_sales || 0, 10);
+    const activeProvinces = parseInt(currentSalesRow.active_provinces || 0, 10);
+    const ranking = rankingRes.rows[0]?.ranking ? parseInt(rankingRes.rows[0].ranking, 10) : null;
+    const currentShare = currentMarket ? roundMetric((currentSales * 100) / currentMarket, 2) : null;
+    const previousShare = previousMarket ? roundMetric((previousSales * 100) / previousMarket, 2) : null;
+    const shareDeltaPp = currentShare !== null && previousShare !== null ? roundMetric(currentShare - previousShare, 2) : null;
+    const marketYoy = calculateYoY(currentMarket, previousMarket);
+    const brandYoy = calculateYoY(currentSales, previousSales);
+    const outperformancePp = marketYoy !== null && brandYoy !== null ? roundMetric(brandYoy - marketYoy, 1) : null;
+
+    const marketYearlyMap = new Map(yearlyMarketRes.rows.map(row => [parseInt(row.year, 10), parseInt(row.market_sales, 10)]));
+    const brandYearlyMap = new Map(yearlyBrandRes.rows.map(row => [parseInt(row.year, 10), parseInt(row.brand_sales, 10)]));
+    const yearlyHistory = Array.from(marketYearlyMap.keys())
+        .sort((a, b) => a - b)
+        .slice(-5)
+        .map(year => {
+            const brandSales = brandYearlyMap.get(year) || 0;
+            const marketSales = marketYearlyMap.get(year) || 0;
+            return {
+                year,
+                brand_sales: brandSales,
+                market_sales: marketSales,
+                market_share_pct: marketSales ? roundMetric((brandSales * 100) / marketSales, 1) : null,
+                yoy_pct: null,
+                is_partial: year === maxYear
+            };
+        });
+
+    yearlyHistory.forEach((item, index) => {
+        if (index === 0) {
+            item.yoy_pct = null;
+            return;
+        }
+        item.yoy_pct = calculateYoY(item.brand_sales, yearlyHistory[index - 1].brand_sales);
+    });
+
+    const monthlyBrandMap = new Map(monthlyBrandRes.rows.map(row => [`${row.year}_${row.month}`, parseInt(row.total_sales, 10)]));
+    const monthlyMarketMap = new Map(monthlyMarketRes.rows.map(row => [`${row.year}_${row.month}`, parseInt(row.total_sales, 10)]));
+    const monthlyTrend = Array.from({ length: maxMonth }, (_, index) => {
+        const month = index + 1;
+        return {
+            month,
+            label: MONTH_NAMES_TR[index].slice(0, 3),
+            current_sales: monthlyBrandMap.get(`${maxYear}_${month}`) || 0,
+            previous_sales: monthlyBrandMap.get(`${prevYear}_${month}`) || 0,
+            market_current_sales: monthlyMarketMap.get(`${maxYear}_${month}`) || 0,
+            market_previous_sales: monthlyMarketMap.get(`${prevYear}_${month}`) || 0
+        };
+    });
+
+    const previousProvinceMap = new Map(previousProvinceRes.rows.map(row => [parseInt(row.province_id, 10), parseInt(row.total_sales, 10)]));
+    const topProvinces = currentProvinceRes.rows.map(row => {
+        const provinceId = parseInt(row.province_id, 10);
+        const totalSales = parseInt(row.total_sales, 10);
+        const prevSales = previousProvinceMap.get(provinceId) || 0;
+        return {
+            province_id: provinceId,
+            province_name: row.province_name,
+            region: row.region,
+            total_sales: totalSales,
+            previous_sales: prevSales,
+            share_pct: currentSales ? roundMetric((totalSales * 100) / currentSales, 1) : 0,
+            yoy_pct: calculateYoY(totalSales, prevSales)
+        };
+    });
+
+    const top3Qty = topProvinces.slice(0, 3).reduce((sum, item) => sum + item.total_sales, 0);
+    const top10Qty = topProvinces.slice(0, 10).reduce((sum, item) => sum + item.total_sales, 0);
+    const top3SharePct = currentSales ? roundMetric((top3Qty * 100) / currentSales, 1) : 0;
+    const top10SharePct = currentSales ? roundMetric((top10Qty * 100) / currentSales, 1) : 0;
+
+    const provinceMomentum = topProvinces
+        .filter(item => item.total_sales >= 20)
+        .sort((a, b) => (b.yoy_pct ?? -9999) - (a.yoy_pct ?? -9999));
+    const provinceGainers = provinceMomentum.slice(0, 6);
+    const provinceDecliners = topProvinces
+        .filter(item => item.total_sales >= 20 && item.previous_sales >= 20)
+        .sort((a, b) => (a.yoy_pct ?? 9999) - (b.yoy_pct ?? 9999))
+        .slice(0, 6);
+
+    const previousRegionMap = new Map(previousRegionRes.rows.map(row => [row.region_name, parseInt(row.total_sales, 10)]));
+    const regionalMomentum = currentRegionRes.rows.map(row => {
+        const currentTotal = parseInt(row.total_sales, 10);
+        const previousTotal = previousRegionMap.get(row.region_name) || 0;
+        return {
+            region_name: row.region_name,
+            current_sales: currentTotal,
+            previous_sales: previousTotal,
+            share_pct: currentSales ? roundMetric((currentTotal * 100) / currentSales, 1) : 0,
+            yoy_pct: calculateYoY(currentTotal, previousTotal)
+        };
+    });
+
+    const topRegionGrowth = regionalMomentum
+        .filter(item => item.yoy_pct !== null)
+        .sort((a, b) => b.yoy_pct - a.yoy_pct)[0] || null;
+    const weakestRegionGrowth = regionalMomentum
+        .filter(item => item.yoy_pct !== null)
+        .sort((a, b) => a.yoy_pct - b.yoy_pct)[0] || null;
+
+    const buildMixPayload = (rows) => rows.map(row => {
+        const totalSales = parseInt(row.total_sales, 10);
+        return {
+            label: row.label,
+            total_sales: totalSales,
+            share_pct: currentSales ? roundMetric((totalSales * 100) / currentSales, 1) : 0
+        };
+    });
+
+    const categoryMix = buildMixPayload(categoryRes.rows);
+    const cabinMix = buildMixPayload(cabinRes.rows);
+    const driveMix = buildMixPayload(driveRes.rows);
+    const hpMix = buildMixPayload(hpRes.rows);
+    const gearMix = buildMixPayload(gearRes.rows);
+
+    const technicalModelCount = parseInt(technicalSummaryRow.technical_model_count || 0, 10);
+    const technicalVariantCount = parseInt(technicalSummaryRow.variant_count || 0, 10);
+    const technicalAvgHp = roundMetric(technicalSummaryRow.avg_hp, 1);
+    const technicalAvgPrice = roundMetric(technicalSummaryRow.avg_price_usd, 0);
+    const minPriceUsd = roundMetric(technicalSummaryRow.min_price_usd, 0);
+    const maxPriceUsd = roundMetric(technicalSummaryRow.max_price_usd, 0);
+    const pricePerHpUsd = technicalAvgPrice && technicalAvgHp ? roundMetric(technicalAvgPrice / technicalAvgHp, 0) : null;
+
+    const configurationSplit = configurationSplitRes.rows.map(row => ({
+        label: `${row.protection} ${row.drive_type}`.trim(),
+        protection: row.protection,
+        drive_type: row.drive_type,
+        model_count: parseInt(row.model_count, 10)
+    }));
+
+    const topModels = topModelsRes.rows.map(row => ({
+        model_name: row.model_name,
+        total_sales: parseInt(row.total_sales, 10),
+        share_pct: currentSales ? roundMetric((parseInt(row.total_sales, 10) * 100) / currentSales, 1) : 0,
+        avg_hp: roundMetric(row.avg_hp, 1),
+        min_price_usd: roundMetric(row.min_price_usd, 0),
+        max_price_usd: roundMetric(row.max_price_usd, 0),
+        drive_types: row.drive_types || [],
+        protections: row.protections || [],
+        gear_configs: row.gear_configs || [],
+        emission_standard: row.emission_standard || ''
+    }));
+
+    const technicalMatrix = technicalMatrixRes.rows.map(row => ({
+        model_name: row.model_name,
+        avg_hp: roundMetric(row.avg_hp, 1),
+        min_price_usd: roundMetric(row.min_price_usd, 0),
+        max_price_usd: roundMetric(row.max_price_usd, 0),
+        drive_types: row.drive_types || [],
+        protections: row.protections || [],
+        gear_configs: row.gear_configs || [],
+        emission_standard: row.emission_standard || '',
+        origin: row.origin || ''
+    }));
+
+    let resolvedTechnicalModelCount = technicalModelCount;
+    let resolvedTechnicalVariantCount = technicalVariantCount;
+    let resolvedTechnicalAvgHp = technicalAvgHp;
+    let resolvedTechnicalAvgPrice = technicalAvgPrice;
+    let resolvedMinPriceUsd = minPriceUsd;
+    let resolvedMaxPriceUsd = maxPriceUsd;
+    let resolvedPricePerHpUsd = pricePerHpUsd;
+    let resolvedConfigurationSplit = configurationSplit;
+    let resolvedTopModels = topModels;
+    let resolvedTechnicalMatrix = technicalMatrix;
+
+    if (!resolvedTechnicalModelCount) {
+        const tractorModelFallbackRes = await pool.query(`
+            SELECT
+                model_name,
+                horsepower,
+                price_usd,
+                category,
+                cabin_type,
+                drive_type,
+                gear_config,
+                price_list_tl
+            FROM tractor_models
+            WHERE brand_id = $1 AND is_current_model = true
+            ORDER BY horsepower ASC NULLS LAST, model_name ASC
+        `, [brand.id]);
+
+        const fallbackModels = tractorModelFallbackRes.rows.map(row => ({
+            model_name: row.model_name,
+            avg_hp: roundMetric(row.horsepower, 1),
+            min_price_usd: roundMetric(row.price_usd, 0),
+            max_price_usd: roundMetric(row.price_usd, 0),
+            drive_types: row.drive_type ? [String(row.drive_type).toUpperCase()] : [],
+            protections: row.cabin_type ? [row.cabin_type] : [],
+            gear_configs: row.gear_config ? [row.gear_config] : [],
+            emission_standard: '',
+            origin: brand.country_of_origin || ''
+        }));
+
+        const hpValues = fallbackModels.map(item => item.avg_hp).filter(Number.isFinite);
+        const usdPrices = fallbackModels.flatMap(item => [item.min_price_usd]).filter(value => Number.isFinite(value) && value > 0);
+        const fallbackPriceListTl = tractorModelFallbackRes.rows
+            .map(row => row.price_list_tl == null ? null : Number(row.price_list_tl))
+            .filter(value => Number.isFinite(value) && value > 0);
+
+        resolvedTechnicalModelCount = fallbackModels.length;
+        resolvedTechnicalVariantCount = fallbackModels.length;
+        resolvedTechnicalAvgHp = hpValues.length ? roundMetric(hpValues.reduce((sum, value) => sum + value, 0) / hpValues.length, 1) : null;
+        resolvedTechnicalAvgPrice = usdPrices.length ? roundMetric(usdPrices.reduce((sum, value) => sum + value, 0) / usdPrices.length, 0) : null;
+        resolvedMinPriceUsd = usdPrices.length ? roundMetric(Math.min(...usdPrices), 0) : null;
+        resolvedMaxPriceUsd = usdPrices.length ? roundMetric(Math.max(...usdPrices), 0) : null;
+        resolvedPricePerHpUsd = resolvedTechnicalAvgPrice && resolvedTechnicalAvgHp
+            ? roundMetric(resolvedTechnicalAvgPrice / resolvedTechnicalAvgHp, 0)
+            : null;
+        resolvedConfigurationSplit = Array.from(
+            tractorModelFallbackRes.rows.reduce((map, row) => {
+                const key = `${row.cabin_type || '-'}::${String(row.drive_type || '-').toUpperCase()}`;
+                const existing = map.get(key) || {
+                    label: `${row.cabin_type || '-'} ${String(row.drive_type || '-').toUpperCase()}`.trim(),
+                    protection: row.cabin_type || '-',
+                    drive_type: String(row.drive_type || '-').toUpperCase(),
+                    model_count: 0
+                };
+                existing.model_count += 1;
+                map.set(key, existing);
+                return map;
+            }, new Map()).values()
+        ).sort((a, b) => b.model_count - a.model_count);
+        resolvedTechnicalMatrix = fallbackModels;
+
+        if (!resolvedTopModels.length) {
+            resolvedTopModels = fallbackModels.slice(0, 12).map(item => ({
+                model_name: item.model_name,
+                total_sales: 0,
+                share_pct: 0,
+                avg_hp: item.avg_hp,
+                min_price_usd: item.min_price_usd,
+                max_price_usd: item.max_price_usd,
+                drive_types: item.drive_types,
+                protections: item.protections,
+                gear_configs: item.gear_configs,
+                emission_standard: item.emission_standard
+            }));
+        }
+
+        if (!resolvedTechnicalAvgPrice && fallbackPriceListTl.length) {
+            resolvedTechnicalAvgPrice = null;
+        }
+    }
+
+    const topCategory = categoryMix[0] || null;
+    const topDrive = driveMix[0] || null;
+    const topHp = hpMix[0] || null;
+    const shareCardValue = currentShare !== null ? `${currentShare}%` : '-';
+    const shareCardNote = shareDeltaPp !== null
+        ? `${shareDeltaPp > 0 ? '+' : ''}${shareDeltaPp} puan vs ${prevYear} aynı dönem`
+        : 'Geçmiş dönem payı yok';
+
+    const executiveKpis = [
+        { label: 'Tescil hacmi', value: formatNumberTR(currentSales), note: `${maxYear} ilk ${maxMonth} ay` },
+        { label: 'Pazar payı', value: shareCardValue, note: shareCardNote },
+        { label: 'Sıralama', value: ranking ? `${ranking}. sıra` : '-', note: currentMarket ? `${formatNumberTR(currentMarket)} toplam pazar` : 'Pazar verisi yok' },
+        { label: 'Pazara göre performans', value: outperformancePp !== null ? `${outperformancePp > 0 ? '+' : ''}${outperformancePp} puan` : '-', note: marketYoy !== null && brandYoy !== null ? `Pazar ${marketYoy > 0 ? '+' : ''}${marketYoy}% / ${reportBrandName} ${brandYoy > 0 ? '+' : ''}${brandYoy}%` : 'Karşılaştırma bekleniyor' },
+        { label: 'Aktif il', value: formatNumberTR(activeProvinces), note: `Top 10 il payı ${top10SharePct}%` },
+        { label: 'Teknik katalog', value: `${resolvedTechnicalModelCount} model`, note: `${resolvedTechnicalVariantCount} varyant / ${resolvedTechnicalAvgHp || '-'} HP ort.` }
+    ];
+
+    const storylineCards = [
+        {
+            eyebrow: 'Pazar direnci',
+            title: 'Daralan pazarda göreli olarak daha sağlam kaldı',
+            value: outperformancePp !== null ? `${outperformancePp > 0 ? '+' : ''}${outperformancePp} puan` : '-',
+            note: marketYoy !== null && brandYoy !== null ? `Pazar ${marketYoy > 0 ? '+' : ''}${marketYoy}% daralırken marka ${brandYoy > 0 ? '+' : ''}${brandYoy}% hareket etti.` : 'Karşılaştırma için önceki dönem verisi bekleniyor.'
+        },
+        {
+            eyebrow: 'Pay geri kazanımı',
+            title: 'Tescil payı aynı dönemde yukarı döndü',
+            value: shareCardValue,
+            note: shareDeltaPp !== null ? `${prevYear} aynı döneme göre ${shareDeltaPp > 0 ? '+' : ''}${shareDeltaPp} puanlık hareket.` : 'Pay hareketi hesaplanamadı.'
+        },
+        {
+            eyebrow: 'Portföy ekseni',
+            title: 'Tarla gücü korunurken bahçe hacmi ikinci ayağı oluşturuyor',
+            value: topCategory ? `${topCategory.share_pct}% ${topCategory.label}` : '-',
+            note: `${topDrive ? `${topDrive.share_pct}% ${topDrive.label}` : '-'} çekiş profili, ${topHp ? `${topHp.label} lider segment` : 'HP profili bekleniyor'}.`
+        },
+        {
+            eyebrow: 'Bölgesel denge',
+            title: 'Dağılım tek ile sıkışmayan yaygın bir saha izi üretiyor',
+            value: `Top 3 ${top3SharePct}%`,
+            note: topRegionGrowth
+                ? `${topRegionGrowth.region_name} ${topRegionGrowth.yoy_pct > 0 ? '+' : ''}${topRegionGrowth.yoy_pct}% ile öne çıkıyor${weakestRegionGrowth ? `, zayıf halka ${weakestRegionGrowth.region_name}` : ''}.`
+                : 'Bölgesel momentum hesaplanamadı.'
+        }
+    ];
+
+    const fallbackGovernance = [
+        brand.country_of_origin ? { label: 'Menşei', value: brand.country_of_origin, note: 'Marka kaydı' } : null,
+        brand.parent_company ? { label: 'Ana grup', value: brand.parent_company, note: 'Marka kaydı' } : null,
+        currentShare !== null ? { label: 'Güncel pazar payı', value: `${currentShare}%`, note: `${periodLabel} TÜİK tescil verisi` } : null,
+        ranking ? { label: 'Sektör sırası', value: `${ranking}. sıra`, note: `${maxYear} ilk ${maxMonth} ay` } : null
+    ].filter(Boolean);
+
+    const fallbackFacilities = (profile.hero_stats || []).map(item => ({
+        title: item.label || '-',
+        value: item.value || '-',
+        note: item.note || ''
+    }));
+
+    const fallbackFootprint = [
+        profile.headquarters ? { label: 'Merkez', value: profile.headquarters, note: 'Portal profili' } : null,
+        ...((profile.focus_regions || []).slice(0, 4).map(item => ({
+            label: item.region || '-',
+            value: item.region || '-',
+            note: item.note || ''
+        })))
+    ].filter(Boolean);
+
+    const fallbackProductFocus = (profile.product_lines || []).map(item => ({
+        title: item.label || '-',
+        note: Array.isArray(item.items) ? item.items.join(', ') : ''
+    }));
+
+    const mergedCorporate = {
+        governance: (curatedReport?.corporate?.governance?.length ? curatedReport.corporate.governance : fallbackGovernance),
+        facilities: (curatedReport?.corporate?.facilities?.length ? curatedReport.corporate.facilities : fallbackFacilities),
+        footprint: (curatedReport?.corporate?.footprint?.length ? curatedReport.corporate.footprint : fallbackFootprint),
+        ownership: curatedReport?.corporate?.ownership || [],
+        board: curatedReport?.corporate?.board || [],
+        executive_team: curatedReport?.corporate?.executive_team || [],
+        investor_contact: curatedReport?.corporate?.investor_contact || null,
+        official_2025_snapshot: curatedReport?.corporate?.official_2025_snapshot || [],
+        timeline: curatedReport?.corporate?.timeline || [],
+        product_focus: curatedReport?.corporate?.product_focus?.length ? curatedReport.corporate.product_focus : fallbackProductFocus,
+        export_watch: curatedReport?.corporate?.export_watch || []
+    };
+
+    const fallbackNews = portalItems
+        .filter(item => ['news', 'network', 'product', 'corporate'].includes(item.item_type))
+        .slice(0, 6)
+        .map(item => ({
+            date: item.published_at || null,
+            title: item.title || '-',
+            summary: item.summary || '',
+            url: item.cta_url || ''
+        }));
+
+    const sourceLinks = (curatedReport.source_links && curatedReport.source_links.length > 0)
+        ? curatedReport.source_links
+        : (profile.source_notes || []);
+
+    return {
+        brand_slug: canonicalSlug,
+        generated_at: new Date().toISOString(),
+        hero_note: curatedReport.hero_note || `${reportBrandName} için TÜİK tescil verisi, teknik katalog ve mevcut kurumsal profil aynı executive katmanda birleştirildi.`,
+        latest_period: {
+            year: maxYear,
+            month: maxMonth,
+            label: periodLabel
+        },
+        freshness: [
+            { label: 'TÜİK / veritabanı penceresi', value: `${maxYear} ilk ${maxMonth} ay`, note: 'Canlı tescil ve teknik veri birleşimi' },
+            { label: 'Kurumsal kaynak katmanı', value: sourceLinks.length ? `${sourceLinks.length} kaynak` : 'Profil kaynakları', note: 'Marka merkezi resmi bağlantılar ile zenginleştirilir' }
+        ],
+        executive_kpis: executiveKpis,
+        storyline_cards: storylineCards,
+        sales: {
+            current_sales: currentSales,
+            previous_sales: previousSales,
+            current_market_sales: currentMarket,
+            previous_market_sales: previousMarket,
+            market_share_pct: currentShare,
+            previous_market_share_pct: previousShare,
+            share_delta_pp: shareDeltaPp,
+            rank: ranking,
+            brand_yoy_pct: brandYoy,
+            market_yoy_pct: marketYoy,
+            outperformance_pp: outperformancePp,
+            active_provinces: activeProvinces,
+            top3_share_pct: top3SharePct,
+            top10_share_pct: top10SharePct,
+            top3_qty: top3Qty,
+            top10_qty: top10Qty,
+            yearly_history: yearlyHistory,
+            monthly_trend: monthlyTrend,
+            category_mix: categoryMix,
+            cabin_mix: cabinMix,
+            drive_mix: driveMix,
+            hp_mix: hpMix,
+            gear_mix: gearMix,
+            top_provinces: topProvinces.slice(0, 10),
+            province_gainers: provinceGainers,
+            province_decliners: provinceDecliners,
+            regional_momentum: regionalMomentum
+        },
+        portfolio: {
+            technical_model_count: resolvedTechnicalModelCount,
+            technical_variant_count: resolvedTechnicalVariantCount,
+            avg_hp: resolvedTechnicalAvgHp,
+            avg_price_usd: resolvedTechnicalAvgPrice,
+            min_price_usd: resolvedMinPriceUsd,
+            max_price_usd: resolvedMaxPriceUsd,
+            price_per_hp_usd: resolvedPricePerHpUsd,
+            configuration_split: resolvedConfigurationSplit,
+            top_models: resolvedTopModels,
+            technical_matrix: resolvedTechnicalMatrix
+        },
+        corporate: mergedCorporate,
+        news: (curatedReport.news && curatedReport.news.length > 0) ? curatedReport.news : fallbackNews,
+        automation_roadmap: (curatedReport.automation_roadmap && curatedReport.automation_roadmap.length > 0) ? curatedReport.automation_roadmap : [
+            {
+                title: `${reportBrandName} Pulse Agent`,
+                summary: 'Aylık TÜİK raporunu alıp marka payı, il ivmesi ve model ritmini otomatik yorumlar.',
+                owner: 'n8n + SQL'
+            },
+            {
+                title: `${reportBrandName} Catalog Watch`,
+                summary: 'Teknik katalog, fiyat ve yeni ürün değişimlerini fark raporu olarak toplar.',
+                owner: 'n8n + crawler'
+            }
+        ],
+        source_links: sourceLinks
+    };
 }
 
 function buildBrandSearchTerms(brand) {
@@ -212,29 +2286,35 @@ function isComparisonQuestion(question, matchedBrands) {
 }
 
 function buildUsageAnswer() {
-    return 'Soruyu anlayamadim. Ornekler: "2024 yilinda Tumosan kac traktor satti?" veya "2023 yili Tumosan ile Basak karsilastir".';
+    return 'Soruyu anlayamadım. Örnekler: "2024 yılında TÜMOSAN kaç traktör sattı?" veya "2023 yılı TÜMOSAN ile BAŞAK karşılaştır".';
 }
 
 async function callGroqJson(systemPrompt, userPrompt) {
-    if (!GROQ_API_KEY) return null;
+    if (!MINIMAX_API_KEY) return null;
 
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${GROQ_API_KEY}`
-        },
-        body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.1,
-            max_tokens: 500,
-            response_format: { type: 'json_object' }
-        })
-    });
+    let groqRes;
+    try {
+        groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${MINIMAX_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: MINIMAX_MODEL,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.1,
+                max_tokens: 500
+            }),
+            signal: AbortSignal.timeout(12000)
+        });
+    } catch (err) {
+        console.error('Groq JSON fetch error:', err.message);
+        return null;
+    }
 
     if (!groqRes.ok) {
         const errBody = await groqRes.text();
@@ -255,7 +2335,7 @@ async function callGroqJson(systemPrompt, userPrompt) {
 }
 
 async function inferSalesQueryWithGroq(question, brands, latestPeriod) {
-    if (!GROQ_API_KEY) return null;
+    if (!MINIMAX_API_KEY) return null;
 
     const brandList = brands.map(brand => ({
         name: brand.name,
@@ -316,9 +2396,13 @@ async function getLatestSalesPeriod() {
     if (!latestYear) return null;
 
     const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [latestYear]);
+    const latestMonth = parseInt(latestMonthRes.rows[0]?.max_month, 10) || 0;
     return {
         year: latestYear,
-        month: parseInt(latestMonthRes.rows[0]?.max_month, 10) || 0
+        month: latestMonth,
+        maxYear: latestYear,
+        maxMonth: latestMonth,
+        prevYear: latestYear - 1
     };
 }
 
@@ -361,19 +2445,19 @@ async function buildBrandYearTotalAnswer(brand, year, latestPeriod) {
         return {
             ok: false,
             intent: 'brand_year_total',
-            answer: `${year} icin ${brand.name} markasina ait satis kaydi bulunamadi.`,
+            answer: `${year} için ${brand.name} markasına ait satış kaydı bulunamadı.`,
             data: { brand: brand.name, year, total_sales: 0 }
         };
     }
 
     const share = totalMarketSales > 0 ? (brandSales * 100) / totalMarketSales : 0;
     const periodLabel = formatPeriodLabel(year, monthCount, latestPeriod?.year, latestPeriod?.month);
-    const rankText = brandRank > 0 ? ` Yil siralamasinda ${brandRank}. sirada.` : '';
+    const rankText = brandRank > 0 ? ` Yıl sıralamasında ${brandRank}. sırada.` : '';
 
     return {
         ok: true,
         intent: 'brand_year_total',
-        answer: `${periodLabel} icin ${brand.name} toplam ${formatNumberTR(brandSales)} traktor satti. Pazar payi %${formatShare(share)}.${rankText}`,
+        answer: `${periodLabel} için ${brand.name} toplam ${formatNumberTR(brandSales)} traktör sattı. Pazar payı %${formatShare(share)}.${rankText}`,
         data: {
             brand: brand.name,
             year,
@@ -535,7 +2619,7 @@ let lastGroqError = null;
 
 async function textToSql(question, conversationCtx) {
     lastGroqError = null;
-    if (!GROQ_API_KEY) { lastGroqError = 'GROQ_API_KEY missing'; return null; }
+    if (!MINIMAX_API_KEY) { lastGroqError = 'MINIMAX_API_KEY missing'; return null; }
 
     const latestPeriod = await getLatestSalesPeriod();
     const systemPrompt = DB_SCHEMA_PROMPT + `\nGüncel en son yıl: ${latestPeriod?.year || 2025}, en son ay: ${latestPeriod?.month || 5}`;
@@ -561,12 +2645,12 @@ TEK bir PostgreSQL SELECT sorgusu yaz.
 
     let groqRes;
     try {
-        groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MINIMAX_API_KEY}` },
             signal: controller.signal,
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: MINIMAX_MODEL,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
@@ -629,7 +2713,7 @@ function fixTurkishIlike(sql) {
 }
 
 async function textToSqlRetry(question, failedSql, errorMessage) {
-    if (!GROQ_API_KEY) return null;
+    if (!MINIMAX_API_KEY) return null;
 
     const latestPeriod = await getLatestSalesPeriod();
     const systemPrompt = DB_SCHEMA_PROMPT + `\nGüncel en son yıl: ${latestPeriod?.year || 2025}, en son ay: ${latestPeriod?.month || 5}`;
@@ -649,11 +2733,11 @@ Hatayı düzelt ve çalışan bir PostgreSQL SELECT sorgusu yaz.
 - Sadece SQL kodu döndür, açıklama ekleme.`;
 
     try {
-        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        const groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MINIMAX_API_KEY}` },
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: MINIMAX_MODEL,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
@@ -713,7 +2797,7 @@ async function executeSafeSql(sql) {
 }
 
 async function interpretResults(question, sql, result, conversationCtx) {
-    if (!GROQ_API_KEY) return null;
+    if (!MINIMAX_API_KEY) return null;
 
     const dataPreview = JSON.stringify(result.rows.slice(0, 20), null, 0);
     const isSimpleQuestion = question.split(/\s+/).length <= 8 && !/karşılaştır|neden|analiz|strateji|tavsiye|yorum|değerlendir/i.test(question);
@@ -780,12 +2864,12 @@ Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
     const timeout = setTimeout(() => controller.abort(), 15000);
 
     try {
-        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        const groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MINIMAX_API_KEY}` },
             signal: controller.signal,
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: MINIMAX_MODEL,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
@@ -830,19 +2914,19 @@ Cevabın sonunda kullanıcıya yönlendirebileceğin proaktif öneriler ekle.`;
 
 // Kısa/hızlı yorum fonksiyonu — interpretResults timeout/rate-limit olduğunda fallback
 async function interpretResultsShort(question, result) {
-    if (!GROQ_API_KEY) return null;
+    if (!MINIMAX_API_KEY) return null;
     const dataPreview = JSON.stringify(result.rows.slice(0, 10), null, 0);
 
     try {
         const controller2 = new AbortController();
         const timeout2 = setTimeout(() => controller2.abort(), 10000);
 
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        const res = await fetch('https://api.minimax.io/v1/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MINIMAX_API_KEY}` },
             signal: controller2.signal,
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: MINIMAX_MODEL,
                 messages: [
                     { role: 'system', content: 'Türkiye traktör sektörü veri analisti. WhatsApp formatında kısa Türkçe cevap ver. *kalın* kullan. Verilerin dönemini belirt. Çince karakter KULLANMA.' },
                     { role: 'user', content: `Soru: "${question}"\nVeri (${result.rowCount} satır): ${dataPreview}\n\nBu veriyi kısa ve net yorumla. Sonunda 1 proaktif öneri ekle.` }
@@ -2047,7 +4131,7 @@ async function buildBrandExecutiveData(brand, year, latestPeriod) {
 
     let commentary = '';
     const brief = await callGroqJson(
-        'Yalnizca JSON dondur. { "summary": "...", "recommendation": "..." } formatini kullan. Turkce, yonetici dili kullan. Sayisal veriyi yorumla, 2 kisa cumlelik ozet ve 1 kisa aksiyon onerisi ver. Aksiyon onerisi markanin kendi saha, segment, fiyat, il veya portfoy hamlelerine odaklansin; rakiple isbirligi onerme.',
+        'Yalnızca JSON döndür. { "summary": "...", "recommendation": "..." } formatını kullan. Türkçe, yönetici dili kullan. Sayısal veriyi yorumla, 2 kısa cümlelik özet ve 1 kısa aksiyon önerisi ver. Aksiyon önerisi markanın kendi saha, segment, fiyat, il veya portföy hamlelerine odaklansın; rakiple işbirliği önerme.',
         JSON.stringify({
             brand: brand.name,
             year,
@@ -2148,7 +4232,7 @@ async function buildMarketOverviewData(year, latestPeriod) {
 
     let commentary = '';
     const brief = await callGroqJson(
-        'Yalnizca JSON dondur. { "summary": "...", "recommendation": "..." } formatini kullan. Turkce, yonetici dili kullan. 2 kisa cumlelik pazar yorumu ve 1 kisa aksiyon onerisi ver. Oneri, pazar konsantrasyonu, bolgesel firsat veya segment kaymasi gibi icgoru odakli olsun; rakiplerle isbirligi onermesin.',
+        'Yalnızca JSON döndür. { "summary": "...", "recommendation": "..." } formatını kullan. Türkçe, yönetici dili kullan. 2 kısa cümlelik pazar yorumu ve 1 kısa aksiyon önerisi ver. Öneri, pazar konsantrasyonu, bölgesel fırsat veya segment kayması gibi içgörü odaklı olsun; rakiplerle işbirliği önermesin.',
         JSON.stringify({
             year,
             periodLabel,
@@ -2239,7 +4323,7 @@ async function buildBrandCompareExecutiveData(brands, year, latestPeriod) {
 
     let commentary = '';
     const brief = await callGroqJson(
-        'Yalnizca JSON dondur. { "summary": "...", "recommendation": "..." } formatini kullan. Turkce, ust yonetime uygun dil kullan. 2 kisa cumlelik rekabet yorumu ve 1 aksiyon onerisi ver. Oneri, il/segment/fiyat farklari uzerinden somut bir takip veya savunma hamlesi icersin; genel gecis cumlesi veya rakiple isbirligi onermesin.',
+        'Yalnızca JSON döndür. { "summary": "...", "recommendation": "..." } formatını kullan. Türkçe, üst yönetime uygun dil kullan. 2 kısa cümlelik rekabet yorumu ve 1 aksiyon önerisi ver. Öneri, il/segment/fiyat farkları üzerinden somut bir takip veya savunma hamlesi içersin; genel geçiş cümlesi veya rakiple işbirliği önermesin.',
         JSON.stringify({
             year,
             limitMonth,
@@ -2277,22 +4361,22 @@ function buildBrandExecutiveMessage(report) {
     const reportUrl = getPublicUrl(`/public/reports/brand?brand=${encodeURIComponent(report.brand.slug)}&year=${report.year}`);
     const trendSummary = buildTopList(report.yearlyTrend, item => `${item.year}: ${formatNumberTR(item.total)}`, 3);
     return [
-        `*Yonetici Brifingi | ${report.brand.name} | ${report.periodLabel}*`,
+        `*Yönetici Brifingi | ${report.brand.name} | ${report.periodLabel}*`,
         `*Pazar Konumu*`,
-        `- Hacim: ${formatNumberTR(report.currentSales)} adet | Pay: %${formatShare(report.marketShare)} | Sira: ${report.rank || '-'}`,
-        `- Yillik momentum: ${formatPctSigned(report.yoy)} | Aktif il: ${formatNumberTR(report.activeProvinceCount)}`,
+        `- Hacim: ${formatNumberTR(report.currentSales)} adet | Pay: %${formatShare(report.marketShare)} | Sıra: ${report.rank || '-'}`,
+        `- Yıllık momentum: ${formatPctSigned(report.yoy)} | Aktif il: ${formatNumberTR(report.activeProvinceCount)}`,
         `*Momentum ve Saha*`,
-        `- 3 yillik iz: ${trendSummary || '-'}`,
+        `- 3 yıllık iz: ${trendSummary || '-'}`,
         `- Tepe ay: ${report.peakMonth ? `${MONTH_NAMES_TR[report.peakMonth.month - 1]} (${formatNumberTR(report.peakMonth.total)})` : '-'}`,
-        `- En guclu iller: ${buildTopList(report.topProvinces, item => `${item.name} (${formatNumberTR(item.total)})`) || '-'}`,
-        `*Segment ve Portfoy*`,
-        `- Lider HP bandi: ${dominantHp ? `${dominantHp.name} (${formatNumberTR(dominantHp.total)})` : '-'}`,
-        `- Tarla/Bahce dengesi: ${formatNumberTR(report.categories.tarla || 0)} / ${formatNumberTR(report.categories.bahce || 0)}`,
+        `- En güçlü iller: ${buildTopList(report.topProvinces, item => `${item.name} (${formatNumberTR(item.total)})`) || '-'}`,
+        `*Segment ve Portföy*`,
+        `- Lider HP bandı: ${dominantHp ? `${dominantHp.name} (${formatNumberTR(dominantHp.total)})` : '-'}`,
+        `- Tarla/Bahçe dengesi: ${formatNumberTR(report.categories.tarla || 0)} / ${formatNumberTR(report.categories.bahce || 0)}`,
         `- 4WD penetrasyonu: %${formatShare(report.drive4wdRatio)}`,
-        `- Portfoy: ${report.models.length} aktif model | Fiyat koridoru: ${formatCurrencyShort(report.minPrice)} - ${formatCurrencyShort(report.maxPrice)}`,
+        `- Portföy: ${report.models.length} aktif model | Fiyat koridoru: ${formatCurrencyShort(report.minPrice)} - ${formatCurrencyShort(report.maxPrice)}`,
         `- Ortalama liste fiyatı: ${formatCurrencyShort(report.avgPrice)}`,
-        report.commentary ? `*Yonetici Notu*\n${report.commentary}` : '',
-        reportUrl ? `*Grafikli yonetici paneli:* ${reportUrl}` : ''
+        report.commentary ? `*Yönetici Notu*\n${report.commentary}` : '',
+        reportUrl ? `*Grafikli yönetici paneli:* ${reportUrl}` : ''
     ].filter(Boolean).join('\n');
 }
 
@@ -2300,18 +4384,18 @@ function buildBrandCompareMessage(report) {
     const reportUrl = getPublicUrl(`/public/reports/compare?brand1=${encodeURIComponent(report.first.brand.slug)}&brand2=${encodeURIComponent(report.second.brand.slug)}&year=${report.year}`);
     return [
         `*Rekabet Brifingi | ${report.first.brand.name} vs ${report.second.brand.name} | ${report.periodLabel}*`,
-        `*Skor Karti*`,
-        `- ${report.first.brand.name}: ${formatNumberTR(report.first.currentSales)} adet | Pay %${formatShare(report.first.marketShare)} | Degisim ${formatPctSigned(report.first.yoy)}`,
-        `- ${report.second.brand.name}: ${formatNumberTR(report.second.currentSales)} adet | Pay %${formatShare(report.second.marketShare)} | Degisim ${formatPctSigned(report.second.yoy)}`,
-        `- Lider: ${report.leader.brand.name} | Hacim farki: ${formatNumberTR(report.difference)} adet | Pay farki: ${formatShare(report.shareGap)} puan`,
+        `*Skor Kartı*`,
+        `- ${report.first.brand.name}: ${formatNumberTR(report.first.currentSales)} adet | Pay %${formatShare(report.first.marketShare)} | Değişim ${formatPctSigned(report.first.yoy)}`,
+        `- ${report.second.brand.name}: ${formatNumberTR(report.second.currentSales)} adet | Pay %${formatShare(report.second.marketShare)} | Değişim ${formatPctSigned(report.second.yoy)}`,
+        `- Lider: ${report.leader.brand.name} | Hacim farkı: ${formatNumberTR(report.difference)} adet | Pay farkı: ${formatShare(report.shareGap)} puan`,
         `*Saha ve Rekabet*`,
-        `- Il ustunlugu: ${report.first.brand.name} ${report.provinceWins.first} il, ${report.second.brand.name} ${report.provinceWins.second} il`,
-        `- Kritik savas alanlari: ${buildTopList(report.provinceLead, item => `${item.name} (${formatNumberTR(item.gap)})`) || 'Il bazli fark verisi yok'}`,
+        `- İl üstünlüğü: ${report.first.brand.name} ${report.provinceWins.first} il, ${report.second.brand.name} ${report.provinceWins.second} il`,
+        `- Kritik savaş alanları: ${buildTopList(report.provinceLead, item => `${item.name} (${formatNumberTR(item.gap)})`) || 'İl bazlı fark verisi yok'}`,
         `*Segment ve Fiyatlama*`,
         `- ${report.first.brand.name} lider HP: ${buildTopList(report.first.hpSegments, item => `${item.name}`, 2) || '-'}`,
         `- ${report.second.brand.name} lider HP: ${buildTopList(report.second.hpSegments, item => `${item.name}`, 2) || '-'}`,
-        `- Ortalama liste fiyatlari: ${report.first.brand.name} ${formatCurrencyShort(report.first.avgPrice)} | ${report.second.brand.name} ${formatCurrencyShort(report.second.avgPrice)} | Fark ${formatCurrencyShort(report.priceGap)}`,
-        report.commentary ? `*Yonetici Notu*\n${report.commentary}` : '',
+        `- Ortalama liste fiyatları: ${report.first.brand.name} ${formatCurrencyShort(report.first.avgPrice)} | ${report.second.brand.name} ${formatCurrencyShort(report.second.avgPrice)} | Fark ${formatCurrencyShort(report.priceGap)}`,
+        report.commentary ? `*Yönetici Notu*\n${report.commentary}` : '',
         reportUrl ? `*Grafikli rekabet paneli:* ${reportUrl}` : ''
     ].filter(Boolean).join('\n');
 }
@@ -2319,17 +4403,17 @@ function buildBrandCompareMessage(report) {
 function buildMarketOverviewMessage(report) {
     const reportUrl = getPublicUrl(`/public/reports/market?year=${report.year}`);
     return [
-        `*Pazar Bulteni | ${report.periodLabel}*`,
-        `*Ust Duzey Gosterge Seti*`,
-        `- Toplam pazar: ${formatNumberTR(report.currentSales)} adet | Yillik degisim: ${formatPctSigned(report.yoy)}`,
+        `*Pazar Bülteni | ${report.periodLabel}*`,
+        `*Üst Düzey Gösterge Seti*`,
+        `- Toplam pazar: ${formatNumberTR(report.currentSales)} adet | Yıllık değişim: ${formatPctSigned(report.yoy)}`,
         `- Aktif il: ${formatNumberTR(report.activeProvinceCount)} | Top 3 marka konsantrasyonu: %${formatShare(report.top3Share)}`,
         `*Liderlik Tablosu*`,
         `- Markalar: ${buildTopList(report.topBrands, item => `${item.name} (${formatNumberTR(item.total)})`, 5) || '-'}`,
-        `- Iller: ${buildTopList(report.topProvinces, item => `${item.name} (${formatNumberTR(item.total)})`, 5) || '-'}`,
+        `- İller: ${buildTopList(report.topProvinces, item => `${item.name} (${formatNumberTR(item.total)})`, 5) || '-'}`,
         `*Talep Profili*`,
         `- HP segmentleri: ${buildTopList(report.hpSegments, item => `${item.name} (${formatNumberTR(item.total)})`, 4) || '-'}`,
         `- Kategori resmi: ${buildTopList(report.categories, item => `${item.name} (${formatNumberTR(item.total)})`, 3) || '-'}`,
-        report.commentary ? `*Yonetici Notu*\n${report.commentary}` : '',
+        report.commentary ? `*Yönetici Notu*\n${report.commentary}` : '',
         reportUrl ? `*Grafikli pazar paneli:* ${reportUrl}` : ''
     ].filter(Boolean).join('\n');
 }
@@ -2340,26 +4424,26 @@ function renderBrandExecutiveHtml(report) {
     const provinceSvg = buildBarChartSvg(report.topProvinces.map(item => ({ label: item.name, value: item.total })), { color: '#0F8F6E' });
     const hpDonut = buildDonutSvg(report.hpSegments.slice(0, 5).map(item => ({ label: item.name, value: item.total })), { size: 260 });
     return wrapReportHtml(
-        `${report.brand.name} Yonetici Raporu`,
-        `${report.periodLabel} | Satis, pazar payi, segment, il dagilimi ve portfoy gorunumu`,
+        `${report.brand.name} Yönetici Raporu`,
+        `${report.periodLabel} | Satış, pazar payı, segment, il dağılımı ve portföy görünümü`,
         [
             `<div class="grid">
-                <div class="kpi"><div class="label">Satis</div><div class="value">${formatNumberTR(report.currentSales)}</div></div>
-                <div class="kpi"><div class="label">Pazar Payi</div><div class="value">%${formatShare(report.marketShare)}</div></div>
-                <div class="kpi"><div class="label">Siralama</div><div class="value">${report.rank || '-'}</div></div>
-                <div class="kpi"><div class="label">Yillik Degisim</div><div class="value">${formatPctSigned(report.yoy)}</div></div>
+                <div class="kpi"><div class="label">Satış</div><div class="value">${formatNumberTR(report.currentSales)}</div></div>
+                <div class="kpi"><div class="label">Pazar Payı</div><div class="value">%${formatShare(report.marketShare)}</div></div>
+                <div class="kpi"><div class="label">Sıralama</div><div class="value">${report.rank || '-'}</div></div>
+                <div class="kpi"><div class="label">Yıllık Değişim</div><div class="value">${formatPctSigned(report.yoy)}</div></div>
             </div>`,
-            `<section class="section"><h2>Yonetici Ozeti</h2><p>${escapeHtml(report.commentary || `${report.brand.name}, ${report.periodLabel} doneminde ${formatNumberTR(report.currentSales)} adet satis ve %${formatShare(report.marketShare)} pazar payina ulasmistir.`)}</p></section>`,
+            `<section class="section"><h2>Yönetici Özeti</h2><p>${escapeHtml(report.commentary || `${report.brand.name}, ${report.periodLabel} döneminde ${formatNumberTR(report.currentSales)} adet satış ve %${formatShare(report.marketShare)} pazar payına ulaşmıştır.`)}</p></section>`,
             `<section class="section"><h2>Momentum Paneli</h2><div class="split"><div class="chart">${monthlySvg}</div><div class="chart">${yearlySvg}</div></div></section>`,
-            `<section class="section"><h2>Bolgesel Guc</h2><div class="chart">${provinceSvg}</div></section>`,
-            `<section class="section"><h2>Segment ve Portfoy Mimarisi</h2>
+            `<section class="section"><h2>Bölgesel Güç</h2><div class="chart">${provinceSvg}</div></section>`,
+            `<section class="section"><h2>Segment ve Portföy Mimarisi</h2>
                 <div class="split">
                     <div class="chart">${hpDonut}</div>
                     <div class="list-grid">
                         <div class="pill"><span class="mini">Lider HP</span><strong>${escapeHtml(report.hpSegments[0]?.name || '-')}</strong></div>
-                        <div class="pill"><span class="mini">Tarla / Bahce</span><strong>${formatNumberTR(report.categories.tarla || 0)} / ${formatNumberTR(report.categories.bahce || 0)}</strong></div>
+                        <div class="pill"><span class="mini">Tarla / Bahçe</span><strong>${formatNumberTR(report.categories.tarla || 0)} / ${formatNumberTR(report.categories.bahce || 0)}</strong></div>
                         <div class="pill"><span class="mini">4WD Penetrasyonu</span><strong>%${formatShare(report.drive4wdRatio)}</strong></div>
-                        <div class="pill"><span class="mini">Aktif Il</span><strong>${formatNumberTR(report.activeProvinceCount)}</strong></div>
+                        <div class="pill"><span class="mini">Aktif İl</span><strong>${formatNumberTR(report.activeProvinceCount)}</strong></div>
                         <div class="pill"><span class="mini">Aktif Model</span><strong>${report.models.length}</strong></div>
                         <div class="pill"><span class="mini">Fiyat Koridoru</span><strong>${escapeHtml(formatCurrencyShort(report.minPrice))} - ${escapeHtml(formatCurrencyShort(report.maxPrice))}</strong></div>
                     </div>
@@ -2367,8 +4451,8 @@ function renderBrandExecutiveHtml(report) {
             </section>`,
             `<section class="section"><h2>Ticari Notlar</h2>
                 <div class="split">
-                    <div class="note"><strong>Tepe Ay</strong>${report.peakMonth ? `${MONTH_NAMES_TR[report.peakMonth.month - 1]} ayinda ${formatNumberTR(report.peakMonth.total)} adet ile zirve goruldu.` : 'Yeterli aylik veri bulunamadi.'}</div>
-                    <div class="note"><strong>Urun Mimari</strong>${report.models.length ? `${report.models.length} aktif model icinde ortalama liste fiyati ${escapeHtml(formatCurrencyShort(report.avgPrice))} seviyesinde.` : 'Portfoy verisi sinirli.'}</div>
+                    <div class="note"><strong>Tepe Ay</strong>${report.peakMonth ? `${MONTH_NAMES_TR[report.peakMonth.month - 1]} ayında ${formatNumberTR(report.peakMonth.total)} adet ile zirve görüldü.` : 'Yeterli aylık veri bulunamadı.'}</div>
+                    <div class="note"><strong>Ürün Mimarisi</strong>${report.models.length ? `${report.models.length} aktif model içinde ortalama liste fiyatı ${escapeHtml(formatCurrencyShort(report.avgPrice))} seviyesindedir.` : 'Portföy verisi sınırlı.'}</div>
                 </div>
             </section>`
         ]
@@ -2389,11 +4473,11 @@ function renderBrandCompareHtml(report) {
     const shareDonut = buildDonutSvg([
         { label: report.first.brand.name, value: report.first.currentSales },
         { label: report.second.brand.name, value: report.second.currentSales },
-        { label: 'Digerleri', value: Math.max(report.marketSales - report.first.currentSales - report.second.currentSales, 0) }
+        { label: 'Diğerleri', value: Math.max(report.marketSales - report.first.currentSales - report.second.currentSales, 0) }
     ], { size: 260 });
     return wrapReportHtml(
         `${report.first.brand.name} vs ${report.second.brand.name}`,
-        `${report.periodLabel} | Rekabet, il dagilimi, segment ve portfoy karsilastirmasi`,
+        `${report.periodLabel} | Rekabet, il dağılımı, segment ve portföy karşılaştırması`,
         [
             `<div class="grid">
                 <div class="kpi"><div class="label">${escapeHtml(report.first.brand.name)}</div><div class="value">${formatNumberTR(report.first.currentSales)}</div></div>
@@ -2401,17 +4485,17 @@ function renderBrandCompareHtml(report) {
                 <div class="kpi"><div class="label">Lider</div><div class="value">${escapeHtml(report.leader.brand.name)}</div></div>
                 <div class="kpi"><div class="label">Fark</div><div class="value">${formatNumberTR(report.difference)}</div></div>
             </div>`,
-            `<section class="section"><h2>Yonetici Ozeti</h2><p>${escapeHtml(report.commentary || `${report.leader.brand.name}, ${report.periodLabel} doneminde rakibine gore daha guclu bir performans sergilemistir.`)}</p></section>`,
-            `<section class="section"><h2>Rekabet Skor Karti</h2><div class="split"><div class="chart">${scoreSvg}</div><div class="chart">${shareDonut}</div></div></section>`,
-            `<section class="section"><h2>Il Bazli Rekabet Boslugu</h2><div class="chart">${provinceSvg}</div></section>`,
-            `<section class="section"><h2>Trend ve Portfoy</h2>
+            `<section class="section"><h2>Yönetici Özeti</h2><p>${escapeHtml(report.commentary || `${report.leader.brand.name}, ${report.periodLabel} döneminde rakibine göre daha güçlü bir performans sergilemiştir.`)}</p></section>`,
+            `<section class="section"><h2>Rekabet Skor Kartı</h2><div class="split"><div class="chart">${scoreSvg}</div><div class="chart">${shareDonut}</div></div></section>`,
+            `<section class="section"><h2>İl Bazlı Rekabet Boşluğu</h2><div class="chart">${provinceSvg}</div></section>`,
+            `<section class="section"><h2>Trend ve Portföy</h2>
                 <div class="split">
                     <div class="chart">${trendSvg}</div>
                     <div class="list-grid">
-                        <div class="pill"><span class="mini">Il Ustunlugu</span><strong>${escapeHtml(report.first.brand.name)} ${report.provinceWins.first} | ${escapeHtml(report.second.brand.name)} ${report.provinceWins.second}</strong></div>
-                        <div class="pill"><span class="mini">Pay Farki</span><strong>${formatShare(report.shareGap)} puan</strong></div>
-                        <div class="pill"><span class="mini">Momentum Farki</span><strong>${formatShare(report.yoyGap)} puan</strong></div>
-                        <div class="pill"><span class="mini">Fiyat Farki</span><strong>${escapeHtml(formatCurrencyShort(report.priceGap))}</strong></div>
+                        <div class="pill"><span class="mini">İl Üstünlüğü</span><strong>${escapeHtml(report.first.brand.name)} ${report.provinceWins.first} | ${escapeHtml(report.second.brand.name)} ${report.provinceWins.second}</strong></div>
+                        <div class="pill"><span class="mini">Pay Farkı</span><strong>${formatShare(report.shareGap)} puan</strong></div>
+                        <div class="pill"><span class="mini">Momentum Farkı</span><strong>${formatShare(report.yoyGap)} puan</strong></div>
+                        <div class="pill"><span class="mini">Fiyat Farkı</span><strong>${escapeHtml(formatCurrencyShort(report.priceGap))}</strong></div>
                         <div class="pill"><span class="mini">${escapeHtml(report.first.brand.name)} Lider HP</span><strong>${escapeHtml(buildTopList(report.first.hpSegments, item => item.name, 3) || '-')}</strong></div>
                         <div class="pill"><span class="mini">${escapeHtml(report.second.brand.name)} Lider HP</span><strong>${escapeHtml(buildTopList(report.second.hpSegments, item => item.name, 3) || '-')}</strong></div>
                     </div>
@@ -2426,22 +4510,22 @@ function renderMarketOverviewHtml(report) {
     const hpSvg = buildMiniColumnSvg(report.hpSegments.map(item => ({ label: item.name, value: item.total })), { color: '#0F8F6E' });
     const concentrationDonut = buildDonutSvg([
         { label: 'Top 3 Marka', value: Math.round(report.currentSales * report.top3Share / 100) },
-        { label: 'Digerleri', value: Math.max(report.currentSales - Math.round(report.currentSales * report.top3Share / 100), 0) }
+        { label: 'Diğerleri', value: Math.max(report.currentSales - Math.round(report.currentSales * report.top3Share / 100), 0) }
     ], { size: 250, colors: ['#2457C5', '#DCE4F2'] });
     return wrapReportHtml(
-        `Turkiye Traktor Pazari`,
-        `${report.periodLabel} | Lider markalar, il dagilimi ve HP segment resmi`,
+        `Türkiye Traktör Pazarı`,
+        `${report.periodLabel} | Lider markalar, il dağılımı ve HP segment resmi`,
         [
             `<div class="grid">
                 <div class="kpi"><div class="label">Toplam Pazar</div><div class="value">${formatNumberTR(report.currentSales)}</div></div>
-                <div class="kpi"><div class="label">Yillik Degisim</div><div class="value">${formatPctSigned(report.yoy)}</div></div>
+                <div class="kpi"><div class="label">Yıllık Değişim</div><div class="value">${formatPctSigned(report.yoy)}</div></div>
                 <div class="kpi"><div class="label">Lider Marka</div><div class="value">${escapeHtml(report.topBrands[0]?.name || '-')}</div></div>
-                <div class="kpi"><div class="label">Lider Il</div><div class="value">${escapeHtml(report.topProvinces[0]?.name || '-')}</div></div>
+                <div class="kpi"><div class="label">Lider İl</div><div class="value">${escapeHtml(report.topProvinces[0]?.name || '-')}</div></div>
             </div>`,
-            `<section class="section"><h2>Yonetici Ozeti</h2><p>${escapeHtml(report.commentary || `${report.periodLabel} doneminde pazar hacmi ${formatNumberTR(report.currentSales)} adede ulasmistir.`)}</p></section>`,
+            `<section class="section"><h2>Yönetici Özeti</h2><p>${escapeHtml(report.commentary || `${report.periodLabel} döneminde pazar hacmi ${formatNumberTR(report.currentSales)} adede ulaşmıştır.`)}</p></section>`,
             `<section class="section"><h2>Pazar Konsantrasyonu</h2><div class="split"><div class="chart">${brandsSvg}</div><div class="chart">${concentrationDonut}</div></div></section>`,
             `<section class="section"><h2>Talep Segmentasyonu</h2><div class="split"><div class="chart">${hpSvg}</div><div class="list-grid">${report.categories.map(item => `<div class="pill"><span class="mini">${escapeHtml(item.name)}</span><strong>${formatNumberTR(item.total)} adet</strong></div>`).join('')}</div></div></section>`,
-            `<section class="section"><h2>Lider Iller</h2><ul>${report.topProvinces.map(item => `<li>${escapeHtml(item.name)}: ${formatNumberTR(item.total)} adet</li>`).join('')}</ul><p style="margin-top:14px;">Aktif il sayisi: <strong>${formatNumberTR(report.activeProvinceCount)}</strong></p></section>`
+            `<section class="section"><h2>Lider İller</h2><ul>${report.topProvinces.map(item => `<li>${escapeHtml(item.name)}: ${formatNumberTR(item.total)} adet</li>`).join('')}</ul><p style="margin-top:14px;">Aktif il sayısı: <strong>${formatNumberTR(report.activeProvinceCount)}</strong></p></section>`
         ]
     );
 }
@@ -2583,7 +4667,7 @@ app.get('/api/debug/groq-test', async (req, res) => {
                 groqError: lastGroqError || 'unknown',
                 elapsed: elapsed + 'ms',
                 fallbackSql: fallbackSql ? fallbackSql.substring(0, 300) : 'NO_FALLBACK',
-                groqApiKey: GROQ_API_KEY ? 'SET (' + GROQ_API_KEY.substring(0, 8) + '...)' : 'MISSING',
+                groqApiKey: MINIMAX_API_KEY ? 'SET (' + MINIMAX_API_KEY.substring(0, 8) + '...)' : 'MISSING',
                 question
             });
         }
@@ -2754,11 +4838,60 @@ app.post('/api/public/whatsapp/webhook', async (req, res) => {
 
 // ============================================
 // ============================================
-// AUTH ENDPOINTS
+// AUTH ENDPOINTS — Hardened (rate limit, lock, Google OAuth, email verify)
 // ============================================
-app.post('/api/auth/login', async (req, res) => {
+const SUPERUSER_EMAILS = new Set(['yukselozdek@gmail.com']);
+const PASSWORD_POLICY = /^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/;
+const LOGIN_LIMITER = rateLimit({
+    windowMs: 5 * 60 * 1000, max: 15, standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Çok fazla giriş denemesi. 5 dakika bekleyin.' }
+});
+const SIGNUP_LIMITER = rateLimit({
+    windowMs: 60 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Çok fazla kayıt denemesi. 1 saat bekleyin.' }
+});
+
+async function logAuthAudit(userId, event, req, metadata = {}) {
     try {
-        const { email, password } = req.body;
+        await pool.query(
+            `INSERT INTO auth_audit (user_id, event, ip_address, user_agent, metadata) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+            [userId || null, event, req?.ip || null, (req?.headers?.['user-agent'] || '').slice(0, 500), JSON.stringify(metadata)]
+        );
+    } catch (e) { /* sessiz */ }
+}
+
+function buildUserPayload(user) {
+    return {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        is_superuser: !!user.is_superuser,
+        brand_id: user.brand_id,
+        company_name: user.company_name,
+        job_title: user.job_title,
+        email_verified: !!user.email_verified,
+        preview_plan_slug: user.preview_plan_slug || null,
+        brand: user.brand_name ? {
+            name: user.brand_name, slug: user.brand_slug,
+            primary_color: user.primary_color, secondary_color: user.secondary_color,
+            accent_color: user.accent_color, text_color: user.text_color,
+            logo_url: user.logo_url
+        } : null
+    };
+}
+
+function issueAuthToken(user) {
+    return jwt.sign(
+        { id: user.id, email: user.email, role: user.role, brand_id: user.brand_id, sup: !!user.is_superuser },
+        JWT_SECRET, { expiresIn: '30d' }
+    );
+}
+
+app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
+    try {
+        const email = String(req.body?.email || '').trim().toLowerCase();
+        const password = String(req.body?.password || '');
         if (!email || !password) return res.status(400).json({ error: 'Email ve şifre gerekli' });
 
         const result = await pool.query(`
@@ -2767,34 +4900,272 @@ app.post('/api/auth/login', async (req, res) => {
             WHERE u.email = $1 AND u.is_active = true
         `, [email]);
 
-        if (result.rows.length === 0) return res.status(401).json({ error: 'Geçersiz kimlik bilgileri' });
+        if (result.rows.length === 0) {
+            await logAuthAudit(null, 'login_failed_unknown', req, { email });
+            return res.status(401).json({ error: 'Geçersiz kimlik bilgileri' });
+        }
 
         const user = result.rows[0];
-        const validPassword = await bcrypt.compare(password, user.password_hash);
-        if (!validPassword) return res.status(401).json({ error: 'Geçersiz kimlik bilgileri' });
+        // Hesap kilidi kontrolü
+        if (user.locked_until && new Date(user.locked_until) > new Date()) {
+            await logAuthAudit(user.id, 'login_blocked_locked', req);
+            const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+            return res.status(423).json({ error: `Hesabınız ${mins} dakika kilitli. Çok fazla başarısız deneme.` });
+        }
 
-        await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+        const validPassword = user.password_hash ? await bcrypt.compare(password, user.password_hash) : false;
+        if (!validPassword) {
+            const newCount = (user.failed_login_count || 0) + 1;
+            const lockUntil = newCount >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null;
+            await pool.query(
+                `UPDATE users SET failed_login_count = $1, locked_until = $2 WHERE id = $3`,
+                [newCount, lockUntil, user.id]
+            );
+            await logAuthAudit(user.id, 'login_failed', req, { count: newCount });
+            return res.status(401).json({ error: 'Geçersiz kimlik bilgileri', attempts_left: Math.max(0, 5 - newCount) });
+        }
 
-        const token = jwt.sign(
-            { id: user.id, email: user.email, role: user.role, brand_id: user.brand_id },
-            JWT_SECRET, { expiresIn: '30d' }
+        // Başarılı login: sayaçları sıfırla, last_login güncelle
+        await pool.query(
+            `UPDATE users SET last_login = NOW(), failed_login_count = 0, locked_until = NULL WHERE id = $1`,
+            [user.id]
         );
+        // Superuser otomatik bayrak
+        if (SUPERUSER_EMAILS.has(email) && !user.is_superuser) {
+            await pool.query(`UPDATE users SET is_superuser = true, role = 'admin' WHERE id = $1`, [user.id]);
+            user.is_superuser = true; user.role = 'admin';
+        }
 
-        res.json({
-            token,
-            user: {
-                id: user.id, email: user.email, full_name: user.full_name,
-                role: user.role, brand_id: user.brand_id,
-                brand: user.brand_name ? {
-                    name: user.brand_name, slug: user.brand_slug,
-                    primary_color: user.primary_color, secondary_color: user.secondary_color,
-                    accent_color: user.accent_color, text_color: user.text_color,
-                    logo_url: user.logo_url
-                } : null
-            }
-        });
+        await logAuthAudit(user.id, 'login_success', req);
+        const token = issueAuthToken(user);
+        res.json({ token, user: buildUserPayload(user) });
     } catch (err) {
         console.error('Login error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// SIGNUP — güçlü şifre + zorunlu marka + firma alanları
+// ============================================
+app.post('/api/auth/signup', SIGNUP_LIMITER, async (req, res) => {
+    try {
+        const {
+            email: rawEmail, password, full_name, brand_id, plan_slug,
+            company_name, company_tax_office, company_tax_number,
+            job_title, dealer_or_distributor, phone, city
+        } = req.body || {};
+
+        const email = String(rawEmail || '').trim().toLowerCase();
+        if (!email || !password || !full_name || !brand_id || !company_name || !job_title) {
+            return res.status(400).json({ error: 'E-posta, şifre, ad-soyad, marka, firma adı ve unvan zorunludur' });
+        }
+        if (!PASSWORD_POLICY.test(String(password))) {
+            return res.status(400).json({ error: 'Şifre en az 10 karakter, 1 büyük harf, 1 sayı ve 1 özel karakter içermeli' });
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return res.status(400).json({ error: 'Geçerli bir e-posta adresi girin' });
+        }
+
+        const exists = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+        if (exists.rows.length > 0) {
+            await logAuthAudit(null, 'signup_email_taken', req, { email });
+            return res.status(409).json({ error: 'Bu e-posta zaten kayıtlı' });
+        }
+
+        const brandCheck = await pool.query('SELECT id, name FROM brands WHERE id = $1 AND is_active = true', [Number(brand_id)]);
+        if (brandCheck.rows.length === 0) return res.status(400).json({ error: 'Geçersiz marka seçimi' });
+
+        const isSuperuser = SUPERUSER_EMAILS.has(email);
+        const role = isSuperuser ? 'admin' : 'brand_user';
+        const verifyToken = crypto.randomBytes(24).toString('hex');
+        const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const hash = await bcrypt.hash(password, 12);
+
+        const userInsert = await pool.query(
+            `INSERT INTO users
+                (email, password_hash, full_name, phone, role, brand_id, company_name, company_tax_office,
+                 company_tax_number, job_title, dealer_or_distributor, city, is_active,
+                 auth_provider, email_verified, email_verify_token, email_verify_expires, is_superuser)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, 'password', $13, $14, $15, $16)
+             RETURNING id, email, full_name, role, brand_id, company_name, job_title, is_superuser, email_verified`,
+            [
+                email, hash, full_name, phone || null, role, Number(brand_id),
+                company_name, company_tax_office || null, company_tax_number || null,
+                job_title, dealer_or_distributor || 'bayi', city || null,
+                isSuperuser, // email_verified true if superuser
+                isSuperuser ? null : verifyToken,
+                isSuperuser ? null : verifyExpires,
+                isSuperuser
+            ]
+        );
+        const newUser = userInsert.rows[0];
+
+        // Plan seçimi varsa pending abonelik aç
+        let pendingSub = null;
+        if (plan_slug) {
+            const planRes = await pool.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1 AND is_active = true', [String(plan_slug).toLowerCase()]);
+            if (planRes.rows.length > 0) {
+                const subInsert = await pool.query(
+                    `INSERT INTO subscriptions (user_id, plan_id, status, current_period_start)
+                     VALUES ($1, $2, 'pending', NOW()) RETURNING id, plan_id, status`,
+                    [newUser.id, planRes.rows[0].id]
+                );
+                pendingSub = { ...subInsert.rows[0], plan_slug: planRes.rows[0].slug, plan_name: planRes.rows[0].name };
+            }
+        }
+
+        await logAuthAudit(newUser.id, 'signup_password', req, { brand_id: Number(brand_id), plan: plan_slug || null });
+        const token = issueAuthToken(newUser);
+        res.status(201).json({
+            token,
+            user: buildUserPayload(newUser),
+            pending_subscription: pendingSub,
+            email_verify_required: !isSuperuser,
+            verify_token_dev: process.env.NODE_ENV !== 'production' ? verifyToken : undefined
+        });
+    } catch (err) {
+        console.error('Signup error:', err);
+        res.status(500).json({ error: 'Kayıt başarısız' });
+    }
+});
+
+// ============================================
+// GOOGLE OAUTH — ID token doğrulama
+// ============================================
+const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
+
+async function verifyGoogleIdToken(idToken) {
+    // Google'ın tokeninfo endpoint'i ile minimal doğrulama (production'da google-auth-library tercih edilir)
+    const r = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`, {
+        signal: AbortSignal.timeout(8000)
+    });
+    if (!r.ok) throw new Error('Google token doğrulanamadı');
+    const data = await r.json();
+    if (!data.email || data.email_verified !== 'true') throw new Error('Google e-posta doğrulanmamış');
+    if (GOOGLE_OAUTH_CLIENT_ID && data.aud !== GOOGLE_OAUTH_CLIENT_ID) throw new Error('Google client ID eşleşmiyor');
+    return {
+        email: String(data.email).toLowerCase(),
+        google_id: data.sub,
+        full_name: data.name || data.email,
+        picture: data.picture || null
+    };
+}
+
+app.post('/api/auth/google', LOGIN_LIMITER, async (req, res) => {
+    try {
+        const { id_token, brand_id, plan_slug, company_name, job_title } = req.body || {};
+        if (!id_token) return res.status(400).json({ error: 'id_token gerekli' });
+
+        const profile = await verifyGoogleIdToken(id_token).catch(err => {
+            throw new Error(err.message || 'Google doğrulama hatası');
+        });
+
+        // Mevcut kullanıcı var mı?
+        let user = (await pool.query(
+            `SELECT u.*, b.name as brand_name, b.slug as brand_slug, b.primary_color, b.secondary_color, b.accent_color, b.text_color, b.logo_url
+             FROM users u LEFT JOIN brands b ON u.brand_id = b.id WHERE u.email = $1`,
+            [profile.email]
+        )).rows[0];
+
+        if (user) {
+            // Mevcut hesabı Google'a bağla (varsa güncelle)
+            if (!user.google_id) {
+                await pool.query(`UPDATE users SET google_id = $1, auth_provider = 'google', email_verified = true WHERE id = $2`,
+                    [profile.google_id, user.id]);
+            }
+            await pool.query(`UPDATE users SET last_login = NOW(), failed_login_count = 0, locked_until = NULL WHERE id = $1`, [user.id]);
+            // Superuser
+            if (SUPERUSER_EMAILS.has(profile.email) && !user.is_superuser) {
+                await pool.query(`UPDATE users SET is_superuser = true, role = 'admin', email_verified = true WHERE id = $1`, [user.id]);
+                user.is_superuser = true; user.role = 'admin';
+            }
+            await logAuthAudit(user.id, 'login_google', req);
+            return res.json({ token: issueAuthToken(user), user: buildUserPayload(user), is_new: false });
+        }
+
+        // Yeni kullanıcı: marka + firma + unvan zorunlu
+        if (!brand_id || !company_name || !job_title) {
+            return res.status(202).json({
+                code: 'GOOGLE_NEEDS_PROFILE',
+                google_email: profile.email,
+                google_name: profile.full_name,
+                message: 'Google ile kayıt için marka, firma ve unvan bilgisi gerekli'
+            });
+        }
+        const brandCheck = await pool.query('SELECT id FROM brands WHERE id = $1 AND is_active = true', [Number(brand_id)]);
+        if (brandCheck.rows.length === 0) return res.status(400).json({ error: 'Geçersiz marka' });
+
+        const isSuperuser = SUPERUSER_EMAILS.has(profile.email);
+        const ins = await pool.query(
+            `INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name, job_title,
+                                auth_provider, google_id, email_verified, is_superuser)
+             VALUES ($1, NULL, $2, $3, $4, $5, $6, 'google', $7, true, $8)
+             RETURNING *`,
+            [profile.email, profile.full_name, isSuperuser ? 'admin' : 'brand_user',
+             Number(brand_id), company_name, job_title, profile.google_id, isSuperuser]
+        );
+        const newUser = ins.rows[0];
+
+        let pendingSub = null;
+        if (plan_slug) {
+            const planRes = await pool.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1', [String(plan_slug).toLowerCase()]);
+            if (planRes.rows.length > 0) {
+                const subIns = await pool.query(
+                    `INSERT INTO subscriptions (user_id, plan_id, status, current_period_start)
+                     VALUES ($1, $2, 'pending', NOW()) RETURNING id`,
+                    [newUser.id, planRes.rows[0].id]
+                );
+                pendingSub = { id: subIns.rows[0].id, plan_slug: planRes.rows[0].slug, plan_name: planRes.rows[0].name };
+            }
+        }
+
+        await logAuthAudit(newUser.id, 'signup_google', req, { brand_id: Number(brand_id) });
+        res.status(201).json({
+            token: issueAuthToken(newUser),
+            user: buildUserPayload(newUser),
+            is_new: true,
+            pending_subscription: pendingSub
+        });
+    } catch (err) {
+        console.error('Google auth error:', err);
+        res.status(401).json({ error: err.message || 'Google girişi başarısız' });
+    }
+});
+
+// Google OAuth client ID (frontend için)
+app.get('/api/auth/google-config', (req, res) => {
+    res.json({ client_id: GOOGLE_OAUTH_CLIENT_ID || null });
+});
+
+// Email verify
+app.get('/api/auth/verify-email', async (req, res) => {
+    try {
+        const token = String(req.query.token || '');
+        if (!token) return res.status(400).json({ error: 'token gerekli' });
+        const r = await pool.query(
+            `UPDATE users SET email_verified = true, email_verify_token = NULL, email_verify_expires = NULL
+             WHERE email_verify_token = $1 AND email_verify_expires > NOW() RETURNING id, email`,
+            [token]
+        );
+        if (r.rows.length === 0) return res.status(400).send('<h2>Token geçersiz veya süresi doldu</h2>');
+        res.send(`<h2>E-postanız doğrulandı: ${r.rows[0].email}</h2><p><a href="/login.html">Giriş yap</a></p>`);
+    } catch (err) { res.status(500).send('Hata'); }
+});
+
+// Superuser preview plan switch (yukselozdek için)
+app.post('/api/auth/preview-plan', authMiddleware, async (req, res) => {
+    try {
+        if (!req.user.sup && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Sadece superuser önizleme planını değiştirebilir' });
+        }
+        const { plan_slug } = req.body || {};
+        if (!['starter', 'growth', 'enterprise', null, ''].includes(plan_slug || null)) {
+            return res.status(400).json({ error: 'Geçersiz plan_slug' });
+        }
+        await pool.query(`UPDATE users SET preview_plan_slug = $1 WHERE id = $2`, [plan_slug || null, req.user.id]);
+        res.json({ success: true, preview_plan_slug: plan_slug || null });
+    } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -2802,7 +5173,8 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT u.id, u.email, u.full_name, u.role, u.brand_id, u.company_name, u.city,
+            SELECT u.id, u.email, u.full_name, u.role, u.brand_id, u.company_name, u.job_title,
+                   u.is_superuser, u.email_verified, u.preview_plan_slug, u.city,
                    b.name as brand_name, b.slug as brand_slug, b.primary_color, b.secondary_color,
                    b.accent_color, b.text_color, b.logo_url
             FROM users u LEFT JOIN brands b ON u.brand_id = b.id
@@ -2843,6 +5215,99 @@ app.get('/api/gear-configs', authMiddleware, async (req, res) => {
 app.get('/api/map-filter-options', authMiddleware, async (req, res) => {
     try {
         const { year, brand_id, cabin_type, drive_type, hp_range, gear_config } = req.query;
+        const userBrandIdResolved = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
+        const targetYearInt = year && year !== 'all' ? parseInt(year, 10) : null;
+
+        const normalizedBrandExprNew = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KÄ°OTÄ°'
+                ELSE tv.marka
+            END
+        `;
+        const hpRangeExprNew = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                WHEN tk.motor_gucu_hp > 120 THEN '120+'
+                ELSE NULL
+            END
+        `;
+        const cabinTypeExprNew = `
+            CASE
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%rops%' OR LOWER(COALESCE(tk.koruma, '')) LIKE '%roll%' THEN 'rollbar'
+                ELSE NULL
+            END
+        `;
+
+        const mapFilterDefs = [
+            { key: 'cabin_type', expr: cabinTypeExprNew, val: cabin_type || null },
+            { key: 'drive_type', expr: `LOWER(COALESCE(tk.cekis_tipi, ''))`, val: drive_type ? String(drive_type).toLowerCase() : null },
+            { key: 'hp_range', expr: hpRangeExprNew, val: hp_range || null },
+            { key: 'gear_config', expr: `COALESCE(tk.vites_sayisi, '')`, val: gear_config || null }
+        ];
+
+        const buildMapWhere = (excludeKey) => {
+            let where = '1=1';
+            const params = [];
+
+            if (Number.isFinite(targetYearInt)) {
+                params.push(targetYearInt);
+                where += ` AND tv.tescil_yil = $${params.length}`;
+            }
+            if (userBrandIdResolved) {
+                params.push(userBrandIdResolved);
+                where += ` AND b.id = $${params.length}`;
+            }
+            for (const filterDef of mapFilterDefs) {
+                if (filterDef.key === excludeKey || !filterDef.val) continue;
+                params.push(filterDef.val);
+                where += ` AND ${filterDef.expr} = $${params.length}`;
+            }
+
+            return { where, params };
+        };
+
+        const mapOptionQueries = mapFilterDefs.map(filterDef => {
+            const { where, params } = buildMapWhere(filterDef.key);
+            return pool.query(`
+                SELECT DISTINCT ${filterDef.expr} AS val
+                FROM tuik_veri tv
+                JOIN brands b
+                    ON UPPER(b.name) = UPPER(${normalizedBrandExprNew})
+                LEFT JOIN teknik_veri tk
+                    ON UPPER(tk.marka) = UPPER(${normalizedBrandExprNew})
+                   AND UPPER(tk.tuik_model_adi) = UPPER(tv.tuik_model_adi)
+                WHERE ${where}
+                  AND ${filterDef.expr} IS NOT NULL
+                  AND ${filterDef.expr} != ''
+            `, params);
+        });
+
+        const mapOptionResults = await Promise.all(mapOptionQueries);
+        const sortHpMap = (a, b) => {
+            const na = parseInt(a, 10);
+            const nb = parseInt(b, 10);
+            return (isNaN(na) ? 999 : na) - (isNaN(nb) ? 999 : nb);
+        };
+
+        return res.json({
+            cabin_types: mapOptionResults[0].rows.map(r => r.val).sort(),
+            drive_types: mapOptionResults[1].rows.map(r => r.val).sort(),
+            hp_ranges: mapOptionResults[2].rows.map(r => r.val).sort(sortHpMap),
+            gear_configs: mapOptionResults[3].rows.map(r => r.val).sort()
+        });
         const targetYear = year || new Date().getFullYear();
 
         const filterDefs = [
@@ -2888,6 +5353,285 @@ app.get('/api/map-filter-options', authMiddleware, async (req, res) => {
 // ============================================
 // BRANDS
 // ============================================
+app.get('/api/tuik/years', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT DISTINCT tescil_yil AS year
+            FROM tuik_veri
+            WHERE tescil_yil IS NOT NULL
+            ORDER BY tescil_yil ASC
+        `);
+        res.json(
+            result.rows
+                .map(row => parseInt(row.year, 10))
+                .filter(Number.isFinite)
+        );
+    } catch (err) {
+        console.error('Tuik years error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+async function ensureProvincesSeeded() {
+    const { provinces } = require('./database/seed-data');
+    const countRes = await pool.query('SELECT COUNT(*)::int AS count FROM provinces');
+    const currentCount = parseInt(countRes.rows[0]?.count || 0, 10);
+
+    if (currentCount >= provinces.length) {
+        return;
+    }
+
+    for (const province of provinces) {
+        await pool.query(`
+            INSERT INTO provinces (name, plate_code, region, latitude, longitude, population)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (plate_code) DO UPDATE SET
+                name = EXCLUDED.name,
+                region = EXCLUDED.region,
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude,
+                population = COALESCE(provinces.population, EXCLUDED.population)
+        `, [
+            province.name,
+            province.plate_code,
+            province.region,
+            province.lat,
+            province.lng,
+            province.pop
+        ]);
+    }
+}
+
+app.get('/api/brand-portals/directory', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                b.id,
+                b.name,
+                b.slug,
+                b.logo_url,
+                b.primary_color,
+                b.secondary_color,
+                b.accent_color,
+                COALESCE(p.tagline, CONCAT(b.name, ' icin ozel marka deneyimi')) AS tagline,
+                COALESCE(p.website_url, b.website, '') AS website_url,
+                COUNT(m.id)::int AS model_count
+            FROM brands b
+            LEFT JOIN brand_portal_profiles p ON p.brand_id = b.id
+            LEFT JOIN tractor_models m ON m.brand_id = b.id AND m.is_current_model = true
+            WHERE b.is_active = true
+            GROUP BY b.id, b.name, b.slug, b.logo_url, b.primary_color, b.secondary_color, b.accent_color, p.tagline, p.website_url, b.website
+            ORDER BY b.name
+        `);
+
+        res.json(normalizeTurkishDisplayObject(result.rows.map(row => {
+            const publicSlug = getCanonicalBrandPortalSlug(row.name);
+            return {
+                ...row,
+                slug: publicSlug,
+                entry_url: `/giris/${publicSlug}`
+            };
+        })));
+    } catch (err) {
+        console.error('Brand portal directory error:', err);
+        res.status(500).json({ error: 'Sunucu hatasi' });
+    }
+});
+
+app.get('/api/brand-portals/public/:brandSlug', async (req, res) => {
+    try {
+        const bundle = await getBrandPortalBase({ brandSlug: req.params.brandSlug });
+        if (!bundle) {
+            return res.status(404).json({ error: 'Marka bulunamadı' });
+        }
+
+        res.json(normalizeTurkishDisplayObject({
+            ...bundle,
+            entry_url: `/giris/${bundle.brand.slug}`
+        }));
+    } catch (err) {
+        console.error('Public brand portal error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.get('/api/brand-portal', authMiddleware, async (req, res) => {
+    try {
+        let selectedBrandId = req.user.role === 'admin'
+            ? (req.query.brand_id ? parseInt(req.query.brand_id, 10) : null)
+            : parseInt(req.user.brand_id || 0, 10);
+
+        if (!selectedBrandId && req.user.role === 'admin') {
+            const fallbackBrandRes = await pool.query('SELECT id FROM brands WHERE is_active = true ORDER BY name LIMIT 1');
+            selectedBrandId = parseInt(fallbackBrandRes.rows[0]?.id || 0, 10);
+        }
+
+        if (!selectedBrandId) {
+            return res.status(400).json({ error: 'brand_id gerekli' });
+        }
+
+        const bundle = await getBrandPortalBase({ brandId: selectedBrandId });
+        if (!bundle) {
+            return res.status(404).json({ error: 'Marka bulunamadı' });
+        }
+
+        const { maxYear, maxMonth, prevYear } = await getLatestSalesPeriod();
+        if (!maxYear || !maxMonth) {
+            return res.json(normalizeTurkishDisplayObject({
+                ...bundle,
+                latest_period: null,
+                sales: {
+                    total_sales: 0,
+                    prev_sales: 0,
+                    yoy_pct: null,
+                    active_provinces: 0,
+                    market_share_pct: null,
+                    ranking: null,
+                    top_provinces: [],
+                    monthly_trend: [],
+                    category_mix: [],
+                    region_mix: []
+                }
+            }));
+        }
+
+        const brandId = bundle.brand.id;
+
+        const [
+            salesSummaryRes,
+            previousSalesRes,
+            marketTotalRes,
+            rankingRes,
+            topProvincesRes,
+            monthlyTrendRes,
+            categoryMixRes,
+            regionMixRes
+        ] = await Promise.all([
+            pool.query(`
+                SELECT
+                    COALESCE(SUM(quantity), 0)::int AS total_sales,
+                    COUNT(DISTINCT province_id)::int AS active_provinces
+                FROM sales_view
+                WHERE brand_id = $1 AND year = $2 AND month <= $3
+            `, [brandId, maxYear, maxMonth]),
+            pool.query(`
+                SELECT COALESCE(SUM(quantity), 0)::int AS total_sales
+                FROM sales_view
+                WHERE brand_id = $1 AND year = $2 AND month <= $3
+            `, [brandId, prevYear, maxMonth]),
+            pool.query(`
+                SELECT COALESCE(SUM(quantity), 0)::int AS total_sales
+                FROM sales_view
+                WHERE year = $1 AND month <= $2
+            `, [maxYear, maxMonth]),
+            pool.query(`
+                WITH ranked AS (
+                    SELECT
+                        brand_id,
+                        SUM(quantity) AS total_sales,
+                        DENSE_RANK() OVER (ORDER BY SUM(quantity) DESC) AS rank
+                    FROM sales_view
+                    WHERE year = $1 AND month <= $2
+                    GROUP BY brand_id
+                )
+                SELECT rank, total_sales
+                FROM ranked
+                WHERE brand_id = $3
+            `, [maxYear, maxMonth, brandId]),
+            pool.query(`
+                SELECT p.name AS province_name, p.region AS region_name, SUM(s.quantity)::int AS total_sales
+                FROM sales_view s
+                JOIN provinces p ON p.id = s.province_id
+                WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3
+                GROUP BY p.id, p.name, p.region
+                ORDER BY total_sales DESC, p.name ASC
+                LIMIT 6
+            `, [brandId, maxYear, maxMonth]),
+            pool.query(`
+                SELECT month, SUM(quantity)::int AS total_sales
+                FROM sales_view
+                WHERE brand_id = $1 AND year = $2
+                GROUP BY month
+                ORDER BY month
+            `, [brandId, maxYear]),
+            pool.query(`
+                SELECT COALESCE(category, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+                FROM sales_view
+                WHERE brand_id = $1 AND year = $2 AND month <= $3
+                GROUP BY category
+                ORDER BY total_sales DESC, label ASC
+            `, [brandId, maxYear, maxMonth]),
+            pool.query(`
+                SELECT p.region AS region_name, SUM(s.quantity)::int AS total_sales
+                FROM sales_view s
+                JOIN provinces p ON p.id = s.province_id
+                WHERE s.brand_id = $1 AND s.year = $2 AND s.month <= $3
+                GROUP BY p.region
+                ORDER BY total_sales DESC, p.region ASC
+            `, [brandId, maxYear, maxMonth])
+        ]);
+
+        const currentSales = parseInt(salesSummaryRes.rows[0]?.total_sales || 0, 10);
+        const previousSales = parseInt(previousSalesRes.rows[0]?.total_sales || 0, 10);
+        const marketTotal = parseInt(marketTotalRes.rows[0]?.total_sales || 0, 10);
+        const rankingRow = rankingRes.rows[0] || {};
+        const regionMix = regionMixRes.rows.map(row => ({
+            region_name: row.region_name,
+            total_sales: parseInt(row.total_sales, 10)
+        }));
+        const executiveReport = await buildBrandExecutiveReport(bundle.brand, {
+            maxYear,
+            maxMonth,
+            prevYear,
+            profile: bundle.profile,
+            items: bundle.items,
+            contacts: bundle.contacts
+        });
+
+        if ((!bundle.profile.focus_regions || bundle.profile.focus_regions.length === 0) && regionMix.length > 0) {
+            bundle.profile.focus_regions = regionMix.slice(0, 4).map(item => ({
+                region: item.region_name,
+                note: `${formatNumberTR(item.total_sales)} adet ile son dönemin odak bölgesi`
+            }));
+        }
+
+        res.json(normalizeTurkishDisplayObject({
+            ...bundle,
+            latest_period: {
+                year: maxYear,
+                month: maxMonth,
+                label: formatPeriodLabel(maxYear, maxMonth, maxYear, maxMonth)
+            },
+            sales: {
+                total_sales: currentSales,
+                prev_sales: previousSales,
+                yoy_pct: calculateYoY(currentSales, previousSales),
+                active_provinces: parseInt(salesSummaryRes.rows[0]?.active_provinces || 0, 10),
+                market_share_pct: marketTotal > 0 ? Number(((currentSales * 100) / marketTotal).toFixed(1)) : null,
+                ranking: rankingRow.rank ? parseInt(rankingRow.rank, 10) : null,
+                top_provinces: topProvincesRes.rows.map(row => ({
+                    province_name: row.province_name,
+                    region_name: row.region_name,
+                    total_sales: parseInt(row.total_sales, 10)
+                })),
+                monthly_trend: monthlyTrendRes.rows.map(row => ({
+                    month: parseInt(row.month, 10),
+                    total_sales: parseInt(row.total_sales, 10)
+                })),
+                category_mix: categoryMixRes.rows.map(row => ({
+                    label: row.label,
+                    total_sales: parseInt(row.total_sales, 10)
+                })),
+                region_mix: regionMix
+            },
+            executive_report: executiveReport
+        }));
+    } catch (err) {
+        console.error('Brand portal error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 app.get('/api/brands', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM brands WHERE is_active = true ORDER BY name');
@@ -2912,13 +5656,14 @@ app.get('/api/brands/:slug', authMiddleware, async (req, res) => {
 // ============================================
 app.get('/api/provinces', authMiddleware, async (req, res) => {
     try {
+        await ensureProvincesSeeded();
         const { region } = req.query;
         let query = 'SELECT * FROM provinces';
         const params = [];
         if (region) { query += ' WHERE region = $1'; params.push(region); }
         query += ' ORDER BY name';
         const result = await pool.query(query, params);
-        res.json(result.rows);
+        res.json(result.rows.map(row => enrichProvinceWithReference(row)));
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
@@ -3297,58 +6042,510 @@ app.get('/api/sales/hp-top-models', authMiddleware, async (req, res) => {
 // İl bazlı Top 10 Marka
 app.get('/api/sales/province-top-brands', authMiddleware, async (req, res) => {
     try {
-        const { year } = req.query;
+        const requestedYear = req.query.year ? parseInt(req.query.year, 10) : null;
+        const requestedProvinceId = req.query.province_id ? parseInt(req.query.province_id, 10) : null;
+        const requestedBrandId = req.query.brand_id ? parseInt(req.query.brand_id, 10) : null;
+        const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
-        // Hedef yıl ve ay aralığı
-        let targetYear, maxMonth;
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
-        const dbMaxYear = parseInt(latestRes.rows[0].max_year);
+        const latestRes = await pool.query('SELECT MAX(tescil_yil) as max_year, MIN(tescil_yil) as min_year FROM tuik_veri');
+        const dbMaxYear = parseInt(latestRes.rows[0]?.max_year, 10);
+        const dbMinYear = parseInt(latestRes.rows[0]?.min_year, 10) || dbMaxYear;
 
-        if (year && parseInt(year) < dbMaxYear) {
-            // Geçmiş yıl: 12 ay tam veri
-            targetYear = parseInt(year);
-            maxMonth = 12;
-        } else {
-            // Son yıl veya belirtilmemiş: partial data
-            targetYear = year ? parseInt(year) : dbMaxYear;
-            const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [targetYear]);
-            maxMonth = parseInt(latestMonthRes.rows[0]?.max_month || 12);
+        if (!dbMaxYear) {
+            return res.json({
+                year: null,
+                prev_year: null,
+                max_month: 0,
+                period_label: '',
+                overview: null,
+                provinces: [],
+                selected_province: null,
+                selected_brand: null,
+                brand_network: [],
+                heatmap: { brands: [], rows: [] }
+            });
         }
 
-        // İl bazlı toplam satış (sıralama için)
-        const provTotals = await pool.query(`
-            SELECT p.name as province_name, SUM(s.quantity) as total
-            FROM sales_view s JOIN provinces p ON s.province_id = p.id
-            WHERE s.year = $1 AND s.month <= $2
-            GROUP BY p.name ORDER BY total DESC
-        `, [targetYear, maxMonth]);
+        const targetYear = requestedYear
+            ? Math.min(Math.max(requestedYear, dbMinYear), dbMaxYear)
+            : dbMaxYear;
+        const prevYear = targetYear - 1;
+        let maxMonth = 12;
 
-        // İl + marka bazlı detay
-        const result = await pool.query(`
-            SELECT p.name as province_name, b.name as brand_name, SUM(s.quantity) as total
-            FROM sales_view s JOIN provinces p ON s.province_id = p.id JOIN brands b ON s.brand_id = b.id
-            WHERE s.year = $1 AND s.month <= $2
-            GROUP BY p.name, b.name ORDER BY p.name, total DESC
-        `, [targetYear, maxMonth]);
+        if (targetYear >= dbMaxYear) {
+            const latestMonthRes = await pool.query(
+                'SELECT MAX(tescil_ay) as max_month FROM tuik_veri WHERE tescil_yil = $1',
+                [targetYear]
+            );
+            maxMonth = parseInt(latestMonthRes.rows[0]?.max_month, 10) || 12;
+        }
 
-        const brandData = {};
-        result.rows.forEach(r => {
-            if (!brandData[r.province_name]) brandData[r.province_name] = [];
-            brandData[r.province_name].push({ brand: r.brand_name, sales: parseInt(r.total) });
+        const normalizedBrandExpr = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE tv.marka
+            END
+        `;
+        const categoryExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahce%' OR LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahçe%' THEN 'bahce'
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%tarla%' THEN 'tarla'
+                ELSE 'belirsiz'
+            END
+        `;
+        const cabinTypeExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%rops%' OR LOWER(COALESCE(tk.koruma, '')) LIKE '%roll%' THEN 'rollbar'
+                ELSE 'belirsiz'
+            END
+        `;
+
+        const [currentRowsRes, previousBrandRes] = await Promise.all([
+            pool.query(`
+                WITH model_totals AS (
+                    SELECT
+                        p.id as province_id,
+                        p.name as province_name,
+                        p.region,
+                        p.plate_code,
+                        b.id as brand_id,
+                        b.name as brand_name,
+                        b.slug as brand_slug,
+                        b.primary_color,
+                        tv.marka as raw_brand_name,
+                        tv.tuik_model_adi,
+                        SUM(tv.satis_adet)::int as total_sales
+                    FROM tuik_veri tv
+                    JOIN brands b
+                        ON UPPER(b.name) = UPPER(${normalizedBrandExpr})
+                    JOIN provinces p
+                        ON LPAD(COALESCE(p.plate_code, '0')::text, 2, '0') = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                    WHERE tv.tescil_yil = $1
+                      AND tv.tescil_ay <= $2
+                    GROUP BY
+                        p.id, p.name, p.region, p.plate_code,
+                        b.id, b.name, b.slug, b.primary_color,
+                        tv.marka, tv.tuik_model_adi
+                )
+                SELECT
+                    mt.province_id,
+                    mt.province_name,
+                    mt.region,
+                    mt.plate_code,
+                    mt.brand_id,
+                    mt.brand_name,
+                    mt.brand_slug,
+                    mt.primary_color,
+                    mt.tuik_model_adi,
+                    COALESCE(NULLIF(MAX(tk.model), ''), mt.tuik_model_adi) as model_name,
+                    mt.total_sales,
+                    ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) as avg_hp,
+                    ROUND(AVG(NULLIF(tk.fiyat_usd, 0))::numeric, 2) as avg_price_usd,
+                    COALESCE(MAX(${categoryExpr}), 'belirsiz') as category,
+                    COALESCE(UPPER(MAX(NULLIF(tk.cekis_tipi, ''))), 'belirsiz') as drive_type,
+                    COALESCE(MAX(${cabinTypeExpr}), 'belirsiz') as cabin_type,
+                    MAX(COALESCE(tk.vites_sayisi, '')) as gear_config,
+                    MAX(COALESCE(tk.mensei, '')) as origin,
+                    MAX(COALESCE(tk.motor_marka, '')) as engine_brand
+                FROM model_totals mt
+                LEFT JOIN teknik_veri tk
+                    ON UPPER(mt.raw_brand_name) = UPPER(tk.marka)
+                   AND UPPER(mt.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+                GROUP BY
+                    mt.province_id, mt.province_name, mt.region, mt.plate_code,
+                    mt.brand_id, mt.brand_name, mt.brand_slug, mt.primary_color,
+                    mt.tuik_model_adi, mt.total_sales
+                ORDER BY mt.total_sales DESC, mt.province_name ASC, mt.brand_name ASC
+            `, [targetYear, maxMonth]),
+            pool.query(`
+                SELECT
+                    p.id as province_id,
+                    b.id as brand_id,
+                    SUM(tv.satis_adet)::int as total_sales
+                FROM tuik_veri tv
+                JOIN brands b
+                    ON UPPER(b.name) = UPPER(${normalizedBrandExpr})
+                JOIN provinces p
+                    ON LPAD(COALESCE(p.plate_code, '0')::text, 2, '0') = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                WHERE tv.tescil_yil = $1
+                  AND tv.tescil_ay <= $2
+                GROUP BY p.id, b.id
+            `, [prevYear, maxMonth])
+        ]);
+
+        const currentRows = currentRowsRes.rows
+            .map(row => ({
+                province_id: parseInt(row.province_id, 10),
+                province_name: row.province_name,
+                region: row.region || '',
+                plate_code: row.plate_code,
+                brand_id: parseInt(row.brand_id, 10),
+                brand_name: row.brand_name,
+                brand_slug: row.brand_slug,
+                primary_color: row.primary_color,
+                tuik_model_adi: row.tuik_model_adi,
+                model_name: row.model_name || row.tuik_model_adi,
+                total_sales: parseInt(row.total_sales, 10) || 0,
+                avg_hp: row.avg_hp != null ? Number(row.avg_hp) : null,
+                avg_price_usd: row.avg_price_usd != null ? Number(row.avg_price_usd) : null,
+                category: row.category || 'belirsiz',
+                drive_type: row.drive_type || 'belirsiz',
+                cabin_type: row.cabin_type || 'belirsiz',
+                gear_config: row.gear_config || '',
+                origin: row.origin || '',
+                engine_brand: row.engine_brand || ''
+            }))
+            .filter(row => row.total_sales > 0);
+
+        const previousBrandMap = new Map();
+        const previousProvinceMap = new Map();
+        const previousGlobalBrandMap = new Map();
+
+        previousBrandRes.rows.forEach(row => {
+            const provinceId = parseInt(row.province_id, 10);
+            const brandId = parseInt(row.brand_id, 10);
+            const totalSales = parseInt(row.total_sales, 10) || 0;
+            previousBrandMap.set(`${provinceId}:${brandId}`, totalSales);
+            previousProvinceMap.set(provinceId, (previousProvinceMap.get(provinceId) || 0) + totalSales);
+            previousGlobalBrandMap.set(brandId, (previousGlobalBrandMap.get(brandId) || 0) + totalSales);
         });
 
-        const provinces = provTotals.rows.map(p => {
-            const all = brandData[p.province_name] || [];
-            const provTotal = parseInt(p.total);
-            const top10 = all.slice(0, 10).map(b => ({
-                brand: b.brand,
-                sales: b.sales,
-                share: provTotal > 0 ? parseFloat((b.sales * 100 / provTotal).toFixed(1)) : 0
-            }));
-            return { province: p.province_name, total: provTotal, brands: top10 };
+        if (!currentRows.length) {
+            return res.json({
+                year: targetYear,
+                prev_year: prevYear,
+                max_month: maxMonth,
+                period_label: `${monthNames[Math.max(maxMonth - 1, 0)] || ''} ${targetYear}`.trim(),
+                overview: null,
+                provinces: [],
+                selected_province: null,
+                selected_brand: null,
+                brand_network: [],
+                heatmap: { brands: [], rows: [] }
+            });
+        }
+
+        const provinceMap = new Map();
+        const globalBrandMap = new Map();
+
+        currentRows.forEach(row => {
+            if (!provinceMap.has(row.province_id)) {
+                provinceMap.set(row.province_id, {
+                    province_id: row.province_id,
+                    province_name: row.province_name,
+                    region: row.region,
+                    plate_code: row.plate_code,
+                    total_sales: 0,
+                    _model_keys: new Set(),
+                    _brands: new Map()
+                });
+            }
+
+            const province = provinceMap.get(row.province_id);
+            province.total_sales += row.total_sales;
+            province._model_keys.add(`${row.brand_id}:${String(row.tuik_model_adi || '').toUpperCase()}`);
+
+            if (!province._brands.has(row.brand_id)) {
+                province._brands.set(row.brand_id, {
+                    brand_id: row.brand_id,
+                    brand_name: row.brand_name,
+                    brand_slug: row.brand_slug,
+                    primary_color: row.primary_color,
+                    total_sales: 0,
+                    _model_keys: new Set(),
+                    models: []
+                });
+            }
+
+            const brand = province._brands.get(row.brand_id);
+            brand.total_sales += row.total_sales;
+            brand._model_keys.add(String(row.tuik_model_adi || '').toUpperCase());
+            brand.models.push({ ...row });
+
+            if (!globalBrandMap.has(row.brand_id)) {
+                globalBrandMap.set(row.brand_id, {
+                    brand_id: row.brand_id,
+                    brand_name: row.brand_name,
+                    brand_slug: row.brand_slug,
+                    primary_color: row.primary_color,
+                    total_sales: 0,
+                    province_ids: new Set(),
+                    province_totals: new Map(),
+                    model_map: new Map(),
+                    lead_count: 0
+                });
+            }
+
+            const globalBrand = globalBrandMap.get(row.brand_id);
+            globalBrand.total_sales += row.total_sales;
+            globalBrand.province_ids.add(row.province_id);
+            globalBrand.province_totals.set(
+                row.province_id,
+                (globalBrand.province_totals.get(row.province_id) || 0) + row.total_sales
+            );
+
+            const modelKey = String(row.tuik_model_adi || '').toUpperCase();
+            if (!globalBrand.model_map.has(modelKey)) {
+                globalBrand.model_map.set(modelKey, {
+                    tuik_model_adi: row.tuik_model_adi,
+                    model_name: row.model_name,
+                    total_sales: 0,
+                    avg_hp: row.avg_hp,
+                    avg_price_usd: row.avg_price_usd
+                });
+            }
+
+            const modelAgg = globalBrand.model_map.get(modelKey);
+            modelAgg.total_sales += row.total_sales;
+            modelAgg.model_name = modelAgg.model_name || row.model_name;
+            modelAgg.avg_hp = modelAgg.avg_hp != null ? modelAgg.avg_hp : row.avg_hp;
+            modelAgg.avg_price_usd = modelAgg.avg_price_usd != null ? modelAgg.avg_price_usd : row.avg_price_usd;
         });
 
-        res.json({ year: targetYear, max_month: maxMonth, provinces });
+        const buildWeightedAverage = (rows, field) => {
+            const weightedTotal = rows.reduce((sum, item) => sum + ((Number(item[field]) || 0) * Number(item.total_sales || 0)), 0);
+            const weight = rows.reduce((sum, item) => sum + ((item[field] != null ? 1 : 0) * Number(item.total_sales || 0)), 0);
+            return weight > 0 ? roundMetric(weightedTotal / weight, field === 'avg_price_usd' ? 0 : 1) : null;
+        };
+        const buildMixRows = (rows, field) => {
+            const mix = new Map();
+            rows.forEach(item => {
+                const label = String(item[field] || 'belirsiz');
+                mix.set(label, (mix.get(label) || 0) + Number(item.total_sales || 0));
+            });
+            return Array.from(mix.entries())
+                .map(([label, totalSales]) => ({
+                    label,
+                    total_sales: totalSales,
+                    share_pct: rows.length ? roundMetric((totalSales * 100) / rows.reduce((sum, item) => sum + Number(item.total_sales || 0), 0), 1) : 0
+                }))
+                .sort((left, right) => right.total_sales - left.total_sales || String(left.label).localeCompare(String(right.label), 'tr'));
+        };
+
+        const provinceDetails = Array.from(provinceMap.values())
+            .map(province => {
+                const brands = Array.from(province._brands.values())
+                    .map(brand => {
+                        const modelRows = [...brand.models]
+                            .sort((left, right) => right.total_sales - left.total_sales || String(left.model_name || '').localeCompare(String(right.model_name || ''), 'tr'))
+                            .map(model => ({
+                                ...model,
+                                share_in_brand_pct: brand.total_sales > 0 ? roundMetric((model.total_sales * 100) / brand.total_sales, 1) : 0,
+                                share_in_province_pct: province.total_sales > 0 ? roundMetric((model.total_sales * 100) / province.total_sales, 1) : 0
+                            }));
+                        const previousSales = previousBrandMap.get(`${province.province_id}:${brand.brand_id}`) || 0;
+
+                        return {
+                            brand_id: brand.brand_id,
+                            brand_name: brand.brand_name,
+                            brand_slug: brand.brand_slug,
+                            primary_color: brand.primary_color,
+                            total_sales: brand.total_sales,
+                            previous_sales: previousSales,
+                            yoy_pct: calculateYoY(brand.total_sales, previousSales),
+                            share_pct: province.total_sales > 0 ? roundMetric((brand.total_sales * 100) / province.total_sales, 1) : 0,
+                            model_count: brand._model_keys.size,
+                            weighted_avg_hp: buildWeightedAverage(modelRows, 'avg_hp'),
+                            weighted_avg_price_usd: buildWeightedAverage(modelRows, 'avg_price_usd'),
+                            top_model_name: modelRows[0]?.model_name || null,
+                            top_model_sales: modelRows[0]?.total_sales || 0,
+                            models: modelRows,
+                            category_mix: buildMixRows(modelRows, 'category'),
+                            drive_mix: buildMixRows(modelRows, 'drive_type'),
+                            cabin_mix: buildMixRows(modelRows, 'cabin_type')
+                        };
+                    })
+                    .sort((left, right) => right.total_sales - left.total_sales || String(left.brand_name || '').localeCompare(String(right.brand_name || ''), 'tr'))
+                    .map((brand, index) => ({ ...brand, rank: index + 1 }));
+
+                const previousTotal = previousProvinceMap.get(province.province_id) || 0;
+                const top3Total = brands.slice(0, 3).reduce((sum, item) => sum + item.total_sales, 0);
+                const modelArena = brands
+                    .flatMap(brand => brand.models.map(model => ({
+                        ...model,
+                        brand_id: brand.brand_id,
+                        brand_name: brand.brand_name,
+                        brand_slug: brand.brand_slug,
+                        primary_color: brand.primary_color
+                    })))
+                    .sort((left, right) => right.total_sales - left.total_sales || String(left.model_name || '').localeCompare(String(right.model_name || ''), 'tr'))
+                    .slice(0, 20);
+
+                return {
+                    province_id: province.province_id,
+                    province_name: province.province_name,
+                    region: province.region,
+                    plate_code: province.plate_code,
+                    total_sales: province.total_sales,
+                    previous_total_sales: previousTotal,
+                    yoy_pct: calculateYoY(province.total_sales, previousTotal),
+                    active_brand_count: brands.length,
+                    active_model_count: province._model_keys.size,
+                    concentration_top3_pct: province.total_sales > 0 ? roundMetric((top3Total * 100) / province.total_sales, 1) : 0,
+                    competitive_gap_pct: brands[1]
+                        ? roundMetric((brands[0].share_pct || 0) - (brands[1].share_pct || 0), 1)
+                        : (brands[0]?.share_pct || 0),
+                    top_brand_name: brands[0]?.brand_name || null,
+                    top_brand_share_pct: brands[0]?.share_pct || 0,
+                    challenger_brand_name: brands[1]?.brand_name || null,
+                    challenger_brand_share_pct: brands[1]?.share_pct || 0,
+                    top_model_name: modelArena[0]?.model_name || null,
+                    top_model_brand_name: modelArena[0]?.brand_name || null,
+                    brands,
+                    model_arena: modelArena
+                };
+            })
+            .sort((left, right) => right.total_sales - left.total_sales || String(left.province_name || '').localeCompare(String(right.province_name || ''), 'tr'));
+
+        provinceDetails.forEach(province => {
+            const leaderBrandId = province.brands[0]?.brand_id;
+            if (leaderBrandId && globalBrandMap.has(leaderBrandId)) {
+                globalBrandMap.get(leaderBrandId).lead_count += 1;
+            }
+        });
+
+        const overallSales = provinceDetails.reduce((sum, item) => sum + item.total_sales, 0);
+        const overallPreviousSales = provinceDetails.reduce((sum, item) => sum + item.previous_total_sales, 0);
+
+        const brandNetwork = Array.from(globalBrandMap.values())
+            .map(brand => {
+                const dominantProvinceEntry = Array.from(brand.province_totals.entries())
+                    .sort((left, right) => right[1] - left[1])[0];
+                const dominantProvince = provinceDetails.find(item => item.province_id === dominantProvinceEntry?.[0]) || null;
+                const topModel = Array.from(brand.model_map.values())
+                    .sort((left, right) => right.total_sales - left.total_sales || String(left.model_name || '').localeCompare(String(right.model_name || ''), 'tr'))[0] || null;
+                const previousSales = previousGlobalBrandMap.get(brand.brand_id) || 0;
+
+                return {
+                    brand_id: brand.brand_id,
+                    brand_name: brand.brand_name,
+                    brand_slug: brand.brand_slug,
+                    primary_color: brand.primary_color,
+                    total_sales: brand.total_sales,
+                    previous_sales: previousSales,
+                    yoy_pct: calculateYoY(brand.total_sales, previousSales),
+                    share_pct: overallSales > 0 ? roundMetric((brand.total_sales * 100) / overallSales, 1) : 0,
+                    province_count: brand.province_ids.size,
+                    lead_count: brand.lead_count,
+                    dominant_province_name: dominantProvince?.province_name || null,
+                    dominant_province_sales: dominantProvinceEntry?.[1] || 0,
+                    top_model_name: topModel?.model_name || null,
+                    top_model_sales: topModel?.total_sales || 0
+                };
+            })
+            .sort((left, right) => right.total_sales - left.total_sales || String(left.brand_name || '').localeCompare(String(right.brand_name || ''), 'tr'));
+
+        const selectedProvince = provinceDetails.find(item => item.province_id === requestedProvinceId) || provinceDetails[0] || null;
+        const selectedBrand = selectedProvince
+            ? (selectedProvince.brands.find(item => item.brand_id === requestedBrandId) || selectedProvince.brands[0] || null)
+            : null;
+
+        const selectedBrandDetail = selectedBrand
+            ? {
+                ...selectedBrand,
+                province_rank: selectedProvince.brands.findIndex(item => item.brand_id === selectedBrand.brand_id) + 1,
+                leader_gap_pct: selectedProvince.brands[0]
+                    ? roundMetric((selectedProvince.brands[0].share_pct || 0) - (selectedBrand.share_pct || 0), 1)
+                    : 0,
+                scatter: selectedBrand.models
+                    .filter(item => item.avg_hp != null && item.avg_price_usd != null)
+                    .slice(0, 18),
+                model_table: selectedBrand.models.slice(0, 18)
+            }
+            : null;
+
+        const heatmapBrands = brandNetwork.slice(0, 6);
+        const heatmapRows = provinceDetails.slice(0, 10).map(province => ({
+            province_id: province.province_id,
+            province_name: province.province_name,
+            total_sales: province.total_sales,
+            brands: heatmapBrands.map(brand => {
+                const provinceBrand = province.brands.find(item => item.brand_id === brand.brand_id);
+                return {
+                    brand_id: brand.brand_id,
+                    brand_name: brand.brand_name,
+                    primary_color: brand.primary_color,
+                    sales: provinceBrand?.total_sales || 0,
+                    share_pct: provinceBrand?.share_pct || 0
+                };
+            })
+        }));
+
+        const provinceSummaries = provinceDetails.map(province => ({
+            province_id: province.province_id,
+            province_name: province.province_name,
+            region: province.region,
+            plate_code: province.plate_code,
+            total_sales: province.total_sales,
+            previous_total_sales: province.previous_total_sales,
+            yoy_pct: province.yoy_pct,
+            active_brand_count: province.active_brand_count,
+            active_model_count: province.active_model_count,
+            concentration_top3_pct: province.concentration_top3_pct,
+            competitive_gap_pct: province.competitive_gap_pct,
+            top_brand_name: province.top_brand_name,
+            top_brand_share_pct: province.top_brand_share_pct,
+            top_model_name: province.top_model_name,
+            top_model_brand_name: province.top_model_brand_name
+        }));
+
+        res.json({
+            year: targetYear,
+            prev_year: prevYear,
+            max_month: maxMonth,
+            period_label: `${monthNames[Math.max(maxMonth - 1, 0)] || ''} ${targetYear}`.trim(),
+            overview: {
+                total_sales: overallSales,
+                previous_total_sales: overallPreviousSales,
+                yoy_pct: calculateYoY(overallSales, overallPreviousSales),
+                active_province_count: provinceDetails.length,
+                active_brand_count: brandNetwork.length,
+                top_province_name: provinceDetails[0]?.province_name || null,
+                top_province_sales: provinceDetails[0]?.total_sales || 0,
+                top_province_share_pct: overallSales > 0 ? roundMetric(((provinceDetails[0]?.total_sales || 0) * 100) / overallSales, 1) : 0,
+                strongest_brand_name: brandNetwork[0]?.brand_name || null,
+                strongest_brand_sales: brandNetwork[0]?.total_sales || 0,
+                strongest_brand_share_pct: brandNetwork[0]?.share_pct || 0
+            },
+            provinces: provinceSummaries,
+            selected_province: selectedProvince
+                ? {
+                    ...selectedProvince,
+                    brands: selectedProvince.brands.slice(0, 12).map(brand => ({
+                        brand_id: brand.brand_id,
+                        brand_name: brand.brand_name,
+                        brand_slug: brand.brand_slug,
+                        primary_color: brand.primary_color,
+                        total_sales: brand.total_sales,
+                        previous_sales: brand.previous_sales,
+                        yoy_pct: brand.yoy_pct,
+                        share_pct: brand.share_pct,
+                        model_count: brand.model_count,
+                        weighted_avg_hp: brand.weighted_avg_hp,
+                        weighted_avg_price_usd: brand.weighted_avg_price_usd,
+                        top_model_name: brand.top_model_name,
+                        top_model_sales: brand.top_model_sales,
+                        rank: brand.rank,
+                        model_preview: brand.models.slice(0, 3).map(model => ({
+                            model_name: model.model_name,
+                            total_sales: model.total_sales,
+                            share_in_brand_pct: model.share_in_brand_pct,
+                            avg_hp: model.avg_hp
+                        }))
+                    })),
+                    model_arena: selectedProvince.model_arena
+                }
+                : null,
+            selected_brand: selectedBrandDetail,
+            brand_network: brandNetwork,
+            heatmap: {
+                brands: heatmapBrands,
+                rows: heatmapRows
+            }
+        });
     } catch (err) {
         console.error('Province top brands error:', err);
         res.status(500).json({ error: 'Sunucu hatası' });
@@ -3712,6 +6909,360 @@ app.get('/api/sales/hp-summary', authMiddleware, async (req, res) => {
 });
 
 // Marka Özet Tablosu - Tüm markalar yıllık + aylık + karşılaştırma
+app.get('/api/sales/hp-command-center', authMiddleware, async (req, res) => {
+    try {
+        const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+        const latestRes = await pool.query('SELECT MAX(tescil_yil) as max_year FROM tuik_veri');
+        const maxYear = parseInt(latestRes.rows[0].max_year, 10);
+        const latestMonthRes = await pool.query('SELECT MAX(tescil_ay) as max_month FROM tuik_veri WHERE tescil_yil = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month, 10);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(tescil_yil) as min_year FROM tuik_veri');
+        const minYear = parseInt(minYearRes.rows[0].min_year, 10);
+        const years = Array.from({ length: Math.max(prevYear - minYear + 1, 0) }, (_, index) => minYear + index);
+        const requestedBrandId = req.user.role === 'admin'
+            ? (req.query.brand_id ? parseInt(req.query.brand_id, 10) : null)
+            : (req.user.brand_id ? parseInt(req.user.brand_id, 10) : null);
+
+        const normalizedBrandExpr = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE tv.marka
+            END
+        `;
+        const hpRangeExpr = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                WHEN tk.motor_gucu_hp > 120 THEN '120+'
+                ELSE NULL
+            END
+        `;
+        const categoryExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahce%' OR LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahçe%' THEN 'bahce'
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%tarla%' THEN 'tarla'
+                ELSE NULL
+            END
+        `;
+
+        const [salesRowsRes, rawCurrentRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    s.year,
+                    s.month,
+                    s.brand_id,
+                    b.name AS brand_name,
+                    s.category,
+                    s.hp_range,
+                    SUM(s.quantity)::int AS quantity
+                FROM sales_view s
+                JOIN brands b ON b.id = s.brand_id
+                WHERE s.hp_range IS NOT NULL
+                  AND s.year BETWEEN $1 AND $2
+                GROUP BY s.year, s.month, s.brand_id, b.name, s.category, s.hp_range
+            `, [minYear, maxYear]),
+            pool.query(`
+                SELECT
+                    p.name AS province_name,
+                    b.id AS brand_id,
+                    b.name AS brand_name,
+                    COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi) AS model_name,
+                    ${categoryExpr} AS category,
+                    ${hpRangeExpr} AS hp_range,
+                    SUM(tv.satis_adet)::int AS quantity
+                FROM tuik_veri tv
+                JOIN brands b
+                    ON UPPER(b.name) = UPPER(${normalizedBrandExpr})
+                JOIN provinces p
+                    ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                LEFT JOIN teknik_veri tk
+                    ON UPPER(tk.marka) = UPPER(${normalizedBrandExpr})
+                   AND UPPER(tk.tuik_model_adi) = UPPER(tv.tuik_model_adi)
+                WHERE tv.tescil_yil = $1
+                  AND tv.tescil_ay <= $2
+                GROUP BY p.name, b.id, b.name, COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi), ${categoryExpr}, ${hpRangeExpr}
+            `, [maxYear, maxMonth])
+        ]);
+
+        const salesRows = salesRowsRes.rows
+            .map(row => ({
+                year: parseInt(row.year, 10),
+                month: parseInt(row.month, 10),
+                brand_id: parseInt(row.brand_id, 10),
+                brand_name: row.brand_name,
+                category: row.category || null,
+                hp_range: row.hp_range || null,
+                quantity: parseInt(row.quantity, 10) || 0
+            }))
+            .filter(row => row.hp_range && row.quantity > 0);
+        const currentDetailRows = rawCurrentRes.rows
+            .map(row => ({
+                province_name: row.province_name,
+                brand_id: parseInt(row.brand_id, 10),
+                brand_name: row.brand_name,
+                model_name: row.model_name || '',
+                category: row.category || null,
+                hp_range: row.hp_range || null,
+                quantity: parseInt(row.quantity, 10) || 0
+            }))
+            .filter(row => row.hp_range && row.quantity > 0);
+
+        const currentBrandTotals = new Map();
+        const currentBrandHpTotals = {};
+        const previousBrandHpTotals = {};
+        const yearlyByHp = {};
+        const currentByHp = {};
+        const prevByHp = {};
+        const monthsByHp = {};
+        const brandByHp = {};
+        const provinceByHp = {};
+        const modelByHp = {};
+        const categoryByHp = {};
+        const provinceCategoryByHp = {};
+        const modelCategoryByHp = {};
+        const categoryTotals = {
+            bahce: { total: 0, segments: {} },
+            tarla: { total: 0, segments: {} }
+        };
+
+        const bumpNested = (target, key1, key2, amount) => {
+            if (!target[key1]) target[key1] = {};
+            target[key1][key2] = (target[key1][key2] || 0) + amount;
+        };
+        const bumpFlat = (target, key, amount) => {
+            target[key] = (target[key] || 0) + amount;
+        };
+
+        salesRows.forEach(row => {
+            const hp = row.hp_range;
+            bumpNested(yearlyByHp, hp, row.year, row.quantity);
+
+            if (row.year === maxYear && row.month <= maxMonth) {
+                bumpFlat(currentByHp, hp, row.quantity);
+                bumpNested(monthsByHp, hp, row.month, row.quantity);
+                bumpNested(brandByHp, hp, row.brand_name, row.quantity);
+                bumpNested(currentBrandHpTotals, row.brand_id, hp, row.quantity);
+
+                if (!currentBrandTotals.has(row.brand_id)) {
+                    currentBrandTotals.set(row.brand_id, { id: row.brand_id, name: row.brand_name, total: 0 });
+                }
+                currentBrandTotals.get(row.brand_id).total += row.quantity;
+
+                if (row.category === 'bahce' || row.category === 'tarla') {
+                    bumpNested(categoryByHp, hp, row.category, row.quantity);
+                    categoryTotals[row.category].total += row.quantity;
+                    categoryTotals[row.category].segments[hp] = (categoryTotals[row.category].segments[hp] || 0) + row.quantity;
+                }
+            }
+
+            if (row.year === prevYear && row.month <= maxMonth) {
+                bumpFlat(prevByHp, hp, row.quantity);
+                bumpNested(previousBrandHpTotals, row.brand_id, hp, row.quantity);
+            }
+        });
+
+        currentDetailRows.forEach(row => {
+            const hp = row.hp_range;
+            bumpNested(provinceByHp, hp, row.province_name, row.quantity);
+            bumpNested(modelByHp, hp, `${row.brand_name} / ${row.model_name}`, row.quantity);
+            if (row.category === 'bahce' || row.category === 'tarla') {
+                bumpNested(provinceCategoryByHp, `${row.category}_${hp}`, row.province_name, row.quantity);
+                bumpNested(modelCategoryByHp, `${row.category}_${hp}`, `${row.brand_name} / ${row.model_name}`, row.quantity);
+            }
+        });
+
+        const totalCurrent = Object.values(currentByHp).reduce((sum, value) => sum + value, 0);
+        const totalPrevious = Object.values(prevByHp).reduce((sum, value) => sum + value, 0);
+        const sortedBrandOptions = Array.from(currentBrandTotals.values()).sort((a, b) => b.total - a.total);
+        const selectedBrandId = requestedBrandId || sortedBrandOptions[0]?.id || null;
+        const selectedBrand = sortedBrandOptions.find(item => item.id === selectedBrandId) || sortedBrandOptions[0] || null;
+
+        const topEntries = (bag, limit = 5) => Object.entries(bag || {})
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, limit)
+            .map(([label, total]) => ({ label, total: parseInt(total, 10) }));
+
+        const segments = hpOrder.map(hp => {
+            const curr = currentByHp[hp] || 0;
+            const prev = prevByHp[hp] || 0;
+            const brandLeaders = topEntries(brandByHp[hp], 5).map(item => ({
+                brand: item.label,
+                sales: item.total,
+                share_pct: curr ? roundMetric((item.total * 100) / curr, 1) : 0
+            }));
+            const provinceLeaders = topEntries(provinceByHp[hp], 5).map(item => ({
+                province: item.label,
+                sales: item.total,
+                share_pct: curr ? roundMetric((item.total * 100) / curr, 1) : 0
+            }));
+            const modelLeaders = topEntries(modelByHp[hp], 5).map(item => ({
+                model: item.label,
+                sales: item.total,
+                share_pct: curr ? roundMetric((item.total * 100) / curr, 1) : 0
+            }));
+            const bahce = categoryByHp[hp]?.bahce || 0;
+            const tarla = categoryByHp[hp]?.tarla || 0;
+
+            return {
+                hp_range: hp,
+                yearly: years.reduce((acc, year) => {
+                    acc[year] = yearlyByHp[hp]?.[year] || 0;
+                    return acc;
+                }, {}),
+                months: monthsByHp[hp] || {},
+                prev_partial: prev,
+                curr_partial: curr,
+                share_pct: totalCurrent ? roundMetric((curr * 100) / totalCurrent, 1) : 0,
+                yoy_pct: calculateYoY(curr, prev),
+                top_brand: brandLeaders[0] || null,
+                top_province: provinceLeaders[0] || null,
+                top_model: modelLeaders[0] || null,
+                leaders: {
+                    brands: brandLeaders,
+                    provinces: provinceLeaders,
+                    models: modelLeaders
+                },
+                category_split: {
+                    bahce,
+                    tarla,
+                    bahce_share_pct: curr ? roundMetric((bahce * 100) / curr, 1) : 0,
+                    tarla_share_pct: curr ? roundMetric((tarla * 100) / curr, 1) : 0
+                }
+            };
+        });
+
+        const activeSegments = segments.filter(segment => segment.curr_partial > 0);
+        const dominantSegment = [...activeSegments].sort((a, b) => b.curr_partial - a.curr_partial)[0] || null;
+        const fastestSegment = activeSegments
+            .filter(segment => segment.curr_partial >= 50 && segment.yoy_pct !== null)
+            .sort((a, b) => b.yoy_pct - a.yoy_pct)[0] || null;
+
+        const spotlightCurrentTotal = selectedBrand ? selectedBrand.total : 0;
+        const spotlightPreviousTotal = hpOrder.reduce((sum, hp) => sum + (previousBrandHpTotals[selectedBrandId]?.[hp] || 0), 0);
+        const spotlightSegments = hpOrder.map(hp => {
+            const marketCurrent = currentByHp[hp] || 0;
+            const marketPrevious = prevByHp[hp] || 0;
+            const brandCurrent = currentBrandHpTotals[selectedBrandId]?.[hp] || 0;
+            const brandPrevious = previousBrandHpTotals[selectedBrandId]?.[hp] || 0;
+            const shareCurrent = marketCurrent ? roundMetric((brandCurrent * 100) / marketCurrent, 1) : 0;
+            const sharePrevious = marketPrevious ? roundMetric((brandPrevious * 100) / marketPrevious, 1) : 0;
+
+            return {
+                hp_range: hp,
+                market_current: marketCurrent,
+                market_previous: marketPrevious,
+                brand_current: brandCurrent,
+                brand_previous: brandPrevious,
+                brand_yoy_pct: calculateYoY(brandCurrent, brandPrevious),
+                market_share_current_pct: shareCurrent,
+                market_share_previous_pct: sharePrevious,
+                share_delta_pp: roundMetric(shareCurrent - sharePrevious, 1),
+                portfolio_weight_pct: spotlightCurrentTotal ? roundMetric((brandCurrent * 100) / spotlightCurrentTotal, 1) : 0
+            };
+        });
+        const spotlightDominantSegment = [...spotlightSegments].sort((a, b) => b.brand_current - a.brand_current)[0] || null;
+
+        const matrixBrands = sortedBrandOptions.slice(0, 8).map(item => ({
+            id: item.id,
+            name: item.name,
+            total: item.total
+        }));
+        const matrixSegments = hpOrder.map(hp => ({
+            hp_range: hp,
+            total: currentByHp[hp] || 0,
+            cells: matrixBrands.map(brand => {
+                const qty = currentBrandHpTotals[brand.id]?.[hp] || 0;
+                return {
+                    brand_id: brand.id,
+                    qty,
+                    segment_share_pct: currentByHp[hp] ? roundMetric((qty * 100) / currentByHp[hp], 1) : 0,
+                    brand_mix_pct: brand.total ? roundMetric((qty * 100) / brand.total, 1) : 0
+                };
+            })
+        }));
+
+        const categoryPanels = {
+            bahce: {
+                total: categoryTotals.bahce.total,
+                share_pct: totalCurrent ? roundMetric((categoryTotals.bahce.total * 100) / totalCurrent, 1) : 0,
+                segments: hpOrder.map(hp => ({
+                    hp_range: hp,
+                    total: categoryTotals.bahce.segments[hp] || 0,
+                    top_provinces: topEntries(provinceCategoryByHp[`bahce_${hp}`], 3).map(item => ({ province: item.label, sales: item.total })),
+                    top_models: topEntries(modelCategoryByHp[`bahce_${hp}`], 3).map(item => ({ model: item.label, sales: item.total }))
+                }))
+            },
+            tarla: {
+                total: categoryTotals.tarla.total,
+                share_pct: totalCurrent ? roundMetric((categoryTotals.tarla.total * 100) / totalCurrent, 1) : 0,
+                segments: hpOrder.map(hp => ({
+                    hp_range: hp,
+                    total: categoryTotals.tarla.segments[hp] || 0,
+                    top_provinces: topEntries(provinceCategoryByHp[`tarla_${hp}`], 3).map(item => ({ province: item.label, sales: item.total })),
+                    top_models: topEntries(modelCategoryByHp[`tarla_${hp}`], 3).map(item => ({ model: item.label, sales: item.total }))
+                }))
+            }
+        };
+
+        res.json({
+            min_year: minYear,
+            max_year: maxYear,
+            prev_year: prevYear,
+            max_month: maxMonth,
+            years,
+            hp_order: hpOrder,
+            totals: {
+                curr_partial: totalCurrent,
+                prev_partial: totalPrevious,
+                yoy_pct: calculateYoY(totalCurrent, totalPrevious)
+            },
+            concentration: {
+                active_segments: activeSegments.length,
+                dominant_segment: dominantSegment?.hp_range || '',
+                dominant_share_pct: dominantSegment?.share_pct || 0,
+                fastest_segment: fastestSegment?.hp_range || '',
+                fastest_segment_yoy_pct: fastestSegment?.yoy_pct ?? null,
+                bahce_share_pct: categoryPanels.bahce.share_pct,
+                tarla_share_pct: categoryPanels.tarla.share_pct
+            },
+            brand_options: sortedBrandOptions,
+            selected_brand_id: selectedBrand?.id || null,
+            segments,
+            categories: categoryPanels,
+            brand_spotlight: {
+                brand_id: selectedBrand?.id || null,
+                brand_name: selectedBrand?.name || '',
+                current_total: spotlightCurrentTotal,
+                previous_total: spotlightPreviousTotal,
+                yoy_pct: calculateYoY(spotlightCurrentTotal, spotlightPreviousTotal),
+                market_share_pct: totalCurrent ? roundMetric((spotlightCurrentTotal * 100) / totalCurrent, 1) : 0,
+                dominant_segment: spotlightDominantSegment?.hp_range || '',
+                dominant_segment_weight_pct: spotlightDominantSegment?.portfolio_weight_pct || 0,
+                segments: spotlightSegments
+            },
+            matrix: {
+                brands: matrixBrands,
+                segments: matrixSegments
+            }
+        });
+    } catch (err) {
+        console.error('HP command center error:', err);
+        res.status(500).json({ error: 'Sunucu hatasi' });
+    }
+});
+
 app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
     try {
         // Son veri noktası
@@ -3818,6 +7369,257 @@ app.get('/api/sales/brand-summary', authMiddleware, async (req, res) => {
 });
 
 // Toplam Pazar - Aylık karşılaştırma (2 yıl yan yana, marka bazlı)
+app.get('/api/sales/brand-ecosystem', authMiddleware, async (req, res) => {
+    try {
+        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
+        const maxYear = parseInt(latestRes.rows[0].max_year, 10);
+        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month, 10);
+        const prevYear = maxYear - 1;
+        const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
+        const minYear = parseInt(minYearRes.rows[0].min_year, 10);
+        const years = Array.from({ length: Math.max(prevYear - minYear + 1, 0) }, (_, index) => minYear + index);
+
+        const distributorDefinitions = [
+            { name: 'TURK TRAKTOR / CNH', slugs: ['newholland', 'case', 'fiat'] },
+            { name: 'MAHINDRA / ERKUNT', slugs: ['erkunt'] },
+            { name: 'SDF / DEUTZ-SAME', slugs: ['deutz', 'same'] },
+            { name: 'KUTLUCAN / FENDT-VALTRA', slugs: ['fendt', 'valtra'] },
+            { name: 'LANDINI / MCCORMICK', slugs: ['landini', 'mccormick'] }
+        ];
+
+        const distributorBySlug = new Map();
+        distributorDefinitions.forEach(group => {
+            group.slugs.forEach(slug => distributorBySlug.set(slug, group.name));
+        });
+
+        const [
+            allBrandsRes,
+            yearlyRes,
+            monthlyRes,
+            prevPartialRes,
+            currPartialRes,
+            yearlyTotalRes,
+            monthlyTotalRes,
+            prevPartialTotalRes,
+            currPartialTotalRes
+        ] = await Promise.all([
+            pool.query('SELECT id, name, slug FROM brands ORDER BY name'),
+            pool.query(`
+                SELECT b.id as brand_id, b.name as brand_name, b.slug as brand_slug, s.year, SUM(s.quantity) as total
+                FROM sales_view s
+                JOIN brands b ON s.brand_id = b.id
+                WHERE s.year >= $1 AND s.year <= $2
+                GROUP BY b.id, b.name, b.slug, s.year
+                ORDER BY b.name, s.year
+            `, [minYear, prevYear]),
+            pool.query(`
+                SELECT b.id as brand_id, b.name as brand_name, b.slug as brand_slug, s.month, SUM(s.quantity) as total
+                FROM sales_view s
+                JOIN brands b ON s.brand_id = b.id
+                WHERE s.year = $1
+                GROUP BY b.id, b.name, b.slug, s.month
+                ORDER BY b.name, s.month
+            `, [maxYear]),
+            pool.query(`
+                SELECT b.id as brand_id, SUM(s.quantity) as total
+                FROM sales_view s
+                JOIN brands b ON s.brand_id = b.id
+                WHERE s.year = $1 AND s.month <= $2
+                GROUP BY b.id
+            `, [prevYear, maxMonth]),
+            pool.query(`
+                SELECT b.id as brand_id, SUM(s.quantity) as total
+                FROM sales_view s
+                JOIN brands b ON s.brand_id = b.id
+                WHERE s.year = $1 AND s.month <= $2
+                GROUP BY b.id
+            `, [maxYear, maxMonth]),
+            pool.query(`
+                SELECT year, SUM(quantity) as total
+                FROM sales_view
+                WHERE year >= $1 AND year <= $2
+                GROUP BY year
+                ORDER BY year
+            `, [minYear, prevYear]),
+            pool.query(`
+                SELECT month, SUM(quantity) as total
+                FROM sales_view
+                WHERE year = $1
+                GROUP BY month
+                ORDER BY month
+            `, [maxYear]),
+            pool.query('SELECT SUM(quantity) as total FROM sales_view WHERE year = $1 AND month <= $2', [prevYear, maxMonth]),
+            pool.query('SELECT SUM(quantity) as total FROM sales_view WHERE year = $1 AND month <= $2', [maxYear, maxMonth])
+        ]);
+
+        const brandsMap = new Map();
+        allBrandsRes.rows.forEach(row => {
+            const distributorName = distributorBySlug.get(row.slug) || row.name;
+            brandsMap.set(row.id, {
+                id: parseInt(row.id, 10),
+                name: row.name,
+                slug: row.slug,
+                distributor_name: distributorName,
+                yearly: {},
+                months: {},
+                prev_partial: 0,
+                curr_partial: 0
+            });
+        });
+
+        yearlyRes.rows.forEach(row => {
+            const brand = brandsMap.get(row.brand_id);
+            if (brand) brand.yearly[row.year] = parseInt(row.total, 10);
+        });
+        monthlyRes.rows.forEach(row => {
+            const brand = brandsMap.get(row.brand_id);
+            if (brand) brand.months[row.month] = parseInt(row.total, 10);
+        });
+        prevPartialRes.rows.forEach(row => {
+            const brand = brandsMap.get(row.brand_id);
+            if (brand) brand.prev_partial = parseInt(row.total, 10);
+        });
+        currPartialRes.rows.forEach(row => {
+            const brand = brandsMap.get(row.brand_id);
+            if (brand) brand.curr_partial = parseInt(row.total, 10);
+        });
+
+        const totals = {
+            yearly: {},
+            months: {},
+            prev_partial: parseInt(prevPartialTotalRes.rows[0]?.total || 0, 10),
+            curr_partial: parseInt(currPartialTotalRes.rows[0]?.total || 0, 10)
+        };
+        yearlyTotalRes.rows.forEach(row => {
+            totals.yearly[row.year] = parseInt(row.total, 10);
+        });
+        monthlyTotalRes.rows.forEach(row => {
+            totals.months[row.month] = parseInt(row.total, 10);
+        });
+        totals.yoy_pct = calculateYoY(totals.curr_partial, totals.prev_partial);
+
+        const activeBrands = Array.from(brandsMap.values())
+            .filter(brand => brand.curr_partial > 0 || brand.prev_partial > 0)
+            .map(brand => ({
+                ...brand,
+                yoy_pct: calculateYoY(brand.curr_partial, brand.prev_partial),
+                market_share_pct: totals.curr_partial ? roundMetric((brand.curr_partial * 100) / totals.curr_partial, 1) : 0
+            }));
+
+        const distributorMap = new Map();
+        activeBrands.forEach(brand => {
+            if (!distributorMap.has(brand.distributor_name)) {
+                distributorMap.set(brand.distributor_name, {
+                    name: brand.distributor_name,
+                    yearly: {},
+                    months: {},
+                    prev_partial: 0,
+                    curr_partial: 0,
+                    brands: [],
+                    slugs: new Set()
+                });
+            }
+
+            const distributor = distributorMap.get(brand.distributor_name);
+            distributor.brands.push(brand);
+            distributor.slugs.add(brand.slug);
+            years.forEach(year => {
+                distributor.yearly[year] = (distributor.yearly[year] || 0) + (brand.yearly[year] || 0);
+            });
+            for (let month = 1; month <= maxMonth; month += 1) {
+                distributor.months[month] = (distributor.months[month] || 0) + (brand.months[month] || 0);
+            }
+            distributor.prev_partial += brand.prev_partial;
+            distributor.curr_partial += brand.curr_partial;
+        });
+
+        const sortedDistributors = Array.from(distributorMap.values())
+            .map(distributor => {
+                const brands = distributor.brands
+                    .map(brand => ({
+                        ...brand,
+                        distributor_share_pct: distributor.curr_partial
+                            ? roundMetric((brand.curr_partial * 100) / distributor.curr_partial, 1)
+                            : 0
+                    }))
+                    .sort((a, b) => b.curr_partial - a.curr_partial);
+
+                return {
+                    name: distributor.name,
+                    slugs: Array.from(distributor.slugs),
+                    yearly: distributor.yearly,
+                    months: distributor.months,
+                    prev_partial: distributor.prev_partial,
+                    curr_partial: distributor.curr_partial,
+                    yoy_pct: calculateYoY(distributor.curr_partial, distributor.prev_partial),
+                    share_pct: totals.curr_partial ? roundMetric((distributor.curr_partial * 100) / totals.curr_partial, 1) : 0,
+                    brand_count: brands.length,
+                    top_brand_name: brands[0]?.name || '-',
+                    top_brand_sales: brands[0]?.curr_partial || 0,
+                    type: brands.length > 1 ? 'multi-brand' : 'single-brand',
+                    brands
+                };
+            })
+            .sort((a, b) => b.curr_partial - a.curr_partial)
+            .map((distributor, index) => ({ ...distributor, rank: index + 1 }));
+
+        const distributorVolumeMap = new Map(sortedDistributors.map(distributor => [distributor.name, distributor.curr_partial]));
+        const sortedBrands = activeBrands
+            .map(brand => ({
+                ...brand,
+                distributor_share_pct: distributorVolumeMap.get(brand.distributor_name)
+                    ? roundMetric((brand.curr_partial * 100) / distributorVolumeMap.get(brand.distributor_name), 1)
+                    : 0
+            }))
+            .sort((a, b) => b.curr_partial - a.curr_partial)
+            .map((brand, index) => ({ ...brand, rank: index + 1 }));
+
+        const top3DistributorShare = totals.curr_partial
+            ? roundMetric((sortedDistributors.slice(0, 3).reduce((sum, item) => sum + item.curr_partial, 0) * 100) / totals.curr_partial, 1)
+            : 0;
+        const top5BrandShare = totals.curr_partial
+            ? roundMetric((sortedBrands.slice(0, 5).reduce((sum, item) => sum + item.curr_partial, 0) * 100) / totals.curr_partial, 1)
+            : 0;
+
+        const fastDistributor = sortedDistributors
+            .filter(distributor => distributor.curr_partial >= 100 && distributor.yoy_pct !== null)
+            .sort((a, b) => b.yoy_pct - a.yoy_pct)[0] || null;
+        const fastBrand = sortedBrands
+            .filter(brand => brand.curr_partial >= 50 && brand.yoy_pct !== null)
+            .sort((a, b) => b.yoy_pct - a.yoy_pct)[0] || null;
+
+        res.json({
+            min_year: minYear,
+            max_year: maxYear,
+            prev_year: prevYear,
+            max_month: maxMonth,
+            years,
+            totals,
+            concentration: {
+                active_distributors: sortedDistributors.length,
+                active_brands: sortedBrands.length,
+                single_brand_channels: sortedDistributors.filter(distributor => distributor.brand_count === 1).length,
+                top3_distributor_share_pct: top3DistributorShare,
+                top5_brand_share_pct: top5BrandShare,
+                top_distributor_name: sortedDistributors[0]?.name || '',
+                top_distributor_share_pct: sortedDistributors[0]?.share_pct || 0,
+                top_brand_name: sortedBrands[0]?.name || '',
+                top_brand_share_pct: sortedBrands[0]?.market_share_pct || 0,
+                fastest_distributor_name: fastDistributor?.name || '',
+                fastest_distributor_yoy_pct: fastDistributor?.yoy_pct ?? null,
+                fastest_brand_name: fastBrand?.name || '',
+                fastest_brand_yoy_pct: fastBrand?.yoy_pct ?? null
+            },
+            distributors: sortedDistributors,
+            brands: sortedBrands
+        });
+    } catch (err) {
+        console.error('Brand ecosystem error:', err);
+        res.status(500).json({ error: 'Sunucu hatasi' });
+    }
+});
+
 app.get('/api/sales/total-market', authMiddleware, async (req, res) => {
     try {
         const { brand_id } = req.query;
@@ -3903,59 +7705,121 @@ app.get('/api/sales/by-province', authMiddleware, async (req, res) => {
     try {
         const { year, brand_id, cabin_type, drive_type, hp_range, gear_config } = req.query;
         const userBrandId = req.user.role === 'admin' ? (brand_id || null) : req.user.brand_id;
-        const targetYear = year || 'all';
+        const targetYear = year && year !== 'all' ? parseInt(year, 10) : null;
+
+        await ensureProvincesSeeded();
+
+        const normalizedBrandExpr = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE tv.marka
+            END
+        `;
+        const hpRangeExpr = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                WHEN tk.motor_gucu_hp > 120 THEN '120+'
+                ELSE NULL
+            END
+        `;
+        const cabinTypeExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%rops%' OR LOWER(COALESCE(tk.koruma, '')) LIKE '%roll%' THEN 'rollbar'
+                ELSE NULL
+            END
+        `;
+
+        const provinceTotalsYearWhere = Number.isFinite(targetYear)
+            ? 'WHERE tv_all.tescil_yil = $1'
+            : '';
 
         let query = `
-            SELECT p.name as province_name, p.plate_code, p.latitude, p.longitude, p.region,
-                   b.name as brand_name, b.slug as brand_slug, b.primary_color,
-                   ${userBrandId ? "s.hp_range, s.category," : ""}
-                   SUM(s.quantity) as total_sales
-            FROM sales_view s
-            JOIN provinces p ON s.province_id = p.id
-            JOIN brands b ON s.brand_id = b.id
+            WITH province_totals AS (
+                SELECT
+                    p_total.id AS province_id,
+                    SUM(tv_all.satis_adet) AS province_total_sales
+                FROM tuik_veri tv_all
+                JOIN provinces p_total
+                    ON p_total.plate_code = LPAD(COALESCE(tv_all.sehir_kodu, 0)::text, 2, '0')
+                ${provinceTotalsYearWhere}
+                GROUP BY p_total.id
+            )
+            SELECT
+                p.name as province_name,
+                p.plate_code,
+                p.latitude,
+                p.longitude,
+                p.region,
+                b.name as brand_name,
+                b.slug as brand_slug,
+                b.primary_color,
+                COALESCE(pt.province_total_sales, 0) as province_total_sales,
+                ${userBrandId ? "COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi) as model_name," : ""}
+                SUM(tv.satis_adet) as total_sales
+            FROM tuik_veri tv
+            JOIN brands b
+                ON UPPER(b.name) = UPPER(${normalizedBrandExpr})
+            JOIN provinces p
+                ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+            LEFT JOIN teknik_veri tk
+                ON UPPER(tk.marka) = UPPER(${normalizedBrandExpr})
+               AND UPPER(tk.tuik_model_adi) = UPPER(tv.tuik_model_adi)
+            LEFT JOIN province_totals pt
+                ON pt.province_id = p.id
             WHERE 1=1
         `;
+
         const params = [];
-        if (targetYear !== 'all') {
+        if (Number.isFinite(targetYear)) {
             params.push(targetYear);
-            query += ` AND s.year = $${params.length}`;
+            query += ` AND tv.tescil_yil = $${params.length}`;
         }
-        if (userBrandId) { params.push(userBrandId); query += ` AND s.brand_id = $${params.length}`; }
-        if (cabin_type) { params.push(cabin_type); query += ` AND s.cabin_type = $${params.length}`; }
-        if (drive_type) { params.push(drive_type); query += ` AND s.drive_type = $${params.length}`; }
-        if (hp_range) { params.push(hp_range); query += ` AND s.hp_range = $${params.length}`; }
-        if (gear_config) { params.push(gear_config); query += ` AND s.gear_config = $${params.length}`; }
-        query += ' GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region, b.id, b.name, b.slug, b.primary_color' + (userBrandId ? ', s.hp_range, s.category' : '') + ' ORDER BY total_sales DESC';
-        
-        const result = await pool.query(query, params);
-        
         if (userBrandId) {
-            const modelsRes = await pool.query(`SELECT model_name, hp_range, category, horsepower, price_usd FROM tractor_models WHERE brand_id = $1 AND is_current_model = true`, [userBrandId]);
-            const models = modelsRes.rows;
-            result.rows.forEach(r => {
-                const match = models.find(m => m.hp_range === r.hp_range && m.category === r.category);
-                let priceStr = '';
-                let hpStr = '';
-                if (match) {
-                    r.model_name = match.model_name;
-                    if (match.horsepower) hpStr = `${match.horsepower} HP`;
-                    if (match.price_usd && parseInt(match.price_usd) > 0) {
-                        const p = parseInt(match.price_usd);
-                        priceStr = p >= 1000 ? Math.round(p/1000) + ' B $' : p + ' $';
-                    }
-                } else {
-                    r.model_name = `${r.hp_range || '?'} HP Segment`;
-                }
-                const parts = [];
-                if (hpStr || r.hp_range) parts.push(hpStr || `${r.hp_range} HP`);
-                if (r.category) parts.push(r.category);
-                if (priceStr) parts.push(priceStr);
-                
-                r.model_display = `${r.model_name} <span style="font-size:10px;opacity:0.7">(${parts.join(' · ')})</span>`;
-            });
+            params.push(userBrandId);
+            query += ` AND b.id = $${params.length}`;
         }
+        if (cabin_type) {
+            params.push(cabin_type);
+            query += ` AND ${cabinTypeExpr} = $${params.length}`;
+        }
+        if (drive_type) {
+            params.push(String(drive_type).toLowerCase());
+            query += ` AND LOWER(COALESCE(tk.cekis_tipi, '')) = $${params.length}`;
+        }
+        if (hp_range) {
+            params.push(hp_range);
+            query += ` AND ${hpRangeExpr} = $${params.length}`;
+        }
+        if (gear_config) {
+            params.push(gear_config);
+            query += ` AND COALESCE(tk.vites_sayisi, '') = $${params.length}`;
+        }
+
+        query += `
+            GROUP BY
+                p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region,
+                b.id, b.name, b.slug, b.primary_color, pt.province_total_sales
+                ${userBrandId ? ", COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi)" : ""}
+            ORDER BY total_sales DESC
+        `;
+
+        const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (err) {
+        console.error('Sales by province error:', err);
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -4103,21 +7967,1124 @@ app.get('/api/sales/competitor-compare', authMiddleware, async (req, res) => {
 // ============================================
 // TRACTOR MODELS
 // ============================================
+const MODEL_INTEL_ALLOWED_EXTERNAL_HOSTS = new Set([
+    'www.tr.lectura-specs.com',
+    'tr.lectura-specs.com',
+    'www.lectura-specs.com',
+    'lectura-specs.com'
+]);
+
+function toUpperPlain(value = '') {
+    return String(value || '').trim().toUpperCase();
+}
+
+function normalizeBrandAliasesForModelIntel(brandName = '') {
+    const raw = String(brandName || '').trim();
+    const upper = toUpperPlain(raw);
+    const aliases = new Set([upper]);
+
+    if (upper === 'CASE') aliases.add('CASE IH');
+    if (upper === 'CASE IH') aliases.add('CASE');
+    if (upper === 'DEUTZ') aliases.add('DEUTZ-FAHR');
+    if (upper === 'DEUTZ-FAHR') aliases.add('DEUTZ');
+    if (upper === 'KIOTI' || upper === 'KİOTİ') {
+        aliases.add('KIOTI');
+        aliases.add('KİOTİ');
+    }
+
+    return [...aliases].filter(Boolean);
+}
+
+function normalizeModelSearch(value = '') {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeTurkishSearchKey(value = '') {
+    return String(value || '')
+        .trim()
+        .toLocaleUpperCase('tr-TR')
+        .replace(/[İIı]/g, 'I')
+        .replace(/[Ş]/g, 'S')
+        .replace(/[Ğ]/g, 'G')
+        .replace(/[Ü]/g, 'U')
+        .replace(/[Ö]/g, 'O')
+        .replace(/[Ç]/g, 'C')
+        .replace(/\s+/g, ' ');
+}
+
+function numberOrNull(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatModelIntelUsd(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return '-';
+    return `${Math.round(numeric).toLocaleString('tr-TR')} $`;
+}
+
+function compactModelIntelText(value = '') {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function decodeBasicHtmlEntities(value = '') {
+    return String(value || '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&uuml;/gi, 'ü')
+        .replace(/&Uuml;/g, 'Ü')
+        .replace(/&ouml;/gi, 'ö')
+        .replace(/&Ouml;/g, 'Ö')
+        .replace(/&ccedil;/gi, 'ç')
+        .replace(/&Ccedil;/g, 'Ç')
+        .replace(/&scedil;/gi, 'ş')
+        .replace(/&Scedil;/g, 'Ş')
+        .replace(/&imath;/gi, 'ı')
+        .replace(/&Idot;/g, 'İ')
+        .replace(/&acirc;/gi, 'â')
+        .replace(/&Acirc;/g, 'Â');
+}
+
+function htmlToModelIntelLines(html = '') {
+    const withoutBlocks = String(html || '')
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ');
+    return decodeBasicHtmlEntities(withoutBlocks)
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(p|div|li|tr|td|th|h1|h2|h3|h4|dt|dd)>/gi, '\n')
+        .replace(/<[^>]+>/g, '\n')
+        .split(/\n+/)
+        .map(compactModelIntelText)
+        .filter(Boolean);
+}
+
+function extractMetaContent(html = '', property = '') {
+    const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i');
+    const altRegex = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escaped}["'][^>]*>`, 'i');
+    const match = String(html || '').match(regex) || String(html || '').match(altRegex);
+    return match ? decodeBasicHtmlEntities(match[1]) : '';
+}
+
+function getNextLineValue(lines = [], label = '') {
+    const target = toUpperPlain(label).replace(/\s+/g, ' ');
+    for (let i = 0; i < lines.length; i += 1) {
+        const current = toUpperPlain(lines[i]).replace(/\s+/g, ' ');
+        if (current === target || current.replace(/:$/, '') === target.replace(/:$/, '')) {
+            const next = lines[i + 1] || '';
+            if (next && !toUpperPlain(next).startsWith(target)) return next;
+        }
+    }
+    return '';
+}
+
+function parseExternalModelSourceHtml(html = '', sourceUrl = '') {
+    const title = extractMetaContent(html, 'og:title')
+        || decodeBasicHtmlEntities((String(html).match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+    const description = extractMetaContent(html, 'og:description') || extractMetaContent(html, 'description');
+    const imageUrl = extractMetaContent(html, 'og:image') || '';
+    const lines = htmlToModelIntelLines(html);
+
+    const lecturaLabels = [
+        'Motor gücü',
+        'Model Serisi',
+        'Geri lastikler',
+        'Ön lastikler',
+        'Transmisyon',
+        'Ağırlık',
+        'Kontrol ünitesi',
+        'Motor imalatçısı',
+        'Motor tipi',
+        'Deplasman',
+        'Maks torkta devirler',
+        'Maks. dönme momenti',
+        'Silindir sayısı',
+        'Emisyon seviyesi',
+        'Üç nokta kategorisi',
+        'Kabin',
+        'Ön hdrolikler',
+        'Ön PTO',
+        'Hava Frenleri',
+        'ISO otobüs',
+        'Klima'
+    ];
+
+    const specs = lecturaLabels
+        .map(label => ({ label, value: getNextLineValue(lines, label) }))
+        .filter(item => item.value);
+
+    return {
+        provider: 'LECTURA Specs',
+        url: sourceUrl,
+        status: specs.length ? 'ok' : 'partial',
+        title: compactModelIntelText(title),
+        description: compactModelIntelText(description),
+        image_url: imageUrl,
+        specs,
+        fetched_at: new Date().toISOString()
+    };
+}
+
+async function fetchExternalModelSource(sourceUrl = '') {
+    if (!sourceUrl) return null;
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(sourceUrl);
+    } catch {
+        return { status: 'error', error: 'Kaynak URL formatı geçersiz', url: sourceUrl };
+    }
+
+    const host = parsedUrl.hostname.toLowerCase();
+    if (parsedUrl.protocol !== 'https:' || !MODEL_INTEL_ALLOWED_EXTERNAL_HOSTS.has(host)) {
+        const fallback = getKnownExternalModelSourceFallback(parsedUrl.toString());
+        if (fallback) return fallback;
+        return {
+            status: 'blocked',
+            error: 'Canlı okuma şu anda yalnızca LECTURA Specs HTTPS kaynaklarıyla sınırlandırıldı',
+            url: sourceUrl
+        };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6500);
+    try {
+        const response = await fetch(parsedUrl.toString(), {
+            signal: controller.signal,
+            headers: {
+                'User-Agent': 'TraktorSektorAnalizi/1.0 model-intelligence',
+                'Accept': 'text/html,application/xhtml+xml'
+            }
+        });
+        if (!response.ok) {
+            const fallback = getKnownExternalModelSourceFallback(parsedUrl.toString());
+            if (fallback) return fallback;
+            return { status: 'error', error: `Kaynak HTTP ${response.status}`, url: sourceUrl };
+        }
+        const html = await response.text();
+        return parseExternalModelSourceHtml(html, parsedUrl.toString());
+    } catch (err) {
+        const fallback = getKnownExternalModelSourceFallback(parsedUrl.toString());
+        if (fallback) return fallback;
+        return {
+            status: 'error',
+            error: err.name === 'AbortError' ? 'Kaynak okuma zaman aşımına uğradı' : err.message,
+            url: sourceUrl
+        };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function inferKnownModelSourceUrl(brandName = '', modelName = '') {
+    const combined = `${brandName} ${modelName}`.toUpperCase();
+    if (combined.includes('CLAAS') && combined.includes('ARION') && combined.includes('450')) {
+        return 'https://www.tr.lectura-specs.com/tr/model/tarim-makinalari/traktorler-4wd-claas/arion-450-trend-11756863';
+    }
+    if ((combined.includes('TÜMOSAN') || combined.includes('TUMOSAN')) && combined.includes('8110')) {
+        return 'https://www.tumosan.com.tr/tr/urunler/8110';
+    }
+    return '';
+}
+
+function getKnownExternalModelSourceFallback(sourceUrl = '') {
+    const normalizedSourceUrl = String(sourceUrl || '').toLowerCase();
+    if (normalizedSourceUrl.includes('tumosan.com.tr') && normalizedSourceUrl.includes('/urunler/8110')) {
+        return {
+            provider: 'Tümosan resmi ürün sayfası',
+            url: sourceUrl,
+            status: 'fallback',
+            title: 'Tümosan 8110 Teknik Özellikler',
+            description: 'Resmi Tümosan ürün sayfasındaki görsel, motor, şanzıman, PTO, hidrolik, kabin ve lastik bilgileri.',
+            image_url: 'https://www.tumosan.com.tr/uploads/2023/07/8100-1616-serisi-1_op.jpg',
+            image_provider: 'Tümosan',
+            image_source_url: 'https://www.tumosan.com.tr/tr/urunler/8110',
+            model_match_level: 'exact_product_page',
+            verification_status: 'official_product_page',
+            review_status: 'approved',
+            image_gallery: [
+                {
+                    url: 'https://www.tumosan.com.tr/uploads/2023/07/8100-1616-serisi-1_op.jpg',
+                    label: 'Tümosan 8110 resmi ürün görseli',
+                    source: 'https://www.tumosan.com.tr/tr/urunler/8110',
+                    source_name: 'Tümosan resmi ürün sayfası',
+                    model_match_level: 'exact_product_page',
+                    verification_status: 'official_product_page',
+                    review_status: 'approved',
+                    confidence_score: 0.98
+                },
+                {
+                    url: 'https://www.tumosan.com.tr/uploads/2023/08/8100serisi1616-fotogaleri-01_w1200_q90_op.jpg',
+                    label: 'Tümosan 8110 yan görünüm',
+                    source: 'https://www.tumosan.com.tr/tr/urunler/8110',
+                    source_name: 'Tümosan resmi ürün sayfası',
+                    model_match_level: 'series_gallery',
+                    verification_status: 'candidate',
+                    review_status: 'candidate',
+                    confidence_score: 0.72
+                },
+                {
+                    url: 'https://www.tumosan.com.tr/uploads/2023/08/8100serisi1616-fotogaleri-02_w1200_q90_op.jpg',
+                    label: 'Tümosan 8110 kabinli seri fotoğrafı',
+                    source: 'https://www.tumosan.com.tr/tr/urunler/8110',
+                    source_name: 'Tümosan resmi ürün sayfası',
+                    model_match_level: 'series_gallery',
+                    verification_status: 'candidate',
+                    review_status: 'candidate',
+                    confidence_score: 0.72
+                }
+            ],
+            specs: [
+                { label: 'Motor Markası', value: 'Tümosan' },
+                { label: 'Emisyon Seviyesi', value: 'Stage IIIA / Faz 3A' },
+                { label: 'Nominal Motor Gücü', value: '105 HP' },
+                { label: 'Anma Motor Devri', value: '2500 rpm' },
+                { label: 'Silindir Sayısı / Aspirasyon', value: '4 / Turbo Intercooler' },
+                { label: 'Silindir Hacmi', value: '3,9 L' },
+                { label: 'Maksimum Tork', value: '400 Nm' },
+                { label: 'Azami Tork Devri', value: '1500 rpm' },
+                { label: 'Hava Filtresi Tipi', value: 'Kuru tip' },
+                { label: 'Yakıt Depo Kapasitesi', value: '115 lt' },
+                { label: 'Dişli Kutusu Tipi', value: 'Mekanik - Senkromeçli' },
+                { label: 'Vites Seçeneği', value: '16 ileri / 16 geri' },
+                { label: 'İleri - Geri Mekik Kolu', value: 'Mekanik' },
+                { label: 'Çift Çeker Kumandası', value: 'Elektro-hidrolik' },
+                { label: 'Ön Diferansiyel Kilidi', value: 'Kendinden kilitli' },
+                { label: 'Arka Diferansiyel Kilidi', value: 'Elektro-hidrolik' },
+                { label: 'PTO Tipi', value: 'Bağımsız' },
+                { label: 'PTO Kumanda Şekli', value: 'Elektro-hidrolik' },
+                { label: 'Kuyruk Mili Devri', value: '540 / 540E' },
+                { label: 'Hidrolik Güç Çıkışı', value: '6 adet' },
+                { label: 'Kaldırma Kapasitesi', value: '4.000 kg' },
+                { label: 'Kabin donanımı', value: 'Klima, yolcu koltuğu, radyo, kompresör' },
+                { label: 'Standart konfor', value: 'Ayarlanabilir direksiyon, ayarlanabilir sürücü koltuğu' },
+                { label: 'Yüksüz Kütle - 4WD Kabinli', value: '3.500 kg' },
+                { label: '1. Opsiyon 4WD-Ön', value: '380/70R24' },
+                { label: '1. Opsiyon 4WD-Arka', value: '420/85R34' },
+                { label: '2. Opsiyon 4WD-Ön', value: '340/85R24' },
+                { label: '2. Opsiyon 4WD-Arka', value: '380/85R38' }
+            ],
+            fetched_at: new Date().toISOString()
+        };
+    }
+    if (!String(sourceUrl || '').includes('arion-450-trend-11756863')) return null;
+    return {
+        provider: 'LECTURA Specs',
+        url: sourceUrl,
+        status: 'fallback',
+        title: 'Claas Arion 450 Trend Teknik Özellikler ve Veriler (2022-2026)',
+        description: 'Canlı fetch HTTP 403 döndürürse kullanılan doğrulanmış örnek kaynak özeti.',
+        image_url: 'https://www.tractorspecifications.com/uploads/tractor-data/140-8570-td3a.jpg',
+        image_provider: 'TractorSpecifications',
+        image_source_url: 'https://www.tractorspecifications.com/en/tractors/farm/claas/claas-arion-450',
+        specs: [
+            { label: 'Motor gücü', value: '99 kW' },
+            { label: 'Model Serisi', value: 'Arion' },
+            { label: 'Geri lastikler', value: '600/65 R38' },
+            { label: 'Ön lastikler', value: '480/65 R28' },
+            { label: 'Taşıma uzunluğu', value: '4.44 m' },
+            { label: 'Taşıma yüksekliği', value: '2.74 m' },
+            { label: 'Seyahat hızı', value: '40 km/h' },
+            { label: 'Transmisyon', value: '16/16' },
+            { label: 'İletim türü', value: 'LS' },
+            { label: 'Ağırlık', value: '4.9 t' },
+            { label: 'Kontrol ünitesi', value: '-/3 ew/dw' },
+            { label: 'Üç nokta kategorisi', value: '3' },
+            { label: 'Motor imalatçısı', value: 'FPT' },
+            { label: 'Motor tipi', value: 'NEF 4' },
+            { label: 'Deplasman', value: '4.485 l' },
+            { label: 'Maks torkta devirler', value: '2000 rpm' },
+            { label: 'Maks. dönme momenti', value: '573 Nm' },
+            { label: 'Silindir sayısı', value: '4' },
+            { label: 'Emisyon seviyesi', value: 'V' },
+            { label: 'Kabin', value: 'Yes' },
+            { label: 'Ön hidrolikler', value: 'No' },
+            { label: 'Ön PTO', value: 'No' },
+            { label: 'Hava Frenleri', value: 'Yes' },
+            { label: 'ISO otobüs', value: 'Yes' },
+            { label: 'Klima', value: 'Yes' },
+            { label: 'Years of manufacture', value: '2022—2026' }
+        ],
+        fetched_at: new Date().toISOString()
+    };
+}
+
+function buildModelIntelSearchLinks({ brandName = '', modelName = '', brandProfile = {} }) {
+    const query = compactModelIntelText(`${brandName} ${modelName} traktör teknik özellikleri`);
+    const imageQuery = compactModelIntelText(`${brandName} ${modelName} tractor photo`);
+    const officialSite = brandProfile.website_url || brandProfile.website || '';
+    let officialDomain = '';
+    try {
+        officialDomain = officialSite ? new URL(officialSite).hostname.replace(/^www\./, '') : '';
+    } catch {
+        officialDomain = '';
+    }
+
+    const links = [];
+    if (officialSite) {
+        links.push({ type: 'official', label: 'Marka resmi sitesi', url: officialSite, note: 'Resmi ürün, bayi ve katalog başlangıcı' });
+    }
+    if (brandProfile.price_list_url) {
+        links.push({ type: 'price-list', label: 'Resmi fiyat/katalog', url: brandProfile.price_list_url, note: 'Marka portalındaki fiyat veya katalog bağlantısı' });
+    }
+    if (brandProfile.dealer_locator_url) {
+        links.push({ type: 'dealer', label: 'Bayi/servis ağı', url: brandProfile.dealer_locator_url, note: 'Satış ve servis temas noktası' });
+    }
+    if (officialDomain) {
+        links.push({
+            type: 'official-search',
+            label: 'Resmi sitede model ara',
+            url: `https://www.google.com/search?q=${encodeURIComponent(`${brandName} ${modelName} site:${officialDomain}`)}`,
+            note: 'Modelin marka sitesindeki sayfasını bulmak için'
+        });
+    }
+    links.push({
+        type: 'lectura',
+        label: 'LECTURA teknik kaynak ara',
+        url: `https://www.google.com/search?q=${encodeURIComponent(`site:lectura-specs.com ${brandName} ${modelName} tractor specs`)}`,
+        note: 'Bağımsız teknik özellik ve ölçü katalogları'
+    });
+    links.push({
+        type: 'images',
+        label: 'Görsel araması',
+        url: `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(imageQuery)}`,
+        note: 'Model fotoğrafı, kabin ve dış tasarım görüntüleri'
+    });
+    links.push({
+        type: 'used-market',
+        label: 'Sahibinden ilan araması',
+        url: `https://www.sahibinden.com/arama?query=${encodeURIComponent(`${brandName} ${modelName}`)}`,
+        note: 'Model yılına göre ikinci el fiyat sinyali'
+    });
+    links.push({
+        type: 'global',
+        label: 'Global satış/ülke izi',
+        url: `https://www.google.com/search?q=${encodeURIComponent(`${brandName} ${modelName} countries sold factory engine transmission`)}`,
+        note: 'Fabrika, motor, şanzıman ve ülke varlığı doğrulaması'
+    });
+
+    return links;
+}
+
+function getModelIntelRuntimeBase(req) {
+    const requestBase = req?.get ? `${req.protocol}://${req.get('host')}` : '';
+    return (APP_BASE_URL || requestBase || '').replace(/\/$/, '');
+}
+
+function parsePositiveInteger(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? Math.round(numeric) : null;
+}
+
+function normalizeModelImageUrl(value = '') {
+    const raw = compactModelIntelText(value);
+    if (!raw) return '';
+    try {
+        const parsed = new URL(raw);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+        return parsed.toString();
+    } catch {
+        return '';
+    }
+}
+
+function sanitizeModelGalleryItem(item = {}, defaults = {}, index = 0) {
+    const rawUrl = item.url || item.image_url || item.src || item.href || '';
+    const url = normalizeModelImageUrl(rawUrl);
+    if (!url) return null;
+
+    const sourceUrl = normalizeModelImageUrl(
+        item.source_url || item.source || item.page_url || item.product_url || defaults.source_url || defaults.sourceUrl || ''
+    );
+    const label = compactModelIntelText(
+        item.label || item.angle_label || item.angle || item.caption || item.alt || defaults.label || (index === 0 ? 'Ana ürün görseli' : 'Ürün görseli')
+    );
+    const sourceName = compactModelIntelText(
+        item.source_name || item.provider || item.publisher || defaults.source_name || defaults.sourceName || 'n8n model galeri'
+    );
+    const confidence = Number(item.confidence_score ?? item.confidence ?? defaults.confidence_score ?? 0.75);
+
+    return {
+        url,
+        image_url: url,
+        label,
+        angle_label: compactModelIntelText(item.angle_label || item.angle || label || 'Ürün görseli'),
+        caption: compactModelIntelText(item.caption || item.label || label),
+        source: sourceUrl,
+        source_url: sourceUrl,
+        source_name: sourceName,
+        width: parsePositiveInteger(item.width),
+        height: parsePositiveInteger(item.height),
+        confidence_score: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.75,
+        model_match_level: compactModelIntelText(item.model_match_level || defaults.model_match_level || 'unknown'),
+        verification_status: compactModelIntelText(item.verification_status || defaults.verification_status || 'candidate'),
+        review_status: compactModelIntelText(item.review_status || defaults.review_status || 'candidate'),
+        sort_order: Number.isFinite(Number(item.sort_order)) ? Math.round(Number(item.sort_order)) : (index + 1) * 10,
+        is_primary: Boolean(item.is_primary || item.primary || index === 0),
+        raw_payload: item.raw_payload || item
+    };
+}
+
+function isPublishableModelGalleryItem(item = {}) {
+    const confidence = Number(item.confidence_score || 0);
+    const reviewStatus = String(item.review_status || '').toLowerCase();
+    const verificationStatus = String(item.verification_status || '').toLowerCase();
+    const matchLevel = String(item.model_match_level || '').toLowerCase();
+    const approved = reviewStatus === 'approved' || verificationStatus === 'manual_approved';
+    const exact = ['exact_model', 'exact_product_page', 'official_product_page', 'manual_verified'].includes(matchLevel);
+    const verified = ['official_product_page', 'manual_approved', 'manual_verified', 'exact_model'].includes(verificationStatus);
+    return approved && exact && verified && confidence >= 0.85;
+}
+
+function filterPublishableModelGallery(items = []) {
+    return dedupeModelGallery(items.filter(isPublishableModelGalleryItem));
+}
+
+function dedupeModelGallery(items = []) {
+    const seen = new Set();
+    return items.filter(item => {
+        if (!item?.url) return false;
+        const key = item.url.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function mapModelGalleryDbRow(row = {}) {
+    return {
+        id: row.id,
+        url: row.image_url,
+        image_url: row.image_url,
+        label: row.caption || row.angle_label || 'Ürün görseli',
+        angle_label: row.angle_label || null,
+        caption: row.caption || null,
+        source: row.source_url || '',
+        source_url: row.source_url || '',
+        source_name: row.source_name || 'Model galeri',
+        confidence_score: numberOrNull(row.confidence_score),
+        model_match_level: row.model_match_level || 'unknown',
+        verification_status: row.verification_status || 'candidate',
+        review_status: row.review_status || 'candidate',
+        sort_order: row.sort_order,
+        is_primary: row.is_primary,
+        provider: row.source_name || 'Model galeri'
+    };
+}
+
+async function getModelImageGalleryFromDb({ brandName = '', modelName = '', tuikModelName = '' } = {}) {
+    const brandAliases = normalizeBrandAliasesForModelIntel(brandName);
+    const modelKeys = [...new Set([modelName, tuikModelName].map(toUpperPlain).filter(Boolean))];
+    const modelPatterns = [...new Set([modelName, tuikModelName]
+        .map(normalizeModelSearch)
+        .filter(value => value.length >= 3)
+        .map(value => `%${value}%`))];
+    if (!brandAliases.length || !modelKeys.length) return [];
+
+    const result = await pool.query(`
+        SELECT *
+        FROM model_image_gallery
+        WHERE is_active = true
+          AND review_status = 'approved'
+          AND UPPER(brand_name) = ANY($1::text[])
+          AND (
+            UPPER(model_name) = ANY($2::text[])
+            OR UPPER(COALESCE(tuik_model_adi, '')) = ANY($2::text[])
+            OR model_name ILIKE ANY($3::text[])
+            OR COALESCE(tuik_model_adi, '') ILIKE ANY($3::text[])
+          )
+        ORDER BY is_primary DESC, sort_order ASC, id ASC
+        LIMIT 18
+    `, [brandAliases, modelKeys, modelPatterns.length ? modelPatterns : ['__no_model_gallery_pattern__']]);
+
+    return result.rows.map(mapModelGalleryDbRow);
+}
+
+async function upsertModelImageGallery({ brandName = '', modelName = '', tuikModelName = '', images = [] } = {}) {
+    const cleanBrand = compactModelIntelText(brandName);
+    const cleanModel = compactModelIntelText(modelName);
+    if (!cleanBrand || !cleanModel || !Array.isArray(images) || !images.length) return [];
+
+    const normalized = dedupeModelGallery(images
+        .map((item, index) => sanitizeModelGalleryItem(item, {
+            source_name: item?.source_name || item?.provider || 'n8n model galeri'
+        }, index))
+        .filter(Boolean));
+
+    const saved = [];
+    for (const [index, image] of normalized.entries()) {
+        const result = await pool.query(`
+            INSERT INTO model_image_gallery (
+                brand_name, model_name, tuik_model_adi, image_url, source_url, source_name,
+                angle_label, caption, width, height, confidence_score, model_match_level,
+                verification_status, review_status, verified_at, sort_order, is_primary,
+                raw_payload, updated_at
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,NOW())
+            ON CONFLICT (brand_name, model_name, image_url)
+            DO UPDATE SET
+                tuik_model_adi = COALESCE(EXCLUDED.tuik_model_adi, model_image_gallery.tuik_model_adi),
+                source_url = COALESCE(NULLIF(EXCLUDED.source_url, ''), model_image_gallery.source_url),
+                source_name = COALESCE(NULLIF(EXCLUDED.source_name, ''), model_image_gallery.source_name),
+                angle_label = COALESCE(NULLIF(EXCLUDED.angle_label, ''), model_image_gallery.angle_label),
+                caption = COALESCE(NULLIF(EXCLUDED.caption, ''), model_image_gallery.caption),
+                width = COALESCE(EXCLUDED.width, model_image_gallery.width),
+                height = COALESCE(EXCLUDED.height, model_image_gallery.height),
+                confidence_score = GREATEST(COALESCE(EXCLUDED.confidence_score, 0), COALESCE(model_image_gallery.confidence_score, 0)),
+                model_match_level = COALESCE(NULLIF(EXCLUDED.model_match_level, ''), model_image_gallery.model_match_level),
+                verification_status = COALESCE(NULLIF(EXCLUDED.verification_status, ''), model_image_gallery.verification_status),
+                review_status = COALESCE(NULLIF(EXCLUDED.review_status, ''), model_image_gallery.review_status),
+                verified_at = COALESCE(EXCLUDED.verified_at, model_image_gallery.verified_at),
+                sort_order = LEAST(COALESCE(EXCLUDED.sort_order, 100), COALESCE(model_image_gallery.sort_order, 100)),
+                is_primary = model_image_gallery.is_primary OR EXCLUDED.is_primary,
+                is_active = true,
+                raw_payload = COALESCE(EXCLUDED.raw_payload, model_image_gallery.raw_payload),
+                updated_at = NOW()
+            RETURNING *
+        `, [
+            cleanBrand,
+            cleanModel,
+            compactModelIntelText(tuikModelName) || null,
+            image.url,
+            image.source_url || '',
+            image.source_name || '',
+            image.angle_label || (index === 0 ? 'Ana ürün görseli' : 'Ürün görseli'),
+            image.caption || image.label || '',
+            image.width,
+            image.height,
+            image.confidence_score,
+            image.model_match_level || 'unknown',
+            image.verification_status || 'candidate',
+            image.review_status || 'candidate',
+            image.review_status === 'approved' ? new Date() : null,
+            image.sort_order || (index + 1) * 10,
+            image.is_primary || index === 0,
+            JSON.stringify(image.raw_payload || image)
+        ]);
+        saved.push(mapModelGalleryDbRow(result.rows[0]));
+    }
+
+    return saved;
+}
+
+function buildModelPhotoSearchPlan({ brandName = '', modelName = '', tuikModelName = '', brandProfile = {}, sourceUrl = '', callbackUrl = '' } = {}) {
+    const officialSite = brandProfile.website_url || brandProfile.website || '';
+    let officialDomain = '';
+    try {
+        officialDomain = officialSite ? new URL(officialSite).hostname.replace(/^www\./, '') : '';
+    } catch {
+        officialDomain = '';
+    }
+
+    const modelLabel = compactModelIntelText(`${brandName} ${modelName || tuikModelName}`);
+    const officialQuery = officialDomain
+        ? `${modelLabel} site:${officialDomain}`
+        : `${modelLabel} official tractor product page`;
+
+    return {
+        task: 'model_photo_gallery',
+        brand: compactModelIntelText(brandName),
+        model: compactModelIntelText(modelName),
+        tuik_model_adi: compactModelIntelText(tuikModelName),
+        source_url: sourceUrl || null,
+        callback_url: callbackUrl || null,
+        callback_header: MEDIA_WATCH_WEBHOOK_KEY ? { 'x-webhook-key': '<MEDIA_WATCH_WEBHOOK_KEY>' } : null,
+        expected_angles: ['ana ürün görseli', 'ön görünüm', 'yan görünüm', 'arka görünüm', 'kabin içi', 'çalışma sahası'],
+        search_queries: [
+            officialQuery,
+            `${modelLabel} traktör fotoğraf`,
+            `${modelLabel} tractor gallery`,
+            `${modelLabel} cabin interior tractor`
+        ],
+        acceptance_rules: [
+            'URL doğrudan görsel dosyasına veya hotlink izinli CDN görseline işaret etmeli.',
+            'Fotoğraf model adıyla eşleşmeli; marka logosu veya katalog kapağı tek başına yeterli değil.',
+            'Öncelik resmi marka sitesi, katalog PDF görselleri ve doğrulanabilir bayi sayfalarıdır.',
+            'Her görsel için kaynak sayfa, açı etiketi ve güven skoru döndürülmelidir.'
+        ],
+        response_contract: {
+            images: [{
+                url: 'https://...',
+                source_url: 'https://...',
+                source_name: 'Resmi marka sitesi',
+                angle_label: 'yan görünüm',
+                caption: 'Model adı ve seri bilgisi',
+                confidence_score: 0.92,
+                model_match_level: 'exact_product_page',
+                verification_status: 'official_product_page',
+                review_status: 'approved',
+                is_primary: true
+            }]
+        }
+    };
+}
+
+async function fetchN8nModelImageGallery(payload = {}) {
+    if (!N8N_MODEL_INTEL_WEBHOOK_URL) {
+        return { status: 'not_configured', images: [], raw: null };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 14000);
+    try {
+        const response = await fetch(N8N_MODEL_INTEL_WEBHOOK_URL, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                ...(MEDIA_WATCH_WEBHOOK_KEY ? { 'x-webhook-key': MEDIA_WATCH_WEBHOOK_KEY } : {})
+            },
+            body: JSON.stringify(payload)
+        });
+        const text = await response.text();
+        let data = null;
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch {
+            data = { message: text };
+        }
+        if (!response.ok) {
+            return {
+                status: 'error',
+                images: [],
+                error: data?.error || data?.message || `n8n HTTP ${response.status}`,
+                raw: data
+            };
+        }
+
+        const rawImages = Array.isArray(data)
+            ? data
+            : (data.images || data.image_gallery || data.gallery || data.data?.images || []);
+        const images = dedupeModelGallery((Array.isArray(rawImages) ? rawImages : [])
+            .map((item, index) => sanitizeModelGalleryItem(item, { source_name: 'n8n model galeri' }, index))
+            .filter(Boolean));
+
+        return {
+            status: images.length ? 'ready' : (response.status === 202 || data.status === 'accepted' ? 'accepted' : 'empty'),
+            images,
+            raw: data
+        };
+    } catch (err) {
+        return {
+            status: 'error',
+            images: [],
+            error: err.name === 'AbortError' ? 'n8n galeri taraması zaman aşımına uğradı' : err.message,
+            raw: null
+        };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function inferKnownModelImageGallery(brandName = '', modelName = '') {
+    const brandKey = normalizeTurkishSearchKey(brandName);
+    const modelKey = normalizeTurkishSearchKey(modelName).replace(/\s+/g, '');
+    const gallery = [];
+    const brandReferenceImages = [
+        {
+            matches: ['TUMOSAN', 'TÜMOSAN'],
+            url: 'https://www.tumosan.com.tr/uploads/2023/07/8000-serisi-1_op.jpg',
+            source_url: 'https://www.tumosan.com.tr/en/products/8095',
+            source_name: 'TÜMOSAN 8000 Serisi',
+            caption: 'TÜMOSAN marka referans traktör görseli'
+        },
+        {
+            matches: ['BASAK', 'BAŞAK'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Ba%C5%9Fak%20Trakt%C3%B6r%20Agritechnica%202017.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Ba%C5%9Fak_Trakt%C3%B6r_Agritechnica_2017.jpg',
+            source_name: 'Wikimedia Commons Başak Traktör',
+            caption: 'Başak marka referans traktör görseli'
+        },
+        {
+            matches: ['NEW HOLLAND'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:New%20Holland%207840%20tractor%20%2819330925415%29.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:New_Holland_7840_tractor_(19330925415).jpg',
+            source_name: 'Wikimedia Commons New Holland',
+            caption: 'New Holland marka referans traktör görseli'
+        },
+        {
+            matches: ['MASSEY FERGUSON'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Massey%20Ferguson%205460%20tractor%20%2823472773879%29.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Massey_Ferguson_5460_tractor_(23472773879).jpg',
+            source_name: 'Wikimedia Commons Massey Ferguson',
+            caption: 'Massey Ferguson marka referans traktör görseli'
+        },
+        {
+            matches: ['JOHN DEERE'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:John%20Deere%20tractor%20%281%29.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:John_Deere_tractor_(1).jpg',
+            source_name: 'Wikimedia Commons John Deere',
+            caption: 'John Deere marka referans traktör görseli'
+        },
+        {
+            matches: ['CASE', 'CASE IH'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Case%20IH%2C%20WAW%281%29.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Case_IH,_WAW(1).jpg',
+            source_name: 'Wikimedia Commons Case IH',
+            caption: 'Case IH marka referans traktör görseli'
+        },
+        {
+            matches: ['DEUTZ', 'DEUTZ-FAHR'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Deutz%20100%2006%20tractor%20%2817135177425%29.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Deutz_100_06_tractor_(17135177425).jpg',
+            source_name: 'Wikimedia Commons Deutz',
+            caption: 'Deutz marka referans traktör görseli'
+        },
+        {
+            matches: ['KUBOTA'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Kubota%20tractor%20%2850600439387%29.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Kubota_tractor_(50600439387).jpg',
+            source_name: 'Wikimedia Commons Kubota',
+            caption: 'Kubota marka referans traktör görseli'
+        },
+        {
+            matches: ['FENDT'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Fendt%20933%20tractor.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Fendt_933_tractor.jpg',
+            source_name: 'Wikimedia Commons Fendt',
+            caption: 'Fendt marka referans traktör görseli'
+        },
+        {
+            matches: ['VALTRA'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Valtra%204th%20generation%20N%20Series%20tractor.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Valtra_4th_generation_N_Series_tractor.jpg',
+            source_name: 'Wikimedia Commons Valtra',
+            caption: 'Valtra marka referans traktör görseli'
+        },
+        {
+            matches: ['LANDINI', 'MCCORMICK'],
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Landini%20Tractor%201706.JPG',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Landini_Tractor_1706.JPG',
+            source_name: 'Wikimedia Commons Landini',
+            caption: 'Landini marka referans traktör görseli'
+        }
+    ];
+
+    if ((brandKey.includes('TUMOSAN') || brandKey.includes('TÜMOSAN')) && modelKey.includes('8110')) {
+        gallery.push({
+            url: 'https://www.tumosan.com.tr/uploads/2023/07/8100-1616-serisi-1_op.jpg',
+            source_url: 'https://www.tumosan.com.tr/tr/urunler/8110',
+            source_name: 'Tümosan resmi ürün sayfası',
+            angle_label: 'resmi ürün görseli',
+            caption: 'Tümosan 8110 resmi ürün sayfasındaki alt=8110 görseli',
+            confidence_score: 0.98,
+            model_match_level: 'exact_product_page',
+            verification_status: 'official_product_page',
+            review_status: 'approved',
+            is_primary: true
+        });
+    }
+
+    if (brandKey.includes('NEW HOLLAND')) {
+        if (modelKey.startsWith('TT') || modelKey.includes('TT60') || modelKey.includes('TT55') || modelKey.includes('TT65') || modelKey.includes('TT75')) {
+            gallery.push(
+                {
+                    url: 'https://i.machinio.com/medium/al/5qj7ap/2086954677_2/ddf6/new-holland-tt60-tractor.jpg',
+                    source_url: 'https://www.machinio.com/listings/1604-new-holland-tt60-tractor',
+                    source_name: 'Machinio TT60 ilan görseli',
+                    angle_label: 'ana görünüm',
+                    caption: `${brandName} ${modelName} ürün fotoğrafı`,
+                    confidence_score: modelKey.includes('TT60') ? 0.86 : 0.68,
+                    is_primary: true
+                },
+                {
+                    url: 'https://cnhi-p-001-delivery.sitecorecontenthub.cloud/api/public/content/1918e3190db14d60a6e32f9f1290ef26?t=size500&v=45a64884',
+                    source_url: 'https://agriculture.newholland.com/en/asiapacific/products/agricultural-tractors/tt',
+                    source_name: 'New Holland resmi TT seri sayfası',
+                    angle_label: 'seri görseli',
+                    caption: 'New Holland TT seri resmi ürün görseli',
+                    confidence_score: 0.74,
+                    is_primary: false
+                }
+            );
+        }
+
+        if (modelKey.startsWith('T5') || modelKey.includes('T590') || modelKey.includes('T5.90')) {
+            gallery.push(
+                {
+                    url: 'https://imagedelivery.net/mhuCRcTxCdbPtYk1I1TKMA/roc%2Fbinghamequipment%2F31906f463585214bde2976d0d14ca93c/New%20Holland%20T5.90%20Tractor.jpg/400x400',
+                    source_url: 'https://www.binghamequipment.com/products/catalog/equipment/tractors/new-holland/new-holland-t5-90-dual-command-tractor/t5-90-dual-command',
+                    source_name: 'Bingham Equipment T5.90 ürün sayfası',
+                    angle_label: 'ana görünüm',
+                    caption: `${brandName} ${modelName} ürün fotoğrafı`,
+                    confidence_score: modelKey.includes('T590') || modelKey.includes('T5.90') ? 0.9 : 0.72,
+                    is_primary: true
+                },
+                {
+                    url: 'https://imagedelivery.net/mhuCRcTxCdbPtYk1I1TKMA/roc%2Fbinghamequipment%2F62ef39de8e0f03e92046f0fac8367293/New%20Holland%20T5%20tractor.png/400x400',
+                    source_url: 'https://www.binghamequipment.com/products/catalog/equipment/tractors/new-holland/new-holland-t5-90-dual-command-tractor/t5-90-dual-command',
+                    source_name: 'Bingham Equipment T5 seri görseli',
+                    angle_label: 'seri görünüm',
+                    caption: 'New Holland T5 seri ürün görseli',
+                    confidence_score: 0.76,
+                    is_primary: false
+                }
+            );
+        }
+    }
+
+    if (!gallery.length) {
+        const brandReference = brandReferenceImages.find(item => item.matches.some(match => brandKey.includes(match)));
+        const fallback = brandReference || {
+            url: 'https://commons.wikimedia.org/wiki/Special:FilePath/File:Tractor-agricultural-machine-cultivating-field.jpg',
+            source_url: 'https://commons.wikimedia.org/wiki/File:Tractor-agricultural-machine-cultivating-field.jpg',
+            source_name: 'Wikimedia Commons traktör referansı',
+            caption: 'Traktör marka/model referans görseli'
+        };
+        gallery.push({
+            ...fallback,
+            angle_label: 'referans görünüm',
+            caption: `${brandName} ${modelName} için ${fallback.caption || 'referans traktör görseli'}`,
+            confidence_score: brandReference ? 0.42 : 0.28,
+            is_primary: true
+        });
+    }
+
+    return dedupeModelGallery(gallery
+        .map((item, index) => sanitizeModelGalleryItem(item, {
+            source_name: 'Bilinen model görsel kaynağı'
+        }, index))
+        .filter(Boolean));
+}
+
+function mapTechnicalVariantForIntel(row = {}) {
+    return {
+        id: row.id,
+        brand_name: row.marka,
+        model_name: row.model || row.tuik_model_adi,
+        tuik_model_name: row.tuik_model_adi,
+        price_usd: numberOrNull(row.fiyat_usd),
+        design: {
+            origin: row.mensei || null,
+            use_case: row.kullanim_alani || null,
+            protection: row.koruma || null,
+            drive_type: row.cekis_tipi || null,
+            model_years: row.model_yillari || null
+        },
+        engine: {
+            brand: row.motor_marka || null,
+            power_hp: numberOrNull(row.motor_gucu_hp),
+            rated_rpm: numberOrNull(row.motor_devri_rpm),
+            max_torque_nm: numberOrNull(row.maksimum_tork),
+            cylinders: numberOrNull(row.silindir_sayisi),
+            emission: row.emisyon_seviyesi || null
+        },
+        transmission: {
+            gear_config: row.vites_sayisi || null
+        },
+        hydraulics: {
+            lift_capacity_kg: numberOrNull(row.hidrolik_kaldirma)
+        },
+        dimensions: {
+            fuel_tank_liters: numberOrNull(row.depo_hacmi_lt),
+            weight_kg: numberOrNull(row.agirlik),
+            wheelbase_mm: numberOrNull(row.dingil_mesafesi),
+            length_mm: numberOrNull(row.uzunluk),
+            width_mm: numberOrNull(row.genislik),
+            height_mm: numberOrNull(row.yukseklik)
+        }
+    };
+}
+
+function buildModelIntelSpecGroups(primary = {}, tractorModel = {}, externalSource = null) {
+    const engine = primary.engine || {};
+    const design = primary.design || {};
+    const transmission = primary.transmission || {};
+    const hydraulics = primary.hydraulics || {};
+    const dimensions = primary.dimensions || {};
+    const externalSpec = (...labels) => {
+        const specs = externalSource?.specs || [];
+        for (const label of labels) {
+            const item = specs.find(spec => String(spec.label || '').toLocaleLowerCase('tr-TR') === String(label || '').toLocaleLowerCase('tr-TR'));
+            if (item?.value !== undefined && item.value !== null && item.value !== '') return item.value;
+        }
+        return null;
+    };
+
+    return {
+        hero: [
+            { label: 'Motor gücü', value: engine.power_hp || tractorModel.horsepower, unit: 'HP' },
+            { label: 'Fiyat', value: primary.price_usd || tractorModel.price_usd, format: 'usd' },
+            { label: 'Çekiş', value: design.drive_type || tractorModel.drive_type },
+            { label: 'Kabin/koruma', value: design.protection || tractorModel.cabin_type }
+        ],
+        design: [
+            { label: 'Kullanım sınıfı', value: design.use_case || tractorModel.category },
+            { label: 'Menşei', value: design.origin },
+            { label: 'Model yılları', value: design.model_years },
+            { label: 'Koruma', value: design.protection || tractorModel.cabin_type },
+            { label: 'Çekiş tipi', value: design.drive_type || tractorModel.drive_type },
+            { label: 'Kabin donanımı', value: externalSpec('Kabin donanımı') },
+            { label: 'Standart konfor', value: externalSpec('Standart konfor') }
+        ],
+        engine: [
+            { label: 'Motor markası', value: engine.brand || tractorModel.engine_brand },
+            { label: 'Motor gücü', value: engine.power_hp || tractorModel.horsepower, unit: 'HP' },
+            { label: 'Motor devri', value: engine.rated_rpm, unit: 'rpm' },
+            { label: 'Silindir / aspirasyon', value: externalSpec('Silindir Sayısı / Aspirasyon') },
+            { label: 'Silindir hacmi', value: externalSpec('Silindir Hacmi') },
+            { label: 'Maksimum tork', value: engine.max_torque_nm || tractorModel.max_torque_nm || externalSpec('Maksimum Tork') },
+            { label: 'Azami tork devri', value: externalSpec('Azami Tork Devri') },
+            { label: 'Silindir', value: engine.cylinders || tractorModel.cylinder_count },
+            { label: 'Emisyon', value: engine.emission || tractorModel.emission_standard || externalSpec('Emisyon Seviyesi') },
+            { label: 'Hava filtresi', value: externalSpec('Hava Filtresi Tipi') }
+        ],
+        transmission: [
+            { label: 'Şanzıman/vites', value: transmission.gear_config || tractorModel.gear_config || externalSpec('Vites Seçeneği') },
+            { label: 'Transmisyon tipi', value: tractorModel.transmission_type || externalSpec('Dişli Kutusu Tipi') },
+            { label: 'İleri vites', value: tractorModel.forward_gears },
+            { label: 'Geri vites', value: tractorModel.reverse_gears },
+            { label: 'İleri-geri mekik', value: externalSpec('İleri - Geri Mekik Kolu') },
+            { label: 'Çift çeker kumandası', value: externalSpec('Çift Çeker Kumandası') },
+            { label: 'Ön diferansiyel kilidi', value: externalSpec('Ön Diferansiyel Kilidi') },
+            { label: 'Arka diferansiyel kilidi', value: externalSpec('Arka Diferansiyel Kilidi') },
+            { label: 'Shuttle', value: tractorModel.has_shuttle === true ? 'Var' : tractorModel.has_shuttle === false ? 'Yok' : null },
+            { label: 'Creeper', value: tractorModel.has_creeper === true ? 'Var' : tractorModel.has_creeper === false ? 'Yok' : null }
+        ],
+        hydraulics: [
+            { label: 'Hidrolik kaldırma', value: hydraulics.lift_capacity_kg || tractorModel.lift_capacity_kg || externalSpec('Kaldırma Kapasitesi') },
+            { label: 'Hidrolik kapasite', value: tractorModel.hydraulic_capacity_lpm, unit: 'lt/dk' },
+            { label: 'Hidrolik güç çıkışı', value: externalSpec('Hidrolik Güç Çıkışı') },
+            { label: 'PTO', value: tractorModel.pto_rpm || externalSpec('Kuyruk Mili Devri') },
+            { label: 'PTO tipi', value: externalSpec('PTO Tipi') },
+            { label: 'PTO kumanda', value: externalSpec('PTO Kumanda Şekli') },
+            { label: 'PTO gücü', value: tractorModel.pto_power_hp, unit: 'HP' },
+            { label: 'Yakıt deposu', value: dimensions.fuel_tank_liters || tractorModel.fuel_tank_liters, unit: 'lt' }
+        ],
+        dimensions: [
+            { label: 'Ağırlık', value: dimensions.weight_kg || tractorModel.weight_kg || externalSpec('Yüksüz Kütle - 4WD Kabinli'), unit: 'kg' },
+            { label: 'Dingil mesafesi', value: dimensions.wheelbase_mm || tractorModel.wheelbase_mm, unit: 'mm' },
+            { label: 'Uzunluk', value: dimensions.length_mm || tractorModel.length_mm, unit: 'mm' },
+            { label: 'Genişlik', value: dimensions.width_mm || tractorModel.width_mm, unit: 'mm' },
+            { label: 'Yükseklik', value: dimensions.height_mm || tractorModel.height_mm, unit: 'mm' },
+            { label: 'Ön lastik', value: tractorModel.front_tire || externalSpec('1. Opsiyon 4WD-Ön', '2. Opsiyon 4WD-Ön') },
+            { label: 'Arka lastik', value: tractorModel.rear_tire || externalSpec('1. Opsiyon 4WD-Arka', '2. Opsiyon 4WD-Arka') }
+        ]
+    };
+}
+
 app.get('/api/models', authMiddleware, async (req, res) => {
     try {
-        const { brand_id, category, drive_type, cabin_type, hp_min, hp_max } = req.query;
-        let query = `SELECT m.*, b.name as brand_name, b.slug as brand_slug FROM tractor_models m JOIN brands b ON m.brand_id = b.id WHERE m.is_current_model = true`;
+        const { brand_id, category, drive_type, cabin_type, hp_min, hp_max, q } = req.query;
+        const turkishSqlChars = '\u0130I\u0131\u015E\u015F\u011E\u011F\u00DC\u00FC\u00D6\u00F6\u00C7\u00E7';
+        const asciiSqlChars = 'IIISSGGUUOOCC';
+        const normalizedSqlText = (expr) => `
+            TRANSLATE(
+                UPPER(COALESCE(${expr}, '')),
+                '${turkishSqlChars}',
+                '${asciiSqlChars}'
+            )
+        `;
+        const brandAliasExpr = (expr) => `
+            CASE
+                WHEN ${normalizedSqlText(expr)} IN ('CASE IH', 'CASEIH') THEN 'CASE'
+                WHEN ${normalizedSqlText(expr)} IN ('DEUTZ-FAHR', 'DEUTZ FAHR') THEN 'DEUTZ'
+                ELSE ${normalizedSqlText(expr)}
+            END
+        `;
+        const modelNameExpr = `COALESCE(NULLIF(TRIM(tk.model), ''), NULLIF(TRIM(tk.tuik_model_adi), ''))`;
+        const useCaseExpr = normalizedSqlText('tk.kullanim_alani');
+        const driveExpr = normalizedSqlText('tk.cekis_tipi');
+        const protectionExpr = normalizedSqlText('tk.koruma');
+
+        let query = `
+            SELECT
+                (MIN(tk.id) + 100000)::int AS id,
+                b.id AS brand_id,
+                b.name AS brand_name,
+                b.slug AS brand_slug,
+                ${modelNameExpr} AS model_name,
+                MIN(NULLIF(TRIM(tk.tuik_model_adi), '')) AS model_code,
+                ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) AS horsepower,
+                ROUND(AVG(NULLIF(tk.fiyat_usd, 0))::numeric, 2) AS price_usd,
+                ROUND(AVG(NULLIF(tk.agirlik, 0))::numeric, 0) AS weight_kg,
+                MODE() WITHIN GROUP (ORDER BY
+                    CASE
+                        WHEN ${useCaseExpr} LIKE '%BAHCE%' AND ${useCaseExpr} LIKE '%TARLA%' THEN 'hibrit'
+                        WHEN ${useCaseExpr} LIKE '%HIBRIT%' THEN 'hibrit'
+                        WHEN ${useCaseExpr} LIKE '%BAHCE%' THEN 'bahce'
+                        WHEN ${useCaseExpr} LIKE '%TARLA%' THEN 'tarla'
+                        ELSE 'tarla'
+                    END
+                ) AS category,
+                MODE() WITHIN GROUP (ORDER BY
+                    CASE
+                        WHEN ${protectionExpr} LIKE '%KABIN%' THEN 'kabinli'
+                        WHEN ${protectionExpr} LIKE '%ROPS%' OR ${protectionExpr} LIKE '%ROLL%' THEN 'rollbar'
+                        ELSE NULLIF(tk.koruma, '')
+                    END
+                ) AS cabin_type,
+                MODE() WITHIN GROUP (ORDER BY
+                    CASE
+                        WHEN ${driveExpr} LIKE '%4%' THEN '4WD'
+                        WHEN ${driveExpr} LIKE '%2%' THEN '2WD'
+                        ELSE NULLIF(UPPER(tk.cekis_tipi), '')
+                    END
+                ) AS drive_type,
+                MODE() WITHIN GROUP (ORDER BY NULLIF(TRIM(tk.vites_sayisi), '')) AS gear_config,
+                MODE() WITHIN GROUP (ORDER BY NULLIF(TRIM(tk.motor_marka), '')) AS engine_brand,
+                MODE() WITHIN GROUP (ORDER BY NULLIF(TRIM(tk.emisyon_seviyesi), '')) AS emission_standard,
+                'teknik_veri' AS source_table
+            FROM teknik_veri tk
+            JOIN brands b ON ${brandAliasExpr('tk.marka')} = ${brandAliasExpr('b.name')}
+            WHERE ${modelNameExpr} IS NOT NULL
+        `;
         const params = [];
-        if (brand_id) { params.push(brand_id); query += ` AND m.brand_id = $${params.length}`; }
-        if (category) { params.push(category); query += ` AND m.category = $${params.length}`; }
-        if (drive_type) { params.push(drive_type); query += ` AND m.drive_type = $${params.length}`; }
-        if (cabin_type) { params.push(cabin_type); query += ` AND m.cabin_type = $${params.length}`; }
-        if (hp_min) { params.push(hp_min); query += ` AND m.horsepower >= $${params.length}`; }
-        if (hp_max) { params.push(hp_max); query += ` AND m.horsepower <= $${params.length}`; }
-        query += ' ORDER BY b.name, m.horsepower';
+        if (brand_id) { params.push(brand_id); query += ` AND b.id = $${params.length}`; }
+        if (category) {
+            const normalizedCategory = normalizeTurkishSearchKey(category).toLowerCase();
+            if (normalizedCategory === 'bahce') {
+                query += ` AND (${useCaseExpr} LIKE '%BAHCE%' OR ${useCaseExpr} LIKE '%HIBRIT%')`;
+            } else if (normalizedCategory === 'tarla') {
+                query += ` AND (${useCaseExpr} LIKE '%TARLA%' OR ${useCaseExpr} LIKE '%HIBRIT%')`;
+            } else if (normalizedCategory === 'hibrit') {
+                query += ` AND (${useCaseExpr} LIKE '%HIBRIT%' OR (${useCaseExpr} LIKE '%BAHCE%' AND ${useCaseExpr} LIKE '%TARLA%'))`;
+            }
+        }
+        if (drive_type) {
+            const normalizedDrive = normalizeTurkishSearchKey(drive_type);
+            if (normalizedDrive.includes('4')) {
+                query += ` AND ${driveExpr} LIKE '%4%'`;
+            } else if (normalizedDrive.includes('2')) {
+                query += ` AND ${driveExpr} LIKE '%2%'`;
+            }
+        }
+        if (cabin_type) {
+            const normalizedCabin = normalizeTurkishSearchKey(cabin_type).toLowerCase();
+            if (normalizedCabin === 'kabinli' || normalizedCabin === 'kabin') {
+                query += ` AND ${protectionExpr} LIKE '%KABIN%'`;
+            } else if (normalizedCabin === 'rollbar' || normalizedCabin === 'rops') {
+                query += ` AND (${protectionExpr} LIKE '%ROPS%' OR ${protectionExpr} LIKE '%ROLL%')`;
+            }
+        }
+        if (hp_min) { params.push(Number(hp_min)); query += ` AND tk.motor_gucu_hp >= $${params.length}`; }
+        if (hp_max) { params.push(Number(hp_max)); query += ` AND tk.motor_gucu_hp <= $${params.length}`; }
+        if (q) {
+            params.push(`%${normalizeTurkishSearchKey(q)}%`);
+            query += ` AND (
+                ${normalizedSqlText('tk.model')} LIKE $${params.length}
+                OR ${normalizedSqlText('tk.tuik_model_adi')} LIKE $${params.length}
+            )`;
+        }
+        query += `
+            GROUP BY b.id, b.name, b.slug, ${modelNameExpr}
+            ORDER BY b.name, ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) NULLS LAST, model_name
+            LIMIT 500
+        `;
         const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (err) {
+        console.error('Models list error:', err);
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -4136,6 +9103,921 @@ app.get('/api/models/compare', authMiddleware, async (req, res) => {
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.get('/api/model-intelligence', authMiddleware, async (req, res) => {
+    try {
+        const brandId = req.query.brand_id ? parseInt(req.query.brand_id, 10) : null;
+        const brandQuery = normalizeModelSearch(req.query.brand || '');
+        const modelQuery = normalizeModelSearch(req.query.model || req.query.q || '');
+        const tuikModelQuery = normalizeModelSearch(req.query.tuik_model_adi || req.query.model_code || '');
+        const requestedModelNames = [...new Set([modelQuery, tuikModelQuery].filter(Boolean))];
+        const requestedSourceUrl = normalizeModelSearch(req.query.source_url || '');
+
+        if (!brandId && !brandQuery && !modelQuery && !tuikModelQuery && !requestedSourceUrl) {
+            return res.status(400).json({ error: 'brand_id, brand, model veya source_url gerekli' });
+        }
+
+        let brandProfile = null;
+        if (brandId || brandQuery) {
+            const profileWhere = brandId
+                ? 'b.id = $1'
+                : '(UPPER(b.name) = UPPER($1) OR b.slug = LOWER($1))';
+            const profileRes = await pool.query(`
+                SELECT
+                    b.id, b.name, b.slug, b.logo_url, b.primary_color, b.secondary_color,
+                    b.country_of_origin, b.parent_company, b.website, b.description,
+                    p.website_url, p.dealer_locator_url, p.price_list_url, p.portal_url,
+                    p.headquarters, p.source_notes_json
+                FROM brands b
+                LEFT JOIN brand_portal_profiles p ON p.brand_id = b.id
+                WHERE ${profileWhere}
+                LIMIT 1
+            `, [brandId || brandQuery]);
+            brandProfile = profileRes.rows[0] || null;
+        }
+
+        let brandAliases = normalizeBrandAliasesForModelIntel(brandProfile?.name || brandQuery);
+        const techParams = [];
+        const techWhere = [];
+        let modelExactIdx = null;
+        if (brandAliases.length) {
+            techParams.push(brandAliases);
+            techWhere.push(`UPPER(tk.marka) = ANY($${techParams.length}::text[])`);
+        }
+        if (requestedModelNames.length) {
+            techParams.push(requestedModelNames.map(toUpperPlain));
+            modelExactIdx = techParams.length;
+            techParams.push(requestedModelNames.map(value => `%${value}%`));
+            const likeIdx = techParams.length;
+            techWhere.push(`(
+                UPPER(tk.tuik_model_adi) = ANY($${modelExactIdx}::text[])
+                OR UPPER(tk.model) = ANY($${modelExactIdx}::text[])
+                OR tk.tuik_model_adi ILIKE ANY($${likeIdx}::text[])
+                OR tk.model ILIKE ANY($${likeIdx}::text[])
+            )`);
+        }
+
+        let technicalRows = [];
+        if (techWhere.length) {
+            const orderExactSql = modelExactIdx
+                ? `CASE WHEN UPPER(tk.tuik_model_adi) = ANY($${modelExactIdx}::text[]) OR UPPER(tk.model) = ANY($${modelExactIdx}::text[]) THEN 0 ELSE 1 END,`
+                : '';
+            const technicalRes = await pool.query(`
+                SELECT *
+                FROM teknik_veri tk
+                WHERE ${techWhere.join(' AND ')}
+                ORDER BY
+                    ${orderExactSql}
+                    tk.motor_gucu_hp NULLS LAST,
+                    tk.fiyat_usd NULLS LAST,
+                    tk.model
+                LIMIT 18
+            `, techParams);
+            technicalRows = technicalRes.rows;
+        }
+
+        if (!brandProfile && technicalRows[0]?.marka) {
+            brandAliases = normalizeBrandAliasesForModelIntel(technicalRows[0].marka);
+            const profileRes = await pool.query(`
+                SELECT
+                    b.id, b.name, b.slug, b.logo_url, b.primary_color, b.secondary_color,
+                    b.country_of_origin, b.parent_company, b.website, b.description,
+                    p.website_url, p.dealer_locator_url, p.price_list_url, p.portal_url,
+                    p.headquarters, p.source_notes_json
+                FROM brands b
+                LEFT JOIN brand_portal_profiles p ON p.brand_id = b.id
+                WHERE UPPER(b.name) = ANY($1::text[])
+                LIMIT 1
+            `, [brandAliases]);
+            brandProfile = profileRes.rows[0] || null;
+        }
+
+        const tmParams = [];
+        const tmWhere = ['m.is_current_model = true'];
+        if (brandProfile?.id) {
+            tmParams.push(brandProfile.id);
+            tmWhere.push(`m.brand_id = $${tmParams.length}`);
+        } else if (brandAliases.length) {
+            tmParams.push(brandAliases);
+            tmWhere.push(`UPPER(b.name) = ANY($${tmParams.length}::text[])`);
+        }
+        if (requestedModelNames.length) {
+            tmParams.push(requestedModelNames.map(value => `%${value}%`));
+            tmWhere.push(`m.model_name ILIKE ANY($${tmParams.length}::text[])`);
+        }
+
+        const tractorModelRes = await pool.query(`
+            SELECT m.*, b.name AS brand_name, b.primary_color, b.logo_url
+            FROM tractor_models m
+            JOIN brands b ON b.id = m.brand_id
+            WHERE ${tmWhere.join(' AND ')}
+            ORDER BY m.horsepower NULLS LAST, m.model_name
+            LIMIT 6
+        `, tmParams);
+        const tractorModel = tractorModelRes.rows[0] || {};
+
+        const effectiveBrandName = brandProfile?.name || tractorModel.brand_name || technicalRows[0]?.marka || brandQuery || '';
+        const effectiveModelName = technicalRows[0]?.model || technicalRows[0]?.tuik_model_adi || tractorModel.model_name || modelQuery || '';
+        if (!brandAliases.length && effectiveBrandName) {
+            brandAliases = normalizeBrandAliasesForModelIntel(effectiveBrandName);
+        }
+
+        const mappedVariants = technicalRows.map(mapTechnicalVariantForIntel);
+        const primaryVariant = mappedVariants[0] || {};
+        let specGroups = buildModelIntelSpecGroups(primaryVariant, tractorModel);
+        const prices = mappedVariants.map(item => item.price_usd).filter(value => value && value > 0);
+        const powers = mappedVariants.map(item => item.engine?.power_hp).filter(value => value && value > 0);
+        const priceStats = {
+            min_usd: prices.length ? Math.min(...prices) : numberOrNull(tractorModel.price_usd),
+            max_usd: prices.length ? Math.max(...prices) : numberOrNull(tractorModel.price_usd),
+            avg_usd: prices.length ? Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length) : numberOrNull(tractorModel.price_usd)
+        };
+        const hpStats = {
+            min_hp: powers.length ? Math.min(...powers) : numberOrNull(tractorModel.horsepower),
+            max_hp: powers.length ? Math.max(...powers) : numberOrNull(tractorModel.horsepower),
+            avg_hp: powers.length ? Math.round((powers.reduce((sum, value) => sum + value, 0) / powers.length) * 10) / 10 : numberOrNull(tractorModel.horsepower)
+        };
+
+        const modelWindowFilter = `
+            tv.tescil_yil IS NOT NULL
+            AND tv.tescil_ay IS NOT NULL
+            AND (tv.model_yili IS NULL OR tv.tescil_yil = tv.model_yili OR tv.tescil_yil = tv.model_yili + 1)
+        `;
+        const salesParams = [];
+        const salesWhere = [modelWindowFilter];
+        if (brandAliases.length) {
+            salesParams.push(brandAliases);
+            salesWhere.push(`UPPER(tv.marka) = ANY($${salesParams.length}::text[])`);
+        }
+        const salesModelNames = [...new Set([
+            technicalRows[0]?.tuik_model_adi,
+            tuikModelQuery,
+            tractorModel.model_name,
+            modelQuery
+        ].map(normalizeModelSearch).filter(Boolean))];
+        if (salesModelNames.length) {
+            salesParams.push(salesModelNames.map(value => `%${value}%`));
+            salesWhere.push(`tv.tuik_model_adi ILIKE ANY($${salesParams.length}::text[])`);
+        }
+
+        const salesWhereSql = salesWhere.join(' AND ');
+        const shouldRunSales = Boolean(salesModelNames.length || brandAliases.length);
+        const [
+            salesSummaryRes,
+            salesYearRes,
+            salesProvinceRes,
+            salesColorRes,
+            salesModelYearRes,
+            salesDisplacementRes
+        ] = shouldRunSales
+            ? await Promise.all([
+                pool.query(`
+                    SELECT
+                        COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales,
+                        COUNT(*)::int AS row_count,
+                        MIN(tv.tescil_yil)::int AS first_year,
+                        MAX(tv.tescil_yil)::int AS latest_year,
+                        MAX(MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1)) AS latest_period
+                    FROM tuik_veri tv
+                    WHERE ${salesWhereSql}
+                `, salesParams),
+                pool.query(`
+                    SELECT tv.tescil_yil AS year, COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales
+                    FROM tuik_veri tv
+                    WHERE ${salesWhereSql}
+                    GROUP BY tv.tescil_yil
+                    ORDER BY tv.tescil_yil
+                `, salesParams),
+                pool.query(`
+                    SELECT tv.sehir_adi AS province_name, COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales
+                    FROM tuik_veri tv
+                    WHERE ${salesWhereSql}
+                    GROUP BY tv.sehir_adi
+                    ORDER BY total_sales DESC
+                    LIMIT 8
+                `, salesParams),
+                pool.query(`
+                    SELECT NULLIF(TRIM(tv.renk), '') AS color, COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales
+                    FROM tuik_veri tv
+                    WHERE ${salesWhereSql} AND NULLIF(TRIM(tv.renk), '') IS NOT NULL
+                    GROUP BY NULLIF(TRIM(tv.renk), '')
+                    ORDER BY total_sales DESC
+                    LIMIT 6
+                `, salesParams),
+                pool.query(`
+                    SELECT tv.model_yili AS model_year, COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales
+                    FROM tuik_veri tv
+                    WHERE ${salesWhereSql} AND tv.model_yili IS NOT NULL
+                    GROUP BY tv.model_yili
+                    ORDER BY tv.model_yili DESC
+                    LIMIT 8
+                `, salesParams),
+                pool.query(`
+                    SELECT NULLIF(TRIM(tv.motor_hacmi_cc), '') AS displacement, COALESCE(SUM(tv.satis_adet), 0)::int AS total_sales
+                    FROM tuik_veri tv
+                    WHERE ${salesWhereSql} AND NULLIF(TRIM(tv.motor_hacmi_cc), '') IS NOT NULL
+                    GROUP BY NULLIF(TRIM(tv.motor_hacmi_cc), '')
+                    ORDER BY total_sales DESC
+                    LIMIT 6
+                `, salesParams)
+            ])
+            : [{ rows: [{}] }, { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }];
+
+        const sourceUrl = requestedSourceUrl || inferKnownModelSourceUrl(effectiveBrandName, effectiveModelName);
+        const externalSource = sourceUrl ? await fetchExternalModelSource(sourceUrl) : null;
+        specGroups = buildModelIntelSpecGroups(primaryVariant, tractorModel, externalSource);
+        const galleryTuikModelName = technicalRows[0]?.tuik_model_adi || tuikModelQuery || salesModelNames[0] || '';
+        const persistedGallery = await getModelImageGalleryFromDb({
+            brandName: effectiveBrandName,
+            modelName: effectiveModelName,
+            tuikModelName: galleryTuikModelName
+        });
+        const externalGallery = dedupeModelGallery([
+            externalSource?.image_url
+                ? {
+                    url: externalSource.image_url,
+                    label: `${externalSource.image_provider || externalSource.provider || 'Harici kaynak'} görseli`,
+                    source: externalSource.image_source_url || externalSource.url || sourceUrl || '',
+                    source_name: externalSource.image_provider || externalSource.provider || 'Harici kaynak',
+                    model_match_level: externalSource.model_match_level || 'unknown',
+                    verification_status: externalSource.verification_status || 'candidate',
+                    review_status: externalSource.review_status || 'candidate',
+                    confidence_score: externalSource.review_status === 'approved' ? 0.96 : 0.75,
+                    is_primary: true
+                }
+                : null,
+            ...(Array.isArray(externalSource?.image_gallery) ? externalSource.image_gallery : [])
+        ]
+            .filter(Boolean)
+            .map((item, index) => sanitizeModelGalleryItem(item, {
+                source_url: externalSource?.url || sourceUrl || '',
+                source_name: externalSource?.provider || 'Harici kaynak',
+                model_match_level: externalSource?.model_match_level || 'unknown',
+                verification_status: externalSource?.verification_status || 'candidate',
+                review_status: externalSource?.review_status || 'candidate'
+            }, index))
+            .filter(Boolean));
+        const fallbackGallery = inferKnownModelImageGallery(effectiveBrandName, effectiveModelName);
+        const callbackBase = getModelIntelRuntimeBase(req);
+        const photoSearchPlan = buildModelPhotoSearchPlan({
+            brandName: effectiveBrandName,
+            modelName: effectiveModelName,
+            tuikModelName: galleryTuikModelName,
+            brandProfile: brandProfile || {},
+            sourceUrl,
+            callbackUrl: callbackBase ? `${callbackBase}/api/model-intelligence/gallery-callback` : ''
+        });
+        const candidateGallery = [
+            ...persistedGallery,
+            ...externalGallery,
+            ...fallbackGallery
+        ]
+            .filter(Boolean)
+            .filter((item, index, list) => list.findIndex(candidate => candidate.url === item.url) === index);
+        const imageGallery = filterPublishableModelGallery(candidateGallery);
+        const galleryStatus = {
+            image_count: imageGallery.length,
+            candidate_count: candidateGallery.length,
+            blocked_candidate_count: Math.max(0, candidateGallery.length - imageGallery.length),
+            persisted_count: persistedGallery.length,
+            external_count: externalGallery.length,
+            fallback_count: fallbackGallery.length,
+            source: imageGallery.length ? (imageGallery[0].source_name || 'verified_gallery') : 'source_needed',
+            source_label: imageGallery.length ? (imageGallery[0].source_name || 'Doğrulanmış model görseli') : 'Doğrulanmış model görseli bekleniyor',
+            policy: 'Sadece onaylı, tam model eşleşmeli ve doğrulanmış görseller yayınlanır.',
+            n8n_ready: Boolean(N8N_MODEL_INTEL_WEBHOOK_URL),
+            sync_endpoint: '/api/model-intelligence/gallery-sync'
+        };
+        const sourceLinks = buildModelIntelSearchLinks({
+            brandName: effectiveBrandName,
+            modelName: effectiveModelName,
+            brandProfile: brandProfile || {}
+        });
+        if (sourceUrl && !sourceLinks.some(item => item.url === sourceUrl)) {
+            sourceLinks.unshift({
+                type: 'live-source',
+                label: 'Canlı okunan teknik kaynak',
+                url: sourceUrl,
+                note: externalSource?.provider || 'Harici teknik kaynak'
+            });
+        }
+
+        const dataCoverage = [
+            { key: 'technical', label: 'Teknik çekirdek', status: mappedVariants.length ? 'ready' : 'missing', source: 'teknik_veri' },
+            { key: 'sales', label: 'Model satış izi', status: Number(salesSummaryRes.rows[0]?.total_sales || 0) > 0 ? 'ready' : 'missing', source: 'tuik_veri' },
+            { key: 'images', label: 'Fotoğraf/görsel', status: imageGallery.length ? 'ready' : 'source_needed', source: galleryStatus.source_label },
+            { key: 'factory', label: 'Fabrika ve tedarik izi', status: primaryVariant.design?.origin ? 'partial' : 'source_needed', source: 'resmi marka kaynakları' },
+            { key: 'used_market', label: 'Model yılı fiyat koridoru', status: 'source_linked', source: 'sahibinden.com araması' }
+        ];
+
+        const externalSpec = (label) => (externalSource?.specs || []).find(item => item.label === label)?.value || null;
+        const sourceCards = [
+            {
+                label: 'Model görseli',
+                value: imageGallery.length ? `${imageGallery.length} görsel hazır` : 'Görsel bekliyor',
+                note: imageGallery.length
+                    ? `${imageGallery[0].label} rapor vitrinine bağlandı; galeri ${galleryStatus.source_label} kaynağından besleniyor.`
+                    : 'n8n taraması resmi ürün sayfası, katalog ve bayi kaynaklarından galeri adaylarını toplayabilir.',
+                status: imageGallery.length ? 'ready' : 'source_needed'
+            },
+            {
+                label: 'Teknik özellik kaynağı',
+                value: externalSource?.specs?.length
+                    ? `${externalSource.specs.length} harici alan`
+                    : `${mappedVariants.length} teknik varyant`,
+                note: externalSource?.specs?.length
+                    ? `${externalSource.provider || 'Harici kaynak'} üzerinden motor, transmisyon, lastik, ağırlık ve emisyon alanları alındı.`
+                    : 'Çekirdek teknik bilgiler teknik_veri tablosundan okunuyor.',
+                status: externalSource?.specs?.length || mappedVariants.length ? 'ready' : 'missing'
+            },
+            {
+                label: 'Motor ve aktarma',
+                value: [
+                    primaryVariant.engine?.brand || externalSpec('Motor imalatçısı'),
+                    primaryVariant.engine?.power_hp ? `${primaryVariant.engine.power_hp} HP` : null,
+                    externalSpec('Maksimum Tork'),
+                    primaryVariant.transmission?.gear_config || externalSpec('Transmisyon') || externalSpec('Vites Seçeneği')
+                ].filter(Boolean).join(' · ') || 'Kaynak bekliyor',
+                note: 'Motor markası, güç ve vites mimarisi tek kartta özetlenir.',
+                status: primaryVariant.engine?.brand || primaryVariant.engine?.power_hp || primaryVariant.transmission?.gear_config || externalSpec('Motor imalatçısı') ? 'ready' : 'source_needed'
+            },
+            {
+                label: 'Fiyat bandı',
+                value: priceStats.min_usd || priceStats.max_usd
+                    ? (priceStats.min_usd !== priceStats.max_usd
+                        ? `${formatModelIntelUsd(priceStats.min_usd)} - ${formatModelIntelUsd(priceStats.max_usd)}`
+                        : formatModelIntelUsd(priceStats.avg_usd || priceStats.max_usd || priceStats.min_usd))
+                    : 'Fiyat bekliyor',
+                note: 'Fiyat kaynağı teknik_veri.fiyat_usd alanıdır.',
+                status: priceStats.min_usd || priceStats.max_usd ? 'ready' : 'missing'
+            },
+            {
+                label: 'Türkiye satış izi',
+                value: `${Number(salesSummaryRes.rows[0]?.total_sales || 0).toLocaleString('tr-TR')} adet`,
+                note: `${salesSummaryRes.rows[0]?.first_year || '-'}-${salesSummaryRes.rows[0]?.latest_year || '-'} aralığında tuik_veri N ve N-1 penceresi.`,
+                status: Number(salesSummaryRes.rows[0]?.total_sales || 0) > 0 ? 'ready' : 'missing'
+            },
+            {
+                label: 'Resmi kanal',
+                value: brandProfile?.website_url || brandProfile?.website ? 'Marka sitesi var' : 'Resmi link bekliyor',
+                note: brandProfile?.price_list_url
+                    ? 'Marka portalında fiyat/katalog bağlantısı da tanımlı.'
+                    : 'Resmi ürün sayfası ve katalog bağlantısı marka portal profilinden beslenir.',
+                status: brandProfile?.website_url || brandProfile?.website ? 'ready' : 'source_needed'
+            }
+        ];
+
+        const subsystemSignals = [
+            {
+                label: 'Motor',
+                value: [
+                    primaryVariant.engine?.brand || externalSpec('Motor Markası'),
+                    primaryVariant.engine?.power_hp ? `${primaryVariant.engine.power_hp} HP` : externalSpec('Nominal Motor Gücü'),
+                    externalSpec('Silindir Hacmi'),
+                    externalSpec('Maksimum Tork'),
+                    primaryVariant.engine?.emission || externalSpec('Emisyon Seviyesi')
+                ].filter(Boolean).join(' · ') || null,
+                note: 'Motor markası, güç, hacim, tork, devir ve emisyon bilgisi teknik veri/resmi kaynakla doğrulanır'
+            },
+            {
+                label: 'Şanzıman',
+                value: [
+                    primaryVariant.transmission?.gear_config || tractorModel.gear_config || externalSpec('Vites Seçeneği'),
+                    externalSpec('Dişli Kutusu Tipi'),
+                    externalSpec('İleri - Geri Mekik Kolu')
+                ].filter(Boolean).join(' · ') || null,
+                note: 'Vites mimarisi, dişli kutusu tipi ve ileri-geri mekik bilgisi resmi kaynakla desteklenir'
+            },
+            {
+                label: 'Kabin ve tasarım',
+                value: [
+                    primaryVariant.design?.protection || tractorModel.cabin_type,
+                    primaryVariant.design?.drive_type || tractorModel.drive_type,
+                    externalSpec('Kabin donanımı')
+                ].filter(Boolean).join(' · ') || null,
+                note: 'Kabin, çekiş ve konfor donanımları resmi ürün sayfasından tamamlanır'
+            },
+            {
+                label: 'Lastik ve aks',
+                value: [
+                    [tractorModel.front_tire || externalSpec('1. Opsiyon 4WD-Ön'), tractorModel.rear_tire || externalSpec('1. Opsiyon 4WD-Arka')].filter(Boolean).join(' / '),
+                    [externalSpec('2. Opsiyon 4WD-Ön'), externalSpec('2. Opsiyon 4WD-Arka')].filter(Boolean).join(' / ')
+                ].filter(Boolean).join(' · ') || null,
+                note: 'Lastik opsiyonları ve aks donanımı resmi katalog/ürün kaynağı üzerinden tamamlanır'
+            },
+            {
+                label: 'Hidrolik/PTO',
+                value: [
+                    primaryVariant.hydraulics?.lift_capacity_kg ? `${primaryVariant.hydraulics.lift_capacity_kg} kg` : externalSpec('Kaldırma Kapasitesi'),
+                    externalSpec('Hidrolik Güç Çıkışı'),
+                    tractorModel.pto_rpm || externalSpec('Kuyruk Mili Devri'),
+                    externalSpec('PTO Kumanda Şekli')
+                ].filter(Boolean).join(' · ') || null,
+                note: 'Kaldırma, hidrolik çıkış, PTO devri ve PTO kumandası tek sekmede izlenir'
+            }
+        ];
+
+        res.json({
+            profile: {
+                brand_id: brandProfile?.id || tractorModel.brand_id || null,
+                brand_name: effectiveBrandName || null,
+                brand_slug: brandProfile?.slug || null,
+                model_name: effectiveModelName || null,
+                tuik_model_name: technicalRows[0]?.tuik_model_adi || tuikModelQuery || salesModelNames[0] || null,
+                display_name: compactModelIntelText(`${effectiveBrandName} ${effectiveModelName}`),
+                brand_color: brandProfile?.primary_color || tractorModel.primary_color || '#3b82f6',
+                brand_logo_url: brandProfile?.logo_url || tractorModel.logo_url || null,
+                country_of_origin: brandProfile?.country_of_origin || null,
+                parent_company: brandProfile?.parent_company || null,
+                headquarters: brandProfile?.headquarters || null
+            },
+            metrics: {
+                variant_count: mappedVariants.length,
+                tractor_model_count: tractorModelRes.rows.length,
+                price: priceStats,
+                horsepower: hpStats
+            },
+            spec_groups: specGroups,
+            variants: mappedVariants,
+            catalog_models: tractorModelRes.rows,
+            sales: {
+                summary: salesSummaryRes.rows[0] || {},
+                yearly: salesYearRes.rows,
+                top_provinces: salesProvinceRes.rows,
+                colors: salesColorRes.rows,
+                model_years: salesModelYearRes.rows,
+                displacements: salesDisplacementRes.rows
+            },
+            subsystem_signals: subsystemSignals,
+            external_source: externalSource,
+            image_gallery: imageGallery,
+            gallery_status: galleryStatus,
+            photo_search_plan: photoSearchPlan,
+            source_cards: sourceCards,
+            source_links: sourceLinks,
+            data_coverage: dataCoverage,
+            automation: {
+                n8n_model_intel_webhook_configured: Boolean(N8N_MODEL_INTEL_WEBHOOK_URL),
+                suggested_payload: {
+                    ...photoSearchPlan,
+                    brand: effectiveBrandName,
+                    model: effectiveModelName,
+                    tuik_model_adi: technicalRows[0]?.tuik_model_adi || null,
+                    source_url: sourceUrl || null,
+                    tasks: ['official_product_page', 'photo_gallery', 'factory_supply_chain', 'transmission_detail', 'used_market_price_by_model_year']
+                }
+            },
+            meta: {
+                generated_at: new Date().toISOString(),
+                primary_sources: ['teknik_veri', 'tuik_veri', 'tractor_models'],
+                model_window_note: 'Model bazlı satış izi N ve N-1 kuralına göre tuik_veri üzerinden hesaplandı.',
+                source_url: sourceUrl || null
+            }
+        });
+    } catch (err) {
+        console.error('Model intelligence error:', err);
+        res.status(500).json({ error: 'Model röntgen raporu hazırlanamadı' });
+    }
+});
+
+app.post('/api/model-intelligence/gallery-sync', authMiddleware, async (req, res) => {
+    try {
+        const body = req.body || {};
+        const brandId = body.brand_id ? parseInt(body.brand_id, 10) : null;
+        let brandName = normalizeModelSearch(body.brand || body.brand_name || '');
+        const modelName = normalizeModelSearch(body.model || body.model_name || body.q || '');
+        const tuikModelName = normalizeModelSearch(body.tuik_model_adi || body.tuik_model_name || modelName);
+        const sourceUrl = normalizeModelImageUrl(body.source_url || '');
+
+        let brandProfile = null;
+        if (brandId || brandName) {
+            const profileWhere = brandId
+                ? 'b.id = $1'
+                : '(UPPER(b.name) = UPPER($1) OR b.slug = LOWER($1))';
+            const profileRes = await pool.query(`
+                SELECT
+                    b.id, b.name, b.slug, b.website,
+                    p.website_url, p.dealer_locator_url, p.price_list_url, p.portal_url
+                FROM brands b
+                LEFT JOIN brand_portal_profiles p ON p.brand_id = b.id
+                WHERE ${profileWhere}
+                LIMIT 1
+            `, [brandId || brandName]);
+            brandProfile = profileRes.rows[0] || null;
+            brandName = brandName || brandProfile?.name || '';
+        }
+
+        if (!brandName || !modelName) {
+            return res.status(400).json({ error: 'Galeri taraması için marka ve model gerekli' });
+        }
+
+        const callbackBase = getModelIntelRuntimeBase(req);
+        const photoSearchPlan = buildModelPhotoSearchPlan({
+            brandName,
+            modelName,
+            tuikModelName,
+            brandProfile: brandProfile || {},
+            sourceUrl,
+            callbackUrl: callbackBase ? `${callbackBase}/api/model-intelligence/gallery-callback` : ''
+        });
+        const existingImages = await getModelImageGalleryFromDb({ brandName, modelName, tuikModelName });
+
+        if (!N8N_MODEL_INTEL_WEBHOOK_URL) {
+            return res.json({
+                status: 'not_configured',
+                message: 'N8N_MODEL_INTEL_WEBHOOK_URL tanımlanınca galeri taraması bu uçtan tetiklenir.',
+                images: existingImages,
+                new_images: [],
+                photo_search_plan: photoSearchPlan
+            });
+        }
+
+        const n8nResult = await fetchN8nModelImageGallery({
+            ...photoSearchPlan,
+            requested_by: {
+                id: req.user?.id || null,
+                email: req.user?.email || null,
+                role: req.user?.role || null
+            },
+            requested_at: new Date().toISOString()
+        });
+        const savedImages = n8nResult.images.length
+            ? await upsertModelImageGallery({ brandName, modelName, tuikModelName, images: n8nResult.images })
+            : [];
+        const publishableSavedImages = filterPublishableModelGallery(savedImages);
+        const mergedImages = filterPublishableModelGallery([...publishableSavedImages, ...existingImages]);
+
+        res.json({
+            status: n8nResult.status,
+            error: n8nResult.error || null,
+            images: mergedImages,
+            new_images: publishableSavedImages,
+            candidate_count: savedImages.length,
+            blocked_candidate_count: Math.max(0, savedImages.length - publishableSavedImages.length),
+            photo_search_plan: photoSearchPlan,
+            n8n: {
+                configured: true,
+                image_count: n8nResult.images.length,
+                raw_status: n8nResult.raw?.status || null
+            }
+        });
+    } catch (err) {
+        console.error('Model gallery sync error:', err);
+        res.status(500).json({ error: 'Model fotoğraf galerisi taraması başlatılamadı' });
+    }
+});
+
+app.post('/api/model-intelligence/gallery-callback', async (req, res) => {
+    try {
+        const webhookKey = req.get('x-webhook-key') || req.get('x-media-watch-key') || req.query.key || '';
+        if (!MEDIA_WATCH_WEBHOOK_KEY) {
+            return res.status(503).json({ error: 'Webhook anahtarı yapılandırılmadı' });
+        }
+        if (webhookKey !== MEDIA_WATCH_WEBHOOK_KEY) {
+            return res.status(401).json({ error: 'Yetkisiz webhook' });
+        }
+
+        const body = req.body || {};
+        const brandName = normalizeModelSearch(body.brand || body.brand_name || '');
+        const modelName = normalizeModelSearch(body.model || body.model_name || '');
+        const tuikModelName = normalizeModelSearch(body.tuik_model_adi || body.tuik_model_name || modelName);
+        const images = body.images || body.image_gallery || body.gallery || [];
+
+        if (!brandName || !modelName || !Array.isArray(images) || !images.length) {
+            return res.status(400).json({ error: 'brand, model ve images alanları gerekli' });
+        }
+
+        const savedImages = await upsertModelImageGallery({ brandName, modelName, tuikModelName, images });
+        res.json({
+            ok: true,
+            saved_count: savedImages.length,
+            images: savedImages
+        });
+    } catch (err) {
+        console.error('Model gallery callback error:', err);
+        res.status(500).json({ error: 'Model fotoğraf galerisi kaydedilemedi' });
+    }
+});
+
+// ============================================
+// MODEL IMAGE ADMIN — Marka Merkezi Görsel Yönetimi
+// (anayasa: skills/model-gorsel-dogruluk-anayasasi/SKILL.md)
+// ============================================
+
+// Coverage: marka bazında fotoğrafı olan / olmayan model sayısı
+app.get('/api/admin/model-images/coverage', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                b.id AS brand_id,
+                b.name AS brand_name,
+                b.slug AS brand_slug,
+                COUNT(DISTINCT tm.model_name) AS total_models,
+                COUNT(DISTINCT CASE
+                    WHEN mig.id IS NOT NULL THEN tm.model_name
+                END) AS covered_models,
+                COUNT(DISTINCT CASE
+                    WHEN cand.id IS NOT NULL AND cand.review_status = 'candidate' THEN tm.model_name
+                END) AS pending_models
+            FROM brands b
+            LEFT JOIN tractor_models tm ON tm.brand_id = b.id
+            LEFT JOIN model_image_gallery mig
+                ON UPPER(mig.brand_name) = UPPER(b.name)
+                AND UPPER(mig.model_name) = UPPER(tm.model_name)
+                AND mig.is_active = true
+                AND mig.review_status = 'approved'
+            LEFT JOIN model_image_gallery cand
+                ON UPPER(cand.brand_name) = UPPER(b.name)
+                AND UPPER(cand.model_name) = UPPER(tm.model_name)
+                AND cand.is_active = true
+            GROUP BY b.id, b.name, b.slug
+            ORDER BY b.name
+        `);
+
+        const rows = result.rows.map(r => ({
+            brand_id: Number(r.brand_id),
+            brand_name: r.brand_name,
+            brand_slug: r.brand_slug,
+            total_models: Number(r.total_models || 0),
+            covered_models: Number(r.covered_models || 0),
+            pending_models: Number(r.pending_models || 0),
+            missing_models: Math.max(0, Number(r.total_models || 0) - Number(r.covered_models || 0)),
+            coverage_pct: r.total_models ? Number((Number(r.covered_models) / Number(r.total_models) * 100).toFixed(1)) : 0
+        }));
+
+        const overall = rows.reduce((acc, row) => {
+            acc.total += row.total_models;
+            acc.covered += row.covered_models;
+            acc.pending += row.pending_models;
+            return acc;
+        }, { total: 0, covered: 0, pending: 0 });
+
+        res.json({
+            overall: {
+                ...overall,
+                missing: Math.max(0, overall.total - overall.covered),
+                coverage_pct: overall.total ? Number((overall.covered / overall.total * 100).toFixed(1)) : 0
+            },
+            by_brand: rows,
+            bridge: {
+                configured: Boolean(MODEL_IMAGE_BRIDGE_URL),
+                url: MODEL_IMAGE_BRIDGE_URL,
+                n8n_webhook: Boolean(N8N_MODEL_INTEL_WEBHOOK_URL)
+            }
+        });
+    } catch (err) {
+        console.error('Model image coverage error:', err);
+        res.status(500).json({ error: 'Coverage hesaplanamadı' });
+    }
+});
+
+// Onay bekleyen aday görseller
+app.get('/api/admin/model-images/pending', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const limit = Math.min(200, parseInt(req.query.limit, 10) || 60);
+        const brandFilter = compactModelIntelText(req.query.brand || '');
+        const params = [];
+        let where = "WHERE is_active = true AND review_status = 'candidate'";
+        if (brandFilter) {
+            params.push(brandFilter);
+            where += ` AND UPPER(brand_name) = UPPER($${params.length})`;
+        }
+        params.push(limit);
+
+        const result = await pool.query(`
+            SELECT id, brand_name, model_name, tuik_model_adi, image_url, source_url, source_name,
+                   angle_label, caption, width, height, confidence_score, model_match_level,
+                   verification_status, review_status, raw_payload, created_at, updated_at
+            FROM model_image_gallery
+            ${where}
+            ORDER BY confidence_score DESC NULLS LAST, created_at DESC
+            LIMIT $${params.length}
+        `, params);
+
+        res.json({
+            count: result.rows.length,
+            items: result.rows.map(row => ({
+                ...row,
+                confidence_score: row.confidence_score === null ? null : Number(row.confidence_score),
+                raw_payload: typeof row.raw_payload === 'object' ? row.raw_payload : null
+            }))
+        });
+    } catch (err) {
+        console.error('Model image pending error:', err);
+        res.status(500).json({ error: 'Aday görseller okunamadı' });
+    }
+});
+
+// Eksik (fotoğrafsız) modeller
+app.get('/api/admin/model-images/missing', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const limit = Math.min(500, parseInt(req.query.limit, 10) || 80);
+        const brandFilter = compactModelIntelText(req.query.brand || '');
+        const params = [];
+        let where = '';
+        if (brandFilter) {
+            params.push(brandFilter);
+            where = `AND UPPER(b.name) = UPPER($${params.length})`;
+        }
+        params.push(limit);
+
+        const result = await pool.query(`
+            SELECT b.name AS brand_name, b.slug AS brand_slug, tm.model_name,
+                   tv.tuik_model_adi,
+                   COUNT(cand.id) AS candidate_count
+            FROM tractor_models tm
+            JOIN brands b ON b.id = tm.brand_id
+            LEFT JOIN teknik_veri tv ON UPPER(tv.marka) = UPPER(b.name)
+                AND UPPER(tv.tuik_model_adi) = UPPER(tm.model_name)
+            LEFT JOIN model_image_gallery cand
+                ON UPPER(cand.brand_name) = UPPER(b.name)
+                AND UPPER(cand.model_name) = UPPER(tm.model_name)
+                AND cand.is_active = true
+                AND cand.review_status = 'candidate'
+            WHERE NOT EXISTS (
+                SELECT 1 FROM model_image_gallery mig
+                WHERE UPPER(mig.brand_name) = UPPER(b.name)
+                  AND UPPER(mig.model_name) = UPPER(tm.model_name)
+                  AND mig.is_active = true
+                  AND mig.review_status = 'approved'
+            )
+            ${where}
+            GROUP BY b.name, b.slug, tm.model_name, tv.tuik_model_adi
+            ORDER BY b.name, tm.model_name
+            LIMIT $${params.length}
+        `, params);
+
+        res.json({
+            count: result.rows.length,
+            items: result.rows.map(r => ({
+                brand_name: r.brand_name,
+                brand_slug: r.brand_slug,
+                model_name: r.model_name,
+                tuik_model_adi: r.tuik_model_adi,
+                candidate_count: Number(r.candidate_count || 0)
+            }))
+        });
+    } catch (err) {
+        console.error('Model image missing error:', err);
+        res.status(500).json({ error: 'Eksik modeller okunamadı' });
+    }
+});
+
+// Manuel onay — anayasa kuralına uygun değerleri yazar
+app.post('/api/admin/model-images/:id/approve', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id)) return res.status(400).json({ error: 'Geçersiz id' });
+        const setPrimary = req.body?.is_primary === true;
+
+        const result = await pool.query(`
+            UPDATE model_image_gallery
+            SET review_status = 'approved',
+                verification_status = 'manual_approved',
+                model_match_level = CASE
+                    WHEN model_match_level IN ('exact_product_page','exact_model','manual_verified') THEN model_match_level
+                    ELSE 'manual_verified'
+                END,
+                confidence_score = GREATEST(COALESCE(confidence_score, 0), 0.90),
+                verified_at = NOW(),
+                is_primary = CASE WHEN $2 THEN true ELSE is_primary END,
+                is_active = true,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+        `, [id, setPrimary]);
+
+        if (!result.rows.length) return res.status(404).json({ error: 'Görsel bulunamadı' });
+
+        if (setPrimary) {
+            await pool.query(`
+                UPDATE model_image_gallery
+                SET is_primary = false
+                WHERE id <> $1
+                  AND UPPER(brand_name) = UPPER($2)
+                  AND UPPER(model_name) = UPPER($3)
+            `, [id, result.rows[0].brand_name, result.rows[0].model_name]);
+        }
+
+        res.json({ ok: true, image: result.rows[0] });
+    } catch (err) {
+        console.error('Model image approve error:', err);
+        res.status(500).json({ error: 'Onay başarısız' });
+    }
+});
+
+// Manuel red
+app.post('/api/admin/model-images/:id/reject', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id)) return res.status(400).json({ error: 'Geçersiz id' });
+        const reason = compactModelIntelText(req.body?.reason || '').slice(0, 240);
+
+        const result = await pool.query(`
+            UPDATE model_image_gallery
+            SET review_status = 'rejected',
+                verification_status = 'rejected',
+                is_active = false,
+                is_primary = false,
+                raw_payload = COALESCE(raw_payload, '{}'::jsonb) || $2::jsonb,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, brand_name, model_name, image_url, review_status
+        `, [id, JSON.stringify({ rejection_reason: reason, rejected_at: new Date().toISOString() })]);
+
+        if (!result.rows.length) return res.status(404).json({ error: 'Görsel bulunamadı' });
+        res.json({ ok: true, image: result.rows[0] });
+    } catch (err) {
+        console.error('Model image reject error:', err);
+        res.status(500).json({ error: 'Red başarısız' });
+    }
+});
+
+// Bridge tetikleme — tek model
+app.post('/api/admin/model-images/sync', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const brand = compactModelIntelText(req.body?.brand || '');
+        const model = compactModelIntelText(req.body?.model || '');
+        const tuik = compactModelIntelText(req.body?.tuik_model_adi || model);
+        if (!brand || !model) return res.status(400).json({ error: 'brand ve model gerekli' });
+        if (!MEDIA_WATCH_WEBHOOK_KEY) return res.status(503).json({ error: 'MEDIA_WATCH_WEBHOOK_KEY yapılandırılmadı' });
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 90000);
+        try {
+            const response = await fetch(`${MODEL_IMAGE_BRIDGE_URL}/sync-model`, {
+                method: 'POST',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'application/json', 'x-webhook-key': MEDIA_WATCH_WEBHOOK_KEY },
+                body: JSON.stringify({ brand, model, tuik_model_adi: tuik, run_id: `admin_${Date.now()}_${req.user.id}` })
+            });
+            const text = await response.text();
+            const data = text ? JSON.parse(text) : {};
+            if (!response.ok) return res.status(response.status).json({ error: 'bridge_error', detail: data });
+            res.json({ ok: true, bridge: data });
+        } finally {
+            clearTimeout(timer);
+        }
+    } catch (err) {
+        console.error('Model image sync error:', err);
+        res.status(502).json({ error: 'Bridge çağrısı başarısız', detail: err.message });
+    }
+});
+
+// Bridge tetikleme — toplu eksik tarama
+app.post('/api/admin/model-images/sync-missing', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!MEDIA_WATCH_WEBHOOK_KEY) return res.status(503).json({ error: 'MEDIA_WATCH_WEBHOOK_KEY yapılandırılmadı' });
+        const limit = Math.min(50, parseInt(req.body?.limit, 10) || 12);
+        const brand = compactModelIntelText(req.body?.brand || '');
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 300000);
+        try {
+            const response = await fetch(`${MODEL_IMAGE_BRIDGE_URL}/sync-missing`, {
+                method: 'POST',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'application/json', 'x-webhook-key': MEDIA_WATCH_WEBHOOK_KEY },
+                body: JSON.stringify({ limit, brand: brand || undefined, run_id: `admin_bulk_${Date.now()}_${req.user.id}` })
+            });
+            const text = await response.text();
+            const data = text ? JSON.parse(text) : {};
+            if (!response.ok) return res.status(response.status).json({ error: 'bridge_error', detail: data });
+            res.json({ ok: true, bridge: data });
+        } finally {
+            clearTimeout(timer);
+        }
+    } catch (err) {
+        console.error('Model image bulk sync error:', err);
+        res.status(502).json({ error: 'Bridge toplu çağrısı başarısız', detail: err.message });
+    }
+});
+
+// n8n / bridge log alıcısı (run trace kaydı)
+app.post('/api/admin/model-images/log', async (req, res) => {
+    try {
+        const webhookKey = req.get('x-webhook-key') || req.get('x-media-watch-key') || req.query.key || '';
+        if (!MEDIA_WATCH_WEBHOOK_KEY || webhookKey !== MEDIA_WATCH_WEBHOOK_KEY) {
+            return res.status(401).json({ error: 'Yetkisiz' });
+        }
+        const summary = req.body?.summary || null;
+        const trace = req.body?.trace || null;
+        if (summary) {
+            console.log('[model-image-run]', JSON.stringify(summary));
+        }
+        // Trace'i hafif tutmak için sadece ilk 80 satırını sakla
+        const compactTrace = trace ? {
+            run_id: trace.run_id || summary?.run_id || null,
+            started_at: trace.started_at || null,
+            finished_at: trace.finished_at || summary?.finished_at || null,
+            results: Array.isArray(trace.results) ? trace.results.slice(0, 80) : null
+        } : null;
+        res.json({ ok: true, recorded: Boolean(summary || compactTrace) });
+    } catch (err) {
+        console.error('Model image log error:', err);
+        res.status(500).json({ error: 'Log alınamadı' });
     }
 });
 
@@ -4160,7 +10042,17 @@ app.get('/api/weather/:province_id/forecast', authMiddleware, async (req, res) =
             SELECT * FROM weather_data WHERE province_id = $1 AND is_forecast = true
             ORDER BY date ASC LIMIT 7
         `, [req.params.province_id]);
-        res.json(result.rows);
+        if (result.rows.length) {
+            return res.json(result.rows);
+        }
+
+        const province = await getEnrichedProvinceById(req.params.province_id);
+        if (!province) {
+            return res.json([]);
+        }
+
+        const referenceProfile = getProvinceReferenceArchetype(province);
+        return res.json(buildProvinceReferenceForecastRows(province, referenceProfile));
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
@@ -4175,7 +10067,17 @@ app.get('/api/climate/:province_id', authMiddleware, async (req, res) => {
             SELECT * FROM climate_analysis WHERE province_id = $1
             ORDER BY year DESC, month
         `, [req.params.province_id]);
-        res.json(result.rows);
+        if (result.rows.length) {
+            return res.json(result.rows);
+        }
+
+        const province = await getEnrichedProvinceById(req.params.province_id);
+        if (!province) {
+            return res.json([]);
+        }
+
+        const referenceProfile = getProvinceReferenceArchetype(province);
+        return res.json(buildProvinceReferenceClimateRows(referenceProfile, new Date().getFullYear()));
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
@@ -4187,7 +10089,23 @@ app.get('/api/climate/:province_id', authMiddleware, async (req, res) => {
 app.get('/api/soil/:province_id', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM soil_data WHERE province_id = $1', [req.params.province_id]);
-        res.json(result.rows);
+        if (result.rows.length) {
+            return res.json(result.rows);
+        }
+
+        const province = await getEnrichedProvinceById(req.params.province_id);
+        if (!province) {
+            return res.json([]);
+        }
+
+        const referenceProfile = getProvinceReferenceArchetype(province);
+        return res.json(buildProvinceFallbackSoils(
+            province,
+            referenceProfile,
+            referenceProfile.dominant_hp_range,
+            referenceProfile.dominant_tractor_type,
+            referenceProfile.dominant_drive_type
+        ));
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
@@ -4201,8 +10119,1065 @@ app.get('/api/crops/:province_id', authMiddleware, async (req, res) => {
             'SELECT * FROM crop_data WHERE province_id = $1 AND year = $2 ORDER BY cultivation_area_hectare DESC',
             [req.params.province_id, targetYear]
         );
-        res.json(result.rows);
+        if (result.rows.length) {
+            return res.json(result.rows);
+        }
+
+        const province = await getEnrichedProvinceById(req.params.province_id);
+        if (!province) {
+            return res.json([]);
+        }
+
+        const referenceProfile = getProvinceReferenceArchetype(province);
+        return res.json(buildProvinceFallbackCrops(province, referenceProfile, Number(targetYear)));
     } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+const PROVINCE_REFERENCE_ARCHETYPES = {
+    akdeniz: {
+        label: 'Akdeniz referans profili',
+        climate_zone: 'Akdeniz gecis kusagi',
+        annual_rainfall_mm: 720,
+        avg_temperature: 18.8,
+        elevation_m: 140,
+        agricultural_area_hectare: 265000,
+        soil_type: 'Aluvyal / killi-tinli',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'tarla',
+        dominant_hp_range: '75-105 HP',
+        primary_crops: [
+            { name: 'Pamuk', type: 'endustriyel', share: 0.24, yield_ton_per_ha: 4.8, hp_min: 95, hp_max: 125, planting_season: 'Nis-May', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
+            { name: 'Misir', type: 'tahil', share: 0.22, yield_ton_per_ha: 9.5, hp_min: 85, hp_max: 115, planting_season: 'Mar-Nis', harvest_season: 'Agu-Eyl', tractor_types: ['tarla', '4wd'] },
+            { name: 'Narenciye', type: 'meyve', share: 0.18, yield_ton_per_ha: 25, hp_min: 55, hp_max: 85, planting_season: 'Yillik', harvest_season: 'Kas-Oca', tractor_types: ['bahce', 'dar'] },
+            { name: 'Acik alan sebze', type: 'sebze', share: 0.16, yield_ton_per_ha: 30, hp_min: 50, hp_max: 75, planting_season: 'Sub-Nis', harvest_season: 'Haz-Eki', tractor_types: ['hibrit', 'bahce'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Aluvyal tarla zemini', soil_texture: 'Tinli-killi', ph_level: 7.1, organic_matter_pct: 2.2, hp_range: '80-110 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sulama ve agir ekipman gecislerinde cekis kaybi dusurulmeli.' },
+            { soil_type: 'Bahce tabani', soil_texture: 'Tinli', ph_level: 6.8, organic_matter_pct: 2.5, hp_range: '55-80 HP', tractor_type: 'bahce', drive_type: '2WD', note: 'Sira arasi manevra ve dusuk agirlikli paketler verimlidir.' }
+        ],
+        monthly_temp: [10, 11, 13, 17, 21, 26, 29, 29, 26, 21, 15, 11],
+        monthly_rain: [110, 90, 70, 45, 25, 10, 4, 5, 15, 45, 80, 105],
+        monthly_humidity: [70, 68, 66, 63, 60, 58, 56, 57, 59, 63, 67, 70],
+        monthly_frost: [1.2, 0.8, 0.2, 0, 0, 0, 0, 0, 0, 0, 0.2, 0.8],
+        monthly_drought: [-0.4, -0.2, 0.1, 0.4, 0.8, 1.1, 1.3, 1.2, 0.7, 0.2, -0.1, -0.3],
+        monthly_gdd: [40, 55, 95, 160, 240, 320, 380, 370, 290, 190, 90, 45]
+    },
+    ege: {
+        label: 'Ege referans profili',
+        climate_zone: 'Ege - Akdeniz gecisi',
+        annual_rainfall_mm: 690,
+        avg_temperature: 17.1,
+        elevation_m: 180,
+        agricultural_area_hectare: 240000,
+        soil_type: 'Tinli / kumlu-tinli',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'hibrit',
+        dominant_hp_range: '65-95 HP',
+        primary_crops: [
+            { name: 'Zeytin', type: 'meyve', share: 0.20, yield_ton_per_ha: 3.8, hp_min: 50, hp_max: 80, planting_season: 'Yillik', harvest_season: 'Kas-Oca', tractor_types: ['bahce', 'dar'] },
+            { name: 'Uzum', type: 'meyve', share: 0.16, yield_ton_per_ha: 9, hp_min: 45, hp_max: 75, planting_season: 'Yillik', harvest_season: 'Agu-Eyl', tractor_types: ['bahce', 'dar'] },
+            { name: 'Pamuk', type: 'endustriyel', share: 0.18, yield_ton_per_ha: 4.4, hp_min: 90, hp_max: 120, planting_season: 'Nis-May', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
+            { name: 'Misir silaj', type: 'yem', share: 0.14, yield_ton_per_ha: 10.5, hp_min: 75, hp_max: 105, planting_season: 'Mar-Nis', harvest_season: 'Agu-Eyl', tractor_types: ['tarla', 'hibrit'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Bag-bahce zemini', soil_texture: 'Tinli', ph_level: 6.9, organic_matter_pct: 2.1, hp_range: '50-80 HP', tractor_type: 'bahce', drive_type: '2WD', note: 'Dar iz ve PTO operasyonlari on plandadir.' },
+            { soil_type: 'Ova tarla zemini', soil_texture: 'Kumlu-tinli', ph_level: 7.0, organic_matter_pct: 1.9, hp_range: '75-105 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Yuksek sezon temposunda cekis ve tasima kapasitesi kritik olur.' }
+        ],
+        monthly_temp: [8, 9, 12, 16, 21, 26, 29, 29, 24, 19, 13, 9],
+        monthly_rain: [95, 80, 65, 45, 30, 15, 6, 6, 15, 45, 75, 95],
+        monthly_humidity: [72, 70, 68, 64, 60, 56, 53, 54, 58, 63, 68, 72],
+        monthly_frost: [2, 1.2, 0.4, 0, 0, 0, 0, 0, 0, 0.3, 0.8, 1.6],
+        monthly_drought: [-0.3, -0.1, 0.1, 0.4, 0.7, 0.9, 1.1, 1.0, 0.6, 0.2, 0, -0.2],
+        monthly_gdd: [25, 40, 80, 150, 230, 310, 360, 355, 270, 170, 80, 35]
+    },
+    marmara: {
+        label: 'Marmara referans profili',
+        climate_zone: 'Marmara dengeli iklim',
+        annual_rainfall_mm: 760,
+        avg_temperature: 14.6,
+        elevation_m: 220,
+        agricultural_area_hectare: 210000,
+        soil_type: 'Tinli / killi-tinli',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'tarla',
+        dominant_hp_range: '70-100 HP',
+        primary_crops: [
+            { name: 'Bugday', type: 'tahil', share: 0.22, yield_ton_per_ha: 5.6, hp_min: 70, hp_max: 95, planting_season: 'Eki-Kas', harvest_season: 'Haz-Tem', tractor_types: ['tarla'] },
+            { name: 'Aycicegi', type: 'endustriyel', share: 0.20, yield_ton_per_ha: 2.6, hp_min: 75, hp_max: 105, planting_season: 'Mar-Nis', harvest_season: 'Agu-Eyl', tractor_types: ['tarla', '4wd'] },
+            { name: 'Misir', type: 'tahil', share: 0.16, yield_ton_per_ha: 9.2, hp_min: 80, hp_max: 110, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['tarla', '4wd'] },
+            { name: 'Sebze', type: 'sebze', share: 0.12, yield_ton_per_ha: 26, hp_min: 45, hp_max: 70, planting_season: 'Sub-Nis', harvest_season: 'Haz-Eki', tractor_types: ['hibrit'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Ova tarla zemini', soil_texture: 'Killi-tinli', ph_level: 6.8, organic_matter_pct: 2.4, hp_range: '75-105 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sonbahar ve ilkbahar yagislari cekis tarafini belirginlestirir.' },
+            { soil_type: 'Bahce-parsel zemini', soil_texture: 'Tinli', ph_level: 6.6, organic_matter_pct: 2.7, hp_range: '50-75 HP', tractor_type: 'hibrit', drive_type: '2WD', note: 'Kompakt ve manevrasi guclu setup daha verimli olur.' }
+        ],
+        monthly_temp: [5, 6, 9, 14, 18, 23, 26, 26, 21, 16, 10, 7],
+        monthly_rain: [85, 70, 65, 55, 45, 35, 25, 20, 35, 60, 75, 90],
+        monthly_humidity: [76, 74, 72, 69, 66, 64, 61, 62, 67, 71, 74, 76],
+        monthly_frost: [4, 3, 1.5, 0.4, 0, 0, 0, 0, 0, 0.8, 2.2, 3.5],
+        monthly_drought: [-0.2, -0.1, 0, 0.2, 0.4, 0.6, 0.8, 0.7, 0.3, 0.1, -0.1, -0.2],
+        monthly_gdd: [10, 20, 55, 115, 190, 270, 320, 315, 225, 130, 50, 18]
+    },
+    'ic anadolu': {
+        label: 'İç Anadolu referans profili',
+        climate_zone: 'Karasal - kurak iç bölge',
+        annual_rainfall_mm: 410,
+        avg_temperature: 11.5,
+        elevation_m: 980,
+        agricultural_area_hectare: 380000,
+        soil_type: 'Kireçli / killi-tinli',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'tarla',
+        dominant_hp_range: '80-110 HP',
+        primary_crops: [
+            { name: 'Buğday', type: 'tahil', share: 0.30, yield_ton_per_ha: 4.2, hp_min: 80, hp_max: 105, planting_season: 'Eki-Kas', harvest_season: 'Haz-Tem', tractor_types: ['tarla', '4wd'] },
+            { name: 'Arpa', type: 'tahil', share: 0.18, yield_ton_per_ha: 3.8, hp_min: 75, hp_max: 100, planting_season: 'Eki-Kas', harvest_season: 'Haz', tractor_types: ['tarla'] },
+            { name: 'Şeker pancarı', type: 'endustriyel', share: 0.16, yield_ton_per_ha: 7.5, hp_min: 95, hp_max: 125, planting_season: 'Mar-Nis', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
+            { name: 'Yonca', type: 'yem', share: 0.12, yield_ton_per_ha: 8.5, hp_min: 65, hp_max: 90, planting_season: 'Mar-Nis', harvest_season: 'Haz-Eyl', tractor_types: ['tarla', 'hibrit'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Kireçli ova zemini', soil_texture: 'Killi-tinli', ph_level: 7.8, organic_matter_pct: 1.5, hp_range: '85-115 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Kuraklık ve ağır çekiş gerektiren ekipmanlar güç rezervini ön plana çıkarır.' },
+            { soil_type: 'Kuru tarım parçası', soil_texture: 'Tinli', ph_level: 7.5, organic_matter_pct: 1.4, hp_range: '70-95 HP', tractor_type: 'tarla', drive_type: '2WD', note: 'Düşük yakıtlı, ekonomik ve uzun iş günlerine uygun platformlar tercih edilir.' }
+        ],
+        monthly_temp: [-1, 1, 5, 11, 16, 21, 25, 25, 19, 12, 5, 0],
+        monthly_rain: [40, 35, 38, 45, 50, 30, 12, 10, 18, 28, 32, 38],
+        monthly_humidity: [74, 70, 65, 60, 55, 50, 44, 42, 46, 55, 66, 73],
+        monthly_frost: [10, 7, 4, 1, 0, 0, 0, 0, 0.2, 1.5, 4.5, 8],
+        monthly_drought: [0.2, 0.3, 0.4, 0.5, 0.7, 0.9, 1.2, 1.3, 0.9, 0.5, 0.3, 0.2],
+        monthly_gdd: [0, 5, 25, 85, 160, 240, 310, 300, 210, 110, 30, 5]
+    },
+    karadeniz: {
+        label: 'Karadeniz referans profili',
+        climate_zone: 'Nemli Karadeniz iklimi',
+        annual_rainfall_mm: 1080,
+        avg_temperature: 13.2,
+        elevation_m: 420,
+        agricultural_area_hectare: 145000,
+        soil_type: 'Asidik tinli / organik zengin',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'bahce',
+        dominant_hp_range: '55-80 HP',
+        primary_crops: [
+            { name: 'Findik', type: 'meyve', share: 0.24, yield_ton_per_ha: 2.2, hp_min: 45, hp_max: 70, planting_season: 'Yillik', harvest_season: 'Agu-Eyl', tractor_types: ['bahce', 'dar'] },
+            { name: 'Misir', type: 'tahil', share: 0.18, yield_ton_per_ha: 7.4, hp_min: 60, hp_max: 85, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['hibrit', '4wd'] },
+            { name: 'Cay', type: 'meyve', share: 0.16, yield_ton_per_ha: 4.1, hp_min: 40, hp_max: 60, planting_season: 'Yillik', harvest_season: 'May-Eki', tractor_types: ['bahce', 'dar'] },
+            { name: 'Yem bitkileri', type: 'yem', share: 0.14, yield_ton_per_ha: 8, hp_min: 55, hp_max: 80, planting_season: 'Mar-Nis', harvest_season: 'Haz-Eyl', tractor_types: ['hibrit'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Yamac bahce zemini', soil_texture: 'Tinli', ph_level: 6.3, organic_matter_pct: 3.1, hp_range: '45-70 HP', tractor_type: 'bahce', drive_type: '4WD', note: 'Egim ve nem, 4WD dar sasi platformlarini one cikarir.' },
+            { soil_type: 'Nemli ova zemini', soil_texture: 'Milli-tinli', ph_level: 6.5, organic_matter_pct: 3.4, hp_range: '60-85 HP', tractor_type: 'hibrit', drive_type: '4WD', note: 'Yagisli donemlerde cekis ve zemin basinci dikkatle yonetilmelidir.' }
+        ],
+        monthly_temp: [7, 7, 8, 11, 15, 20, 23, 24, 21, 17, 13, 9],
+        monthly_rain: [95, 80, 75, 65, 60, 55, 45, 45, 55, 80, 95, 105],
+        monthly_humidity: [78, 78, 79, 78, 77, 76, 75, 76, 77, 79, 80, 80],
+        monthly_frost: [3, 2, 1.2, 0.4, 0, 0, 0, 0, 0, 0.4, 1.2, 2.4],
+        monthly_drought: [-0.5, -0.5, -0.4, -0.2, 0, 0.1, 0.2, 0.2, 0, -0.1, -0.3, -0.4],
+        monthly_gdd: [8, 12, 25, 70, 130, 210, 260, 270, 210, 140, 70, 25]
+    },
+    'dogu anadolu': {
+        label: 'Dogu Anadolu referans profili',
+        climate_zone: 'Yuksek rakim karasal iklim',
+        annual_rainfall_mm: 470,
+        avg_temperature: 8.4,
+        elevation_m: 1450,
+        agricultural_area_hectare: 210000,
+        soil_type: 'Killi / tasil orgulu',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'tarla',
+        dominant_hp_range: '75-105 HP',
+        primary_crops: [
+            { name: 'Arpa', type: 'tahil', share: 0.24, yield_ton_per_ha: 3.5, hp_min: 70, hp_max: 95, planting_season: 'Nis-May', harvest_season: 'Agu', tractor_types: ['tarla', '4wd'] },
+            { name: 'Bugday', type: 'tahil', share: 0.20, yield_ton_per_ha: 3.8, hp_min: 75, hp_max: 100, planting_season: 'Nis-May', harvest_season: 'Agu', tractor_types: ['tarla', '4wd'] },
+            { name: 'Patates', type: 'sebze', share: 0.12, yield_ton_per_ha: 20, hp_min: 65, hp_max: 90, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['hibrit', '4wd'] },
+            { name: 'Yem bitkileri', type: 'yem', share: 0.16, yield_ton_per_ha: 7.2, hp_min: 60, hp_max: 85, planting_season: 'May', harvest_season: 'Tem-Eyl', tractor_types: ['tarla'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Yuksek rakim tarla zemini', soil_texture: 'Killi', ph_level: 7.3, organic_matter_pct: 2.0, hp_range: '80-110 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Kisa sezon ve cekis ihtiyaci nedeniyle guc rezervi onemlidir.' },
+            { soil_type: 'Serin mera / yem parcasi', soil_texture: 'Tinli', ph_level: 7.0, organic_matter_pct: 2.4, hp_range: '60-85 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Balya ve tasima icin PTO verimi guclu setuplar daha anlamlidir.' }
+        ],
+        monthly_temp: [-6, -4, 1, 8, 13, 18, 22, 22, 17, 10, 2, -3],
+        monthly_rain: [55, 50, 55, 70, 75, 40, 18, 12, 20, 35, 45, 52],
+        monthly_humidity: [72, 70, 66, 60, 57, 52, 48, 46, 50, 58, 66, 71],
+        monthly_frost: [16, 13, 8, 3, 0.4, 0, 0, 0, 0.6, 3, 8, 13],
+        monthly_drought: [0.1, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.0, 0.6, 0.3, 0.2, 0.1],
+        monthly_gdd: [0, 0, 10, 60, 130, 210, 280, 275, 190, 95, 20, 0]
+    },
+    'guneydogu anadolu': {
+        label: 'Guneydogu Anadolu referans profili',
+        climate_zone: 'Sicak-kurak step kusagi',
+        annual_rainfall_mm: 520,
+        avg_temperature: 16.9,
+        elevation_m: 640,
+        agricultural_area_hectare: 330000,
+        soil_type: 'Kirecli / milli-killi',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'tarla',
+        dominant_hp_range: '85-120 HP',
+        primary_crops: [
+            { name: 'Bugday', type: 'tahil', share: 0.28, yield_ton_per_ha: 4.4, hp_min: 80, hp_max: 110, planting_season: 'Eki-Kas', harvest_season: 'Haz', tractor_types: ['tarla'] },
+            { name: 'Mercimek', type: 'tahil', share: 0.14, yield_ton_per_ha: 1.9, hp_min: 70, hp_max: 95, planting_season: 'Kas-Ara', harvest_season: 'Haz', tractor_types: ['tarla'] },
+            { name: 'Pamuk', type: 'endustriyel', share: 0.18, yield_ton_per_ha: 4.6, hp_min: 95, hp_max: 125, planting_season: 'Nis-May', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
+            { name: 'Misir', type: 'tahil', share: 0.16, yield_ton_per_ha: 9.1, hp_min: 85, hp_max: 115, planting_season: 'Mar-Nis', harvest_season: 'Agu-Eyl', tractor_types: ['tarla', '4wd'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Sulamali ova zemini', soil_texture: 'Milli-killi', ph_level: 7.6, organic_matter_pct: 1.7, hp_range: '90-120 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sira arasi ve agir ekipman operasyonlari ayni donemde yogunlasir.' },
+            { soil_type: 'Kuru tarim parcasi', soil_texture: 'Tinli', ph_level: 7.7, organic_matter_pct: 1.3, hp_range: '75-100 HP', tractor_type: 'tarla', drive_type: '2WD', note: 'Ekonomik cekis ve dusuk yakit on plana cikar.' }
+        ],
+        monthly_temp: [4, 6, 10, 16, 22, 29, 33, 33, 28, 21, 12, 6],
+        monthly_rain: [75, 65, 55, 40, 25, 8, 2, 2, 5, 20, 40, 68],
+        monthly_humidity: [70, 66, 60, 54, 48, 39, 32, 32, 38, 48, 60, 68],
+        monthly_frost: [3, 1.5, 0.4, 0, 0, 0, 0, 0, 0, 0.2, 0.8, 2],
+        monthly_drought: [0.1, 0.2, 0.4, 0.6, 0.9, 1.2, 1.5, 1.5, 1.1, 0.6, 0.3, 0.1],
+        monthly_gdd: [15, 30, 70, 140, 240, 360, 430, 425, 320, 200, 75, 25]
+    },
+    default: {
+        label: 'Genel mekanizasyon referans profili',
+        climate_zone: 'Iliman gecis kusagi',
+        annual_rainfall_mm: 610,
+        avg_temperature: 13.5,
+        elevation_m: 360,
+        agricultural_area_hectare: 180000,
+        soil_type: 'Tinli',
+        dominant_drive_type: '4WD',
+        dominant_tractor_type: 'tarla',
+        dominant_hp_range: '70-95 HP',
+        primary_crops: [
+            { name: 'Bugday', type: 'tahil', share: 0.26, yield_ton_per_ha: 4.6, hp_min: 70, hp_max: 95, planting_season: 'Eki-Kas', harvest_season: 'Haz-Tem', tractor_types: ['tarla'] },
+            { name: 'Misir', type: 'tahil', share: 0.18, yield_ton_per_ha: 8.5, hp_min: 75, hp_max: 105, planting_season: 'Nis-May', harvest_season: 'Agu-Eyl', tractor_types: ['tarla', '4wd'] },
+            { name: 'Yem bitkileri', type: 'yem', share: 0.14, yield_ton_per_ha: 7.3, hp_min: 60, hp_max: 85, planting_season: 'Mar-Nis', harvest_season: 'Haz-Eyl', tractor_types: ['tarla', 'hibrit'] }
+        ],
+        soil_layers: [
+            { soil_type: 'Genel tarla zemini', soil_texture: 'Tinli', ph_level: 7.0, organic_matter_pct: 2.0, hp_range: '70-95 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Cok amacli saha operasyonlari icin dengeli kurulum gerekir.' }
+        ],
+        monthly_temp: [4, 5, 8, 13, 18, 23, 27, 27, 22, 16, 10, 6],
+        monthly_rain: [70, 60, 55, 50, 45, 30, 15, 12, 20, 38, 55, 65],
+        monthly_humidity: [73, 71, 68, 64, 60, 56, 52, 51, 56, 63, 69, 72],
+        monthly_frost: [5, 4, 1.8, 0.4, 0, 0, 0, 0, 0, 0.7, 2, 4],
+        monthly_drought: [-0.1, 0, 0.1, 0.3, 0.5, 0.7, 0.9, 0.9, 0.5, 0.2, 0, -0.1],
+        monthly_gdd: [10, 18, 45, 100, 180, 260, 320, 315, 230, 135, 55, 20]
+    }
+};
+
+function getProvinceReferenceArchetype(province = {}) {
+    const regionKey = normalizeSearchText(province.region || '');
+    if (!regionKey) return PROVINCE_REFERENCE_ARCHETYPES.default;
+    if (PROVINCE_REFERENCE_ARCHETYPES[regionKey]) return PROVINCE_REFERENCE_ARCHETYPES[regionKey];
+
+    const fuzzyKey = Object.keys(PROVINCE_REFERENCE_ARCHETYPES)
+        .filter(key => key !== 'default')
+        .find(key => regionKey.includes(key) || key.includes(regionKey));
+
+    return fuzzyKey ? PROVINCE_REFERENCE_ARCHETYPES[fuzzyKey] : PROVINCE_REFERENCE_ARCHETYPES.default;
+}
+
+function enrichProvinceWithReference(province = {}) {
+    const reference = getProvinceReferenceArchetype(province);
+    return {
+        ...province,
+        climate_zone: province.climate_zone || reference.climate_zone,
+        annual_rainfall_mm: province.annual_rainfall_mm || reference.annual_rainfall_mm,
+        avg_temperature: province.avg_temperature || reference.avg_temperature,
+        elevation_m: province.elevation_m || reference.elevation_m,
+        agricultural_area_hectare: province.agricultural_area_hectare || reference.agricultural_area_hectare,
+        soil_type: province.soil_type || reference.soil_type,
+        primary_crops: Array.isArray(province.primary_crops) && province.primary_crops.length
+            ? province.primary_crops
+            : reference.primary_crops.map(item => item.name)
+    };
+}
+
+async function getEnrichedProvinceById(provinceId) {
+    const result = await pool.query('SELECT * FROM provinces WHERE id = $1 LIMIT 1', [provinceId]);
+    const province = result.rows[0] || null;
+    return province ? enrichProvinceWithReference(province) : null;
+}
+
+function buildProvinceReferenceClimateRows(referenceProfile = {}, targetYear = new Date().getFullYear()) {
+    const years = Array.from({ length: 6 }, (_, index) => targetYear - 5 + index);
+    return years.flatMap((year, index) => {
+        const warmingShift = (index - 2.5) * 0.12;
+        const rainfallFactor = 1 + ((2.5 - index) * 0.03);
+        return Array.from({ length: 12 }, (_, monthIndex) => ({
+            year,
+            month: monthIndex + 1,
+            avg_temp: roundMetric((referenceProfile.monthly_temp?.[monthIndex] || 0) + warmingShift, 1),
+            avg_rainfall_mm: roundMetric(Math.max(0, (referenceProfile.monthly_rain?.[monthIndex] || 0) * rainfallFactor), 1),
+            avg_humidity: roundMetric(Math.min(90, Math.max(25, (referenceProfile.monthly_humidity?.[monthIndex] || 0) - (warmingShift * 1.2))), 1),
+            frost_days: roundMetric(Math.max(0, (referenceProfile.monthly_frost?.[monthIndex] || 0) - Math.max(0, warmingShift * 0.8)), 1),
+            drought_index: roundMetric((referenceProfile.monthly_drought?.[monthIndex] || 0) + Math.max(0, warmingShift * 0.5), 2),
+            growing_degree_days: roundMetric(Math.max(0, (referenceProfile.monthly_gdd?.[monthIndex] || 0) + Math.max(0, warmingShift * 10)), 1)
+        }));
+    });
+}
+
+function buildProvinceFallbackCrops(province = {}, referenceProfile = {}, targetYear = new Date().getFullYear()) {
+    const agArea = Number(province.agricultural_area_hectare || referenceProfile.agricultural_area_hectare || 180000);
+    return (referenceProfile.primary_crops || []).map((crop, index) => {
+        const area = Math.round(agArea * Number(crop.share || 0));
+        return {
+            id: -(province.id * 100 + index + 1),
+            province_id: province.id,
+            crop_name: crop.name,
+            crop_type: crop.type,
+            cultivation_area_hectare: area,
+            annual_production_tons: Math.round(area * Number(crop.yield_ton_per_ha || 0)),
+            year: targetYear,
+            planting_season: crop.planting_season,
+            harvest_season: crop.harvest_season,
+            requires_hp_min: crop.hp_min,
+            requires_hp_max: crop.hp_max,
+            suitable_tractor_types: crop.tractor_types || [],
+            source: 'province_reference_profile'
+        };
+    });
+}
+
+function buildProvinceFallbackSoils(province = {}, referenceProfile = {}, dominantHpRange = '', dominantCategory = '', dominantDrive = '') {
+    return (referenceProfile.soil_layers || []).map((soil, index) => ({
+        id: -(province.id * 100 + index + 1),
+        province_id: province.id,
+        soil_type: soil.soil_type || province.soil_type || referenceProfile.soil_type,
+        soil_texture: soil.soil_texture || 'Tinli',
+        ph_level: soil.ph_level,
+        organic_matter_pct: soil.organic_matter_pct,
+        suitable_crops: (referenceProfile.primary_crops || []).slice(index, index + 2).map(item => item.name),
+        recommended_hp_range: soil.hp_range || dominantHpRange || referenceProfile.dominant_hp_range,
+        recommended_tractor_type: soil.tractor_type || dominantCategory || referenceProfile.dominant_tractor_type,
+        recommended_drive_type: soil.drive_type || dominantDrive || referenceProfile.dominant_drive_type,
+        notes: soil.note || 'Bolgesel referans profilinden uretildi.',
+        source: 'province_reference_profile'
+    }));
+}
+
+function buildProvinceReferenceForecastRows(province = {}, referenceProfile = {}, dayCount = 7) {
+    const today = new Date();
+    const monthIndex = today.getMonth();
+    const monthTemp = Number(referenceProfile.monthly_temp?.[monthIndex] ?? province.avg_temperature ?? 14);
+    const monthRain = Number(referenceProfile.monthly_rain?.[monthIndex] ?? ((province.annual_rainfall_mm || referenceProfile.annual_rainfall_mm || 360) / 12));
+    const monthHumidity = Number(referenceProfile.monthly_humidity?.[monthIndex] ?? 60);
+    const weeklyRainTarget = Math.max(0, Number((monthRain / 4.3).toFixed(1)));
+    const rainySlots = weeklyRainTarget >= 18
+        ? [1, 3, 5]
+        : weeklyRainTarget >= 8
+            ? [2, 5]
+            : weeklyRainTarget >= 3
+                ? [3]
+                : [];
+
+    return Array.from({ length: dayCount }, (_, index) => {
+        const date = new Date(today);
+        date.setDate(today.getDate() + index);
+
+        const tempOffset = ((index % 4) - 1.5) * 1.1;
+        const avgTemp = monthTemp + tempOffset;
+        const tempMax = Number((avgTemp + (monthTemp >= 22 ? 6.5 : 5.5)).toFixed(1));
+        const tempMin = Number((avgTemp - (monthTemp >= 22 ? 5.5 : 4.5)).toFixed(1));
+        const rainfall = rainySlots.includes(index)
+            ? Number((weeklyRainTarget / Math.max(rainySlots.length, 1)).toFixed(1))
+            : 0;
+        const humidity = Math.min(90, Math.max(35, monthHumidity + (rainfall > 0 ? 8 : -3) + (index % 3 === 0 ? 2 : -1)));
+        const windSpeed = Number((14 + (index % 3) * 2 + (rainfall > 0 ? 4 : 0)).toFixed(0));
+
+        let weatherCondition = 'clear';
+        if (rainfall >= 3) {
+            weatherCondition = 'rain';
+        } else if (tempMin <= 0) {
+            weatherCondition = 'snow';
+        } else if (humidity >= 72) {
+            weatherCondition = 'cloud';
+        }
+
+        return {
+            id: -((Number(province.id) || 0) * 1000 + index + 1),
+            province_id: province.id,
+            date: date.toISOString().slice(0, 10),
+            weather_condition: weatherCondition,
+            temp_max: tempMax,
+            temp_min: tempMin,
+            rainfall_mm: rainfall,
+            humidity_pct: Number(humidity.toFixed(0)),
+            wind_speed_kmh: windSpeed,
+            is_forecast: true,
+            source: 'province_reference_profile'
+        };
+    });
+}
+
+function hpRangeFromHorsepower(hp) {
+    const value = Number(hp || 0);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (value <= 39) return '1-39';
+    if (value <= 49) return '40-49';
+    if (value <= 54) return '50-54';
+    if (value <= 59) return '55-59';
+    if (value <= 69) return '60-69';
+    if (value <= 79) return '70-79';
+    if (value <= 89) return '80-89';
+    if (value <= 99) return '90-99';
+    if (value <= 109) return '100-109';
+    if (value <= 119) return '110-119';
+    return '120+';
+}
+
+function parseHpBand(rangeLabel = '') {
+    const text = String(rangeLabel || '');
+    const matches = text.match(/\d+/g) || [];
+    if (!matches.length) return { min: null, max: null, mid: null };
+    const min = Number(matches[0]);
+    const max = matches[1] ? Number(matches[1]) : (text.includes('+') ? min + 20 : min);
+    return { min, max, mid: Number(((min + max) / 2).toFixed(1)) };
+}
+
+function normalizeModelCategory(value = '') {
+    const normalized = normalizeSearchText(value);
+    if (!normalized) return 'tarla';
+    if (normalized.includes('bah')) return 'bahce';
+    if (normalized.includes('hib')) return 'hibrit';
+    return 'tarla';
+}
+
+function normalizeModelDriveType(value = '') {
+    const normalized = String(value || '').toUpperCase();
+    if (normalized.includes('2')) return '2WD';
+    return '4WD';
+}
+
+function computeHpFitScore(hp, min, max) {
+    if (!Number.isFinite(Number(hp)) || !Number.isFinite(Number(min)) || !Number.isFinite(Number(max))) return 12;
+    const numericHp = Number(hp);
+    if (numericHp >= Number(min) && numericHp <= Number(max)) return 28;
+    const gap = numericHp < Number(min) ? Number(min) - numericHp : numericHp - Number(max);
+    if (gap <= 5) return 23;
+    if (gap <= 10) return 18;
+    if (gap <= 20) return 12;
+    if (gap <= 30) return 7;
+    return 3;
+}
+
+function computeModelProvinceCompatibility(model = {}, province = {}) {
+    const reference = getProvinceReferenceArchetype(province);
+    const enrichedProvince = enrichProvinceWithReference(province);
+    const hp = Number(model.horsepower || 0);
+    const category = normalizeModelCategory(model.category);
+    const driveType = normalizeModelDriveType(model.drive_type);
+    const crops = reference.primary_crops || [];
+    const soils = reference.soil_layers || [];
+
+    let bestCrop = null;
+    let cropScore = 0;
+    crops.forEach(crop => {
+        let score = computeHpFitScore(hp, crop.hp_min, crop.hp_max);
+        const tractorTypes = crop.tractor_types || [];
+        if (tractorTypes.includes(category)) score += 10;
+        else if (category === 'hibrit' && (tractorTypes.includes('tarla') || tractorTypes.includes('bahce'))) score += 6;
+        if (tractorTypes.includes('4wd') && driveType === '4WD') score += 6;
+        if (tractorTypes.includes('dar') && category === 'bahce') score += 4;
+        if (score > cropScore) {
+            cropScore = score;
+            bestCrop = crop;
+        }
+    });
+
+    let bestSoil = null;
+    let soilScore = 0;
+    soils.forEach(soil => {
+        const hpBand = parseHpBand(soil.hp_range || reference.dominant_hp_range);
+        let score = computeHpFitScore(hp, hpBand.min, hpBand.max);
+        if (normalizeModelCategory(soil.tractor_type || reference.dominant_tractor_type) === category) score += 10;
+        if (normalizeModelDriveType(soil.drive_type || reference.dominant_drive_type) === driveType) score += 8;
+        if (score > soilScore) {
+            soilScore = score;
+            bestSoil = soil;
+        }
+    });
+
+    let categoryScore = category === normalizeModelCategory(reference.dominant_tractor_type) ? 14 : 6;
+    if (category === 'hibrit') categoryScore = 10;
+    let driveScore = driveType === normalizeModelDriveType(reference.dominant_drive_type) ? 12 : 5;
+    if (Number(enrichedProvince.elevation_m || 0) > 900 && driveType === '4WD') driveScore += 3;
+
+    const finalScore = Math.max(42, Math.min(96, Math.round((cropScore * 0.38) + (soilScore * 0.30) + categoryScore + driveScore)));
+    const label = finalScore >= 86
+        ? 'Doğal liderlik'
+        : finalScore >= 76
+            ? 'Güçlü uyum'
+        : finalScore >= 64
+                ? 'Seçici uyum'
+                : 'Sınırlı uyum';
+
+    const notes = [
+        bestCrop ? `${bestCrop.name} ekseninde HP uyumu belirgin.` : `${reference.label} ile genel uyum kuruluyor.`,
+        bestSoil?.note || '',
+        driveType === normalizeModelDriveType(reference.dominant_drive_type)
+            ? `${driveType} çekiş mimarisi bölgenin saha karakteriyle örtüşüyor.`
+            : ''
+    ].filter(Boolean);
+
+    return {
+        score: finalScore,
+        label,
+        dominant_crop: bestCrop?.name || reference.primary_crops?.[0]?.name || null,
+        reference_label: reference.label,
+        soil_type: enrichedProvince.soil_type,
+        climate_zone: enrichedProvince.climate_zone,
+        annual_rainfall_mm: Number(enrichedProvince.annual_rainfall_mm || 0) || null,
+        avg_temperature: Number(enrichedProvince.avg_temperature || 0) || null,
+        elevation_m: Number(enrichedProvince.elevation_m || 0) || null,
+        agricultural_area_hectare: Number(enrichedProvince.agricultural_area_hectare || 0) || null,
+        primary_crops: Array.isArray(enrichedProvince.primary_crops) ? enrichedProvince.primary_crops : [],
+        recommended_hp_range: bestSoil?.hp_range || reference.dominant_hp_range,
+        recommended_drive_type: bestSoil?.drive_type || reference.dominant_drive_type,
+        recommended_tractor_type: bestSoil?.tractor_type || reference.dominant_tractor_type,
+        note: notes.slice(0, 2).join(' ')
+    };
+}
+
+function buildModelRegionMission({ fitScore = 0, modelSharePct = 0, yoyPct = null, opportunityScore = 0 }) {
+    if (fitScore >= 84 && modelSharePct >= 12) return 'Kale bölge';
+    if (opportunityScore >= 82) return 'Sıcak beyaz alan';
+    if (fitScore >= 78 && (yoyPct == null || yoyPct >= 0)) return 'Yatırım cephesi';
+    if (fitScore < 64) return 'Seçici saha';
+    return 'Derinleştir';
+}
+
+function aggregateProvinceBrandRows(rows = [], previousBrandMap = new Map(), marketTotal = 0) {
+    const map = new Map();
+
+    (rows || []).forEach(row => {
+        const brandId = Number(row.brand_id || 0);
+        if (!brandId) return;
+
+        if (!map.has(brandId)) {
+            map.set(brandId, {
+                brand_id: brandId,
+                brand_name: row.brand_name,
+                slug: row.brand_slug,
+                primary_color: row.primary_color,
+                total_sales: 0
+            });
+        }
+
+        map.get(brandId).total_sales += Number(row.total_sales || 0);
+    });
+
+    return Array.from(map.values())
+        .sort((left, right) => right.total_sales - left.total_sales || String(left.brand_name || '').localeCompare(String(right.brand_name || ''), 'tr'))
+        .map((row, index) => {
+            const previousSales = Number(previousBrandMap.get(row.brand_id) || 0);
+            return {
+                ...row,
+                previous_sales: previousSales,
+                share_pct: marketTotal > 0 ? roundMetric((row.total_sales * 100) / marketTotal, 1) : 0,
+                yoy_pct: calculateYoY(row.total_sales, previousSales),
+                rank: index + 1
+            };
+        });
+}
+
+function aggregateProvinceMixRows(rows = [], valueGetter, totalBase = 0, labelKey = 'label') {
+    const map = new Map();
+
+    (rows || []).forEach(row => {
+        const rawLabel = valueGetter(row);
+        const label = rawLabel ? String(rawLabel) : 'belirsiz';
+        if (!map.has(label)) map.set(label, 0);
+        map.set(label, map.get(label) + Number(row.total_sales || 0));
+    });
+
+    return Array.from(map.entries())
+        .map(([label, totalSales]) => ({
+            [labelKey]: label,
+            label,
+            total_sales: totalSales,
+            share_pct: totalBase > 0 ? roundMetric((totalSales * 100) / totalBase, 1) : 0
+        }))
+        .sort((left, right) => right.total_sales - left.total_sales || String(left.label || '').localeCompare(String(right.label || ''), 'tr'));
+}
+
+app.get('/api/province-intelligence/:province_id', authMiddleware, async (req, res) => {
+    try {
+        const provinceId = parseInt(req.params.province_id, 10);
+        if (!Number.isFinite(provinceId)) {
+            return res.status(400).json({ error: 'Geçerli province_id gerekli' });
+        }
+
+        const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_view');
+        const maxYear = parseInt(latestRes.rows[0]?.max_year, 10) || new Date().getFullYear();
+        const minYear = parseInt(latestRes.rows[0]?.min_year, 10) || maxYear;
+        const requestedYear = req.query.year ? parseInt(req.query.year, 10) : maxYear;
+        const targetYear = Number.isFinite(requestedYear) ? Math.min(Math.max(requestedYear, minYear), maxYear) : maxYear;
+        const prevYear = targetYear - 1;
+        const focusBrandId = req.user.role === 'admin'
+            ? (req.query.brand_id ? parseInt(req.query.brand_id, 10) : null)
+            : req.user.brand_id;
+
+        const normalizedBrandExpr = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE tv.marka
+            END
+        `;
+        const categoryHintExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahce%' AND LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%tarla%' THEN 'hibrit'
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahce%' THEN 'bahce'
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%tarla%' THEN 'tarla'
+                ELSE NULL
+            END
+        `;
+        const hpRangeExpr = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                WHEN tk.motor_gucu_hp > 119 THEN '120+'
+                ELSE NULL
+            END
+        `;
+        const cabinTypeExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%rops%' OR LOWER(COALESCE(tk.koruma, '')) LIKE '%roll%' THEN 'rollbar'
+                ELSE NULL
+            END
+        `;
+
+        const provinceRes = await pool.query(`
+            SELECT id, name, plate_code, region, latitude, longitude, population, agricultural_area_hectare,
+                   primary_crops, soil_type, climate_zone, annual_rainfall_mm, avg_temperature, elevation_m
+            FROM provinces
+            WHERE id = $1
+        `, [provinceId]);
+        const provinceRow = provinceRes.rows[0];
+        const province = enrichProvinceWithReference(provinceRow || {});
+        if (!provinceRow) {
+            return res.status(404).json({ error: 'İl bulunamadı' });
+        }
+
+        const regionReference = getProvinceReferenceArchetype(province);
+        const referenceProfile = {
+            label: regionReference.label,
+            climate_zone: regionReference.climate_zone,
+            soil_type: regionReference.soil_type,
+            dominant_drive_type: regionReference.dominant_drive_type,
+            dominant_tractor_type: regionReference.dominant_tractor_type,
+            dominant_hp_range: regionReference.dominant_hp_range,
+            primary_crops: regionReference.primary_crops,
+            soil_layers: regionReference.soil_layers,
+            climate_rows: buildProvinceReferenceClimateRows(regionReference, targetYear)
+        };
+
+        const cropYearRes = await pool.query(`
+            SELECT COALESCE(
+                MAX(CASE WHEN year <= $2 THEN year END),
+                MAX(year)
+            ) as crop_year
+            FROM crop_data
+            WHERE province_id = $1
+        `, [provinceId, targetYear]);
+        const cropYear = parseInt(cropYearRes.rows[0]?.crop_year, 10) || targetYear;
+
+        const [
+            soilRes,
+            cropsRes,
+            currentOverviewRes,
+            previousOverviewRes,
+            topBrandsRes,
+            hpRes,
+            categoryRes,
+            driveRes,
+            cabinRes,
+            topModelsRes,
+            currentTuikMixRes,
+            previousTuikMixRes
+        ] = await Promise.all([
+            pool.query('SELECT * FROM soil_data WHERE province_id = $1 ORDER BY organic_matter_pct DESC NULLS LAST, soil_type ASC', [provinceId]),
+            pool.query(
+                'SELECT * FROM crop_data WHERE province_id = $1 AND year = $2 ORDER BY cultivation_area_hectare DESC NULLS LAST, annual_production_tons DESC NULLS LAST',
+                [provinceId, cropYear]
+            ),
+            pool.query(
+                `SELECT COALESCE(SUM(quantity), 0)::int as total_sales, COUNT(DISTINCT brand_id)::int as active_brand_count
+                 FROM sales_view
+                 WHERE province_id = $1 AND year = $2`,
+                [provinceId, targetYear]
+            ),
+            pool.query(
+                `SELECT COALESCE(SUM(quantity), 0)::int as total_sales
+                 FROM sales_view
+                 WHERE province_id = $1 AND year = $2`,
+                [provinceId, prevYear]
+            ),
+            pool.query(`
+                WITH previous_brand AS (
+                    SELECT brand_id, SUM(quantity)::int as previous_sales
+                    FROM sales_view
+                    WHERE province_id = $1 AND year = $3
+                    GROUP BY brand_id
+                )
+                SELECT
+                    b.id as brand_id,
+                    b.name as brand_name,
+                    b.slug,
+                    b.primary_color,
+                    SUM(s.quantity)::int as total_sales,
+                    COALESCE(pb.previous_sales, 0)::int as previous_sales
+                FROM sales_view s
+                JOIN brands b ON s.brand_id = b.id
+                LEFT JOIN previous_brand pb ON pb.brand_id = b.id
+                WHERE s.province_id = $1 AND s.year = $2
+                GROUP BY b.id, b.name, b.slug, b.primary_color, pb.previous_sales
+                ORDER BY total_sales DESC, b.name ASC
+                LIMIT 12
+            `, [provinceId, targetYear, prevYear]),
+            pool.query(`
+                SELECT COALESCE(hp_range, 'belirsiz') as hp_range, SUM(quantity)::int as total_sales
+                FROM sales_view
+                WHERE province_id = $1 AND year = $2
+                GROUP BY hp_range
+                ORDER BY total_sales DESC, hp_range ASC
+            `, [provinceId, targetYear]),
+            pool.query(`
+                SELECT COALESCE(category, 'belirsiz') as label, SUM(quantity)::int as total_sales
+                FROM sales_view
+                WHERE province_id = $1 AND year = $2
+                GROUP BY category
+                ORDER BY total_sales DESC, label ASC
+            `, [provinceId, targetYear]),
+            pool.query(`
+                SELECT UPPER(COALESCE(drive_type, 'belirsiz')) as label, SUM(quantity)::int as total_sales
+                FROM sales_view
+                WHERE province_id = $1 AND year = $2
+                GROUP BY drive_type
+                ORDER BY total_sales DESC, label ASC
+            `, [provinceId, targetYear]),
+            pool.query(`
+                SELECT LOWER(COALESCE(cabin_type, 'belirsiz')) as label, SUM(quantity)::int as total_sales
+                FROM sales_view
+                WHERE province_id = $1 AND year = $2
+                GROUP BY cabin_type
+                ORDER BY total_sales DESC, label ASC
+            `, [provinceId, targetYear]),
+            pool.query(`
+                WITH model_totals AS (
+                    SELECT
+                        ${normalizedBrandExpr} as normalized_brand_name,
+                        tv.marka,
+                        tv.tuik_model_adi,
+                        SUM(tv.satis_adet)::int as total_sales
+                    FROM tuik_veri tv
+                    WHERE tv.tescil_yil = $1
+                      AND tv.sehir_kodu = $2
+                    GROUP BY ${normalizedBrandExpr}, tv.marka, tv.tuik_model_adi
+                    ORDER BY total_sales DESC, tv.marka ASC, tv.tuik_model_adi ASC
+                    LIMIT 36
+                )
+                SELECT
+                    b.id as brand_id,
+                    b.name as brand_name,
+                    b.slug as brand_slug,
+                    b.primary_color,
+                    COALESCE(NULLIF(tk.model, ''), mt.tuik_model_adi) as model_name,
+                    mt.tuik_model_adi,
+                    mt.total_sales,
+                    ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) as avg_hp,
+                    ROUND(AVG(NULLIF(tk.fiyat_usd, 0))::numeric, 2) as avg_price_usd,
+                    ${categoryHintExpr} as category_hint,
+                    LOWER(MAX(COALESCE(tk.cekis_tipi, ''))) as drive_type,
+                    MAX(COALESCE(tk.koruma, '')) as protection,
+                    MAX(COALESCE(tk.vites_sayisi, '')) as gear_config,
+                    MAX(COALESCE(tk.mensei, '')) as origin,
+                    MAX(COALESCE(tk.motor_marka, '')) as engine_brand,
+                    CASE
+                        WHEN AVG(NULLIF(tk.fiyat_usd, 0)) IS NOT NULL THEN ROUND((mt.total_sales * AVG(NULLIF(tk.fiyat_usd, 0)))::numeric, 2)
+                        ELSE NULL
+                    END as estimated_revenue_usd
+                FROM model_totals mt
+                JOIN brands b
+                    ON UPPER(b.name) = UPPER(mt.normalized_brand_name)
+                LEFT JOIN teknik_veri tk
+                    ON UPPER(mt.marka) = UPPER(tk.marka)
+                   AND UPPER(mt.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+                GROUP BY
+                    b.id, b.name, b.slug, b.primary_color,
+                    COALESCE(NULLIF(tk.model, ''), mt.tuik_model_adi),
+                    mt.tuik_model_adi,
+                    mt.total_sales,
+                    ${categoryHintExpr}
+                ORDER BY mt.total_sales DESC, b.name ASC, model_name ASC
+                LIMIT 24
+            `, [targetYear, parseInt(province.plate_code, 10)]),
+            pool.query(`
+                WITH model_totals AS (
+                    SELECT
+                        ${normalizedBrandExpr} as normalized_brand_name,
+                        tv.marka,
+                        tv.tuik_model_adi,
+                        SUM(tv.satis_adet)::int as total_sales
+                    FROM tuik_veri tv
+                    WHERE tv.tescil_yil = $1
+                      AND tv.sehir_kodu = $2
+                    GROUP BY ${normalizedBrandExpr}, tv.marka, tv.tuik_model_adi
+                )
+                SELECT
+                    b.id as brand_id,
+                    b.name as brand_name,
+                    b.slug as brand_slug,
+                    b.primary_color,
+                    COALESCE(NULLIF(MAX(tk.model), ''), mt.tuik_model_adi) as model_name,
+                    mt.tuik_model_adi,
+                    mt.total_sales,
+                    ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) as avg_hp,
+                    ROUND(AVG(NULLIF(tk.fiyat_usd, 0))::numeric, 2) as avg_price_usd,
+                    COALESCE(MAX(${categoryHintExpr}), 'belirsiz') as category_hint,
+                    COALESCE(MAX(${hpRangeExpr}), 'belirsiz') as hp_range,
+                    COALESCE(UPPER(MAX(NULLIF(tk.cekis_tipi, ''))), 'belirsiz') as drive_type,
+                    COALESCE(MAX(${cabinTypeExpr}), 'belirsiz') as cabin_type,
+                    MAX(COALESCE(tk.koruma, '')) as protection,
+                    MAX(COALESCE(tk.vites_sayisi, '')) as gear_config,
+                    MAX(COALESCE(tk.mensei, '')) as origin,
+                    MAX(COALESCE(tk.motor_marka, '')) as engine_brand,
+                    CASE
+                        WHEN AVG(NULLIF(tk.fiyat_usd, 0)) IS NOT NULL THEN ROUND((mt.total_sales * AVG(NULLIF(tk.fiyat_usd, 0)))::numeric, 2)
+                        ELSE NULL
+                    END as estimated_revenue_usd
+                FROM model_totals mt
+                JOIN brands b
+                    ON UPPER(b.name) = UPPER(mt.normalized_brand_name)
+                LEFT JOIN teknik_veri tk
+                    ON UPPER(mt.marka) = UPPER(tk.marka)
+                   AND UPPER(mt.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+                GROUP BY
+                    b.id, b.name, b.slug, b.primary_color,
+                    mt.tuik_model_adi,
+                    mt.total_sales
+                ORDER BY mt.total_sales DESC, b.name ASC, model_name ASC
+            `, [targetYear, parseInt(province.plate_code, 10)]),
+            pool.query(`
+                WITH model_totals AS (
+                    SELECT
+                        ${normalizedBrandExpr} as normalized_brand_name,
+                        tv.marka,
+                        tv.tuik_model_adi,
+                        SUM(tv.satis_adet)::int as total_sales
+                    FROM tuik_veri tv
+                    WHERE tv.tescil_yil = $1
+                      AND tv.sehir_kodu = $2
+                    GROUP BY ${normalizedBrandExpr}, tv.marka, tv.tuik_model_adi
+                )
+                SELECT
+                    b.id as brand_id,
+                    b.name as brand_name,
+                    b.slug as brand_slug,
+                    b.primary_color,
+                    COALESCE(NULLIF(MAX(tk.model), ''), mt.tuik_model_adi) as model_name,
+                    mt.tuik_model_adi,
+                    mt.total_sales,
+                    ROUND(AVG(NULLIF(tk.motor_gucu_hp, 0))::numeric, 1) as avg_hp,
+                    ROUND(AVG(NULLIF(tk.fiyat_usd, 0))::numeric, 2) as avg_price_usd,
+                    COALESCE(MAX(${categoryHintExpr}), 'belirsiz') as category_hint,
+                    COALESCE(MAX(${hpRangeExpr}), 'belirsiz') as hp_range,
+                    COALESCE(UPPER(MAX(NULLIF(tk.cekis_tipi, ''))), 'belirsiz') as drive_type,
+                    COALESCE(MAX(${cabinTypeExpr}), 'belirsiz') as cabin_type,
+                    MAX(COALESCE(tk.koruma, '')) as protection,
+                    MAX(COALESCE(tk.vites_sayisi, '')) as gear_config,
+                    MAX(COALESCE(tk.mensei, '')) as origin,
+                    MAX(COALESCE(tk.motor_marka, '')) as engine_brand,
+                    CASE
+                        WHEN AVG(NULLIF(tk.fiyat_usd, 0)) IS NOT NULL THEN ROUND((mt.total_sales * AVG(NULLIF(tk.fiyat_usd, 0)))::numeric, 2)
+                        ELSE NULL
+                    END as estimated_revenue_usd
+                FROM model_totals mt
+                JOIN brands b
+                    ON UPPER(b.name) = UPPER(mt.normalized_brand_name)
+                LEFT JOIN teknik_veri tk
+                    ON UPPER(mt.marka) = UPPER(tk.marka)
+                   AND UPPER(mt.tuik_model_adi) = UPPER(tk.tuik_model_adi)
+                GROUP BY
+                    b.id, b.name, b.slug, b.primary_color,
+                    mt.tuik_model_adi,
+                    mt.total_sales
+                ORDER BY mt.total_sales DESC, b.name ASC, model_name ASC
+            `, [prevYear, parseInt(province.plate_code, 10)])
+        ]);
+
+        const mapProvinceModelRow = row => {
+            const totalSales = parseInt(row.total_sales || 0, 10) || 0;
+            return {
+                brand_id: parseInt(row.brand_id, 10),
+                brand_name: row.brand_name,
+                brand_slug: row.brand_slug || row.slug,
+                primary_color: row.primary_color,
+                model_name: row.model_name,
+                tuik_model_adi: row.tuik_model_adi,
+                total_sales: totalSales,
+                avg_hp: row.avg_hp != null ? Number(row.avg_hp) : null,
+                avg_price_usd: row.avg_price_usd != null ? Number(row.avg_price_usd) : null,
+                estimated_revenue_usd: row.estimated_revenue_usd != null ? Number(row.estimated_revenue_usd) : null,
+                category_hint: row.category_hint || null,
+                hp_range: row.hp_range || null,
+                drive_type: row.drive_type || null,
+                cabin_type: row.cabin_type || null,
+                protection: row.protection || null,
+                gear_config: row.gear_config || null,
+                origin: row.origin || null,
+                engine_brand: row.engine_brand || null
+            };
+        };
+
+        const fallbackCurrentRows = currentTuikMixRes.rows.map(mapProvinceModelRow);
+        const fallbackPreviousRows = previousTuikMixRes.rows.map(mapProvinceModelRow);
+
+        let marketTotal = parseInt(currentOverviewRes.rows[0]?.total_sales || 0, 10);
+        let previousTotal = parseInt(previousOverviewRes.rows[0]?.total_sales || 0, 10);
+        let activeBrandCount = parseInt(currentOverviewRes.rows[0]?.active_brand_count || 0, 10);
+
+        let topBrands = topBrandsRes.rows.map((row, index) => {
+            const totalSales = parseInt(row.total_sales, 10) || 0;
+            const previousSales = parseInt(row.previous_sales, 10) || 0;
+            return {
+                brand_id: parseInt(row.brand_id, 10),
+                brand_name: row.brand_name,
+                slug: row.slug,
+                primary_color: row.primary_color,
+                total_sales: totalSales,
+                previous_sales: previousSales,
+                share_pct: marketTotal > 0 ? roundMetric((totalSales * 100) / marketTotal, 1) : 0,
+                yoy_pct: calculateYoY(totalSales, previousSales),
+                rank: index + 1
+            };
+        });
+
+        const mapShareRows = (rows, labelKey = 'label') => rows.map(row => {
+            const totalSales = parseInt(row.total_sales, 10) || 0;
+            return {
+                label: row[labelKey],
+                total_sales: totalSales,
+                share_pct: marketTotal > 0 ? roundMetric((totalSales * 100) / marketTotal, 1) : 0
+            };
+        });
+
+        let hpMix = hpRes.rows.map(row => {
+            const totalSales = parseInt(row.total_sales, 10) || 0;
+            return {
+                hp_range: row.hp_range,
+                total_sales: totalSales,
+                share_pct: marketTotal > 0 ? roundMetric((totalSales * 100) / marketTotal, 1) : 0
+            };
+        });
+        let categoryMix = mapShareRows(categoryRes.rows);
+        let driveMix = mapShareRows(driveRes.rows);
+        let cabinMix = mapShareRows(cabinRes.rows);
+        let topModels = topModelsRes.rows.map(row => ({
+            ...mapProvinceModelRow(row),
+            share_pct: marketTotal > 0 ? roundMetric(((parseInt(row.total_sales, 10) || 0) * 100) / marketTotal, 1) : 0
+        }));
+        let marketSource = 'sales_view';
+
+        if (marketTotal <= 0 && fallbackCurrentRows.length > 0) {
+            marketSource = 'tuik_veri';
+            marketTotal = fallbackCurrentRows.reduce((sum, item) => sum + Number(item.total_sales || 0), 0);
+            previousTotal = fallbackPreviousRows.reduce((sum, item) => sum + Number(item.total_sales || 0), 0);
+            activeBrandCount = new Set(fallbackCurrentRows.map(item => Number(item.brand_id || 0)).filter(Boolean)).size;
+
+            const previousBrandMap = fallbackPreviousRows.reduce((map, item) => {
+                const brandId = Number(item.brand_id || 0);
+                if (!brandId) return map;
+                map.set(brandId, (map.get(brandId) || 0) + Number(item.total_sales || 0));
+                return map;
+            }, new Map());
+
+            topBrands = aggregateProvinceBrandRows(fallbackCurrentRows, previousBrandMap, marketTotal).slice(0, 12);
+            hpMix = aggregateProvinceMixRows(fallbackCurrentRows, row => row.hp_range || 'belirsiz', marketTotal, 'hp_range');
+            categoryMix = aggregateProvinceMixRows(fallbackCurrentRows, row => row.category_hint || 'belirsiz', marketTotal);
+            driveMix = aggregateProvinceMixRows(fallbackCurrentRows, row => row.drive_type || 'belirsiz', marketTotal);
+            cabinMix = aggregateProvinceMixRows(fallbackCurrentRows, row => row.cabin_type || 'belirsiz', marketTotal);
+            topModels = [...fallbackCurrentRows]
+                .sort((left, right) => right.total_sales - left.total_sales || String(left.brand_name || '').localeCompare(String(right.brand_name || ''), 'tr'))
+                .slice(0, 24)
+                .map(item => ({
+                    ...item,
+                    share_pct: marketTotal > 0 ? roundMetric((Number(item.total_sales || 0) * 100) / marketTotal, 1) : 0
+                }));
+        }
+
+        const dominantHpRange = hpMix[0]?.hp_range || referenceProfile.dominant_hp_range;
+        const dominantCategory = categoryMix[0]?.label || referenceProfile.dominant_tractor_type;
+        const dominantDrive = driveMix[0]?.label || referenceProfile.dominant_drive_type;
+        const finalCropRows = cropsRes.rows.length
+            ? cropsRes.rows
+            : buildProvinceFallbackCrops(province, regionReference, targetYear);
+        const finalSoilRows = soilRes.rows.length
+            ? soilRes.rows
+            : buildProvinceFallbackSoils(province, regionReference, dominantHpRange, dominantCategory, dominantDrive);
+        const focusBrand = focusBrandId
+            ? topBrands.find(item => item.brand_id === Number(focusBrandId)) || null
+            : null;
+
+        const weightedHpTotal = topModels.reduce((sum, item) => sum + ((item.avg_hp || 0) * item.total_sales), 0);
+        const weightedSales = topModels.reduce((sum, item) => sum + item.total_sales, 0);
+        const weightedAvgHp = weightedSales > 0 ? roundMetric(weightedHpTotal / weightedSales, 1) : null;
+        const weightedPriceTotal = topModels.reduce((sum, item) => sum + ((item.avg_price_usd || 0) * item.total_sales), 0);
+        const weightedAvgPrice = weightedSales > 0 ? roundMetric(weightedPriceTotal / weightedSales, 0) : null;
+
+        res.json({
+            province,
+            period: {
+                year: targetYear,
+                previous_year: prevYear,
+                crop_year: cropYear,
+                max_year: maxYear,
+                min_year: minYear
+            },
+            overview: {
+                market_total_sales: marketTotal,
+                previous_total_sales: previousTotal,
+                yoy_pct: calculateYoY(marketTotal, previousTotal),
+                active_brand_count: activeBrandCount,
+                dominant_hp: hpMix[0]?.hp_range || null,
+                weighted_avg_hp: weightedAvgHp,
+                weighted_avg_price_usd: weightedAvgPrice,
+                top_brand_name: topBrands[0]?.brand_name || null,
+                top_brand_share_pct: topBrands[0]?.share_pct || 0
+            },
+            focus_brand: focusBrand,
+            soil: finalSoilRows,
+            crops: finalCropRows,
+            top_brands: topBrands,
+            hp_mix: hpMix,
+            category_mix: categoryMix,
+            drive_mix: driveMix,
+            cabin_mix: cabinMix,
+            top_models: topModels,
+            reference_profile: {
+                ...referenceProfile,
+                soil_source: soilRes.rows.length ? 'soil_data' : 'province_reference_profile',
+                crop_source: cropsRes.rows.length ? 'crop_data' : 'province_reference_profile',
+                market_source: marketSource,
+                is_reference_active: !soilRes.rows.length || !cropsRes.rows.length || marketSource !== 'sales_view'
+            },
+            source_stack: Array.from(new Set([
+                marketSource,
+                'tuik_veri',
+                'teknik_veri',
+                soilRes.rows.length ? 'soil_data' : 'province_reference_profile',
+                cropsRes.rows.length ? 'crop_data' : 'province_reference_profile'
+            ]))
+        });
+    } catch (err) {
+        console.error('Province intelligence error:', err);
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -4210,7 +11185,943 @@ app.get('/api/crops/:province_id', authMiddleware, async (req, res) => {
 // ============================================
 // AI INSIGHTS
 // ============================================
-app.get('/api/insights', authMiddleware, async (req, res) => {
+function resolveMediaWatchScopedBrandId(req, requestedBrandId = null) {
+    if (req.user?.role === 'admin') {
+        return requestedBrandId ? parseInt(requestedBrandId, 10) : null;
+    }
+    return parseInt(req.user?.brand_id || 0, 10) || null;
+}
+
+function normalizeMediaWatchChannel(value = '') {
+    const normalized = normalizeSearchText(value || '');
+    if (normalized.includes('social') || ['x', 'twitter', 'instagram', 'facebook', 'youtube', 'tiktok'].some(token => normalized.includes(token))) return 'social';
+    if (normalized.includes('forum')) return 'forum';
+    if (normalized.includes('sikayet') || normalized.includes('complaint')) return 'complaint';
+    if (normalized.includes('bakan') || normalized.includes('resmi') || normalized.includes('official') || normalized.includes('regulation')) return 'official';
+    if (normalized.includes('video') || normalized.includes('youtube')) return 'video';
+    if (normalized.includes('report') || normalized.includes('rapor')) return 'report';
+    return 'news';
+}
+
+function normalizeMediaWatchItemType(value = '') {
+    const normalized = normalizeSearchText(value || '');
+    if (normalized.includes('launch') || normalized.includes('product') || normalized.includes('urun') || normalized.includes('release')) return 'launch';
+    if (normalized.includes('complaint') || normalized.includes('sikayet') || normalized.includes('ariza')) return 'complaint';
+    if (normalized.includes('regulation') || normalized.includes('karar') || normalized.includes('destek') || normalized.includes('teblig')) return 'regulation';
+    if (normalized.includes('review') || normalized.includes('yorum') || normalized.includes('inceleme')) return 'review';
+    if (normalized.includes('campaign') || normalized.includes('kampanya')) return 'campaign';
+    if (normalized.includes('service') || normalized.includes('servis') || normalized.includes('yedek')) return 'service';
+    if (normalized.includes('forum') || normalized.includes('discussion') || normalized.includes('tartisma')) return 'discussion';
+    return 'news';
+}
+
+function normalizeMediaWatchSentiment(label = '', score = null) {
+    if (label) {
+        const normalized = normalizeSearchText(label);
+        if (normalized.includes('neg')) return 'negative';
+        if (normalized.includes('pos')) return 'positive';
+        if (normalized.includes('mix')) return 'mixed';
+        if (normalized.includes('warn')) return 'negative';
+    }
+
+    const numeric = Number(score);
+    if (!Number.isFinite(numeric)) return 'neutral';
+    if (numeric <= -0.2) return 'negative';
+    if (numeric >= 0.2) return 'positive';
+    return 'neutral';
+}
+
+function clampScore(value, min = -1, max = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return Math.min(max, Math.max(min, numeric));
+}
+
+function normalizeArrayJson(value) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (typeof value === 'string') {
+        return value.split(',').map(item => item.trim()).filter(Boolean);
+    }
+    return [];
+}
+
+function buildMediaWatchDedupeHash(item = {}, brandId = null) {
+    const fingerprint = [
+        brandId || '',
+        item.external_id || '',
+        item.source_url || '',
+        item.title || '',
+        item.published_at || '',
+        item.channel_type || '',
+        item.item_type || ''
+    ].join('|');
+
+    return crypto.createHash('sha1').update(fingerprint).digest('hex');
+}
+
+async function resolveMediaWatchBrandId(input = {}) {
+    const directId = parseInt(input.brand_id || input.brandId || 0, 10);
+    if (directId) return directId;
+
+    const slug = String(input.brand_slug || input.brandSlug || '').trim();
+    if (slug) {
+        const result = await pool.query('SELECT id FROM brands WHERE slug = $1 LIMIT 1', [slug]);
+        if (result.rows[0]?.id) return Number(result.rows[0].id);
+    }
+
+    const brandName = String(input.brand_name || input.brandName || '').trim();
+    if (brandName) {
+        const result = await pool.query('SELECT id FROM brands WHERE UPPER(name) = UPPER($1) LIMIT 1', [brandName]);
+        if (result.rows[0]?.id) return Number(result.rows[0].id);
+    }
+
+    return null;
+}
+
+function truncateDbText(value, maxLength) {
+    if (value == null) return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+async function upsertMediaWatchSource(item = {}) {
+    const sourceCodeBase = String(item.source_code || item.sourceCode || item.source_domain || item.sourceDomain || item.source_name || item.sourceName || '').trim();
+    if (!sourceCodeBase) return null;
+
+    const sourceCode = normalizeSearchText(sourceCodeBase).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100) || null;
+    if (!sourceCode) return null;
+
+    const title = truncateDbText(item.source_name || item.sourceName || item.publisher || item.source_domain || item.sourceDomain || sourceCodeBase, 255);
+    const publisher = truncateDbText(item.publisher || item.source_name || item.sourceName || item.platform_name || item.platformName || '', 150);
+    const sourceType = normalizeMediaWatchChannel(item.channel_type || item.channelType || item.source_type || item.sourceType || 'news');
+    const officialUrl = truncateDbText(item.source_homepage || item.sourceHomepage || item.official_url || item.officialUrl || item.source_url || item.sourceUrl || '', 500);
+
+    const result = await pool.query(`
+        INSERT INTO intelligence_sources (source_code, title, publisher, source_type, official_url, notes, is_active, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+        ON CONFLICT (source_code) DO UPDATE SET
+            title = EXCLUDED.title,
+            publisher = COALESCE(EXCLUDED.publisher, intelligence_sources.publisher),
+            source_type = EXCLUDED.source_type,
+            official_url = COALESCE(EXCLUDED.official_url, intelligence_sources.official_url),
+            notes = COALESCE(EXCLUDED.notes, intelligence_sources.notes),
+            updated_at = NOW()
+        RETURNING id
+    `, [
+        sourceCode,
+        title || sourceCodeBase,
+        publisher,
+        sourceType,
+        officialUrl,
+        item.notes || null
+    ]);
+
+    return result.rows[0]?.id || null;
+}
+
+async function upsertMediaWatchRun(payload = {}, fallbackBrandId = null) {
+    const runKey = String(payload.run_key || payload.runKey || '').trim();
+    if (!runKey) return null;
+
+    const brandId = await resolveMediaWatchBrandId(payload) || fallbackBrandId || null;
+    const result = await pool.query(`
+        INSERT INTO media_watch_runs (brand_id, workflow_code, run_key, status, trigger_source, item_count, error_message, started_at, finished_at, meta_json, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, NOW())
+        ON CONFLICT (run_key) DO UPDATE SET
+            brand_id = COALESCE(EXCLUDED.brand_id, media_watch_runs.brand_id),
+            workflow_code = COALESCE(EXCLUDED.workflow_code, media_watch_runs.workflow_code),
+            status = COALESCE(EXCLUDED.status, media_watch_runs.status),
+            trigger_source = COALESCE(EXCLUDED.trigger_source, media_watch_runs.trigger_source),
+            item_count = GREATEST(COALESCE(EXCLUDED.item_count, 0), COALESCE(media_watch_runs.item_count, 0)),
+            error_message = COALESCE(EXCLUDED.error_message, media_watch_runs.error_message),
+            finished_at = COALESCE(EXCLUDED.finished_at, media_watch_runs.finished_at),
+            meta_json = COALESCE(EXCLUDED.meta_json, media_watch_runs.meta_json),
+            updated_at = NOW()
+        RETURNING *
+    `, [
+        brandId,
+        payload.workflow_code || payload.workflowCode || null,
+        runKey,
+        payload.status || 'completed',
+        payload.trigger_source || payload.triggerSource || 'n8n',
+        Number(payload.item_count || payload.itemCount || 0),
+        payload.error_message || payload.errorMessage || null,
+        payload.started_at || payload.startedAt || null,
+        payload.finished_at || payload.finishedAt || null,
+        JSON.stringify(payload.meta_json || payload.meta || {})
+    ]);
+
+    return result.rows[0] || null;
+}
+
+async function upsertMediaWatchItems(items = [], options = {}) {
+    const insertedRows = [];
+    const runId = options.runId || null;
+    const fallbackBrandId = options.brandId || null;
+
+    for (const rawItem of items) {
+        const brandId = await resolveMediaWatchBrandId(rawItem) || fallbackBrandId;
+        if (!brandId) continue;
+
+        const sourceId = await upsertMediaWatchSource(rawItem);
+        const channelType = normalizeMediaWatchChannel(rawItem.channel_type || rawItem.channelType || rawItem.platform_name || rawItem.platformName || rawItem.source_type || rawItem.sourceType || 'news');
+        const itemType = normalizeMediaWatchItemType(rawItem.item_type || rawItem.itemType || rawItem.signal_type || rawItem.signalType || rawItem.topic_type || rawItem.topicType || channelType);
+        const sentimentScore = clampScore(rawItem.sentiment_score ?? rawItem.sentimentScore, -1, 1);
+        const severityScore = clampScore(rawItem.severity_score ?? rawItem.severityScore, 0, 1);
+        const relevanceScore = clampScore(rawItem.relevance_score ?? rawItem.relevanceScore, 0, 1);
+        const sentimentLabel = normalizeMediaWatchSentiment(rawItem.sentiment_label || rawItem.sentimentLabel, sentimentScore);
+        const dedupeHash = buildMediaWatchDedupeHash({
+            ...rawItem,
+            channel_type: channelType,
+            item_type: itemType
+        }, brandId);
+
+        const result = await pool.query(`
+            INSERT INTO media_watch_items (
+                brand_id, province_id, source_id, run_id, channel_type, item_type, platform_name,
+                source_name, source_domain, source_url, title, summary, content_text, ai_summary,
+                author_name, external_id, language_code, country_code, model_name, product_name,
+                complaint_area, issue_type, sentiment_label, sentiment_score, severity_score, relevance_score,
+                published_at, collected_at, engagement_json, tags_json, topics_json, entities_json,
+                recommendations_json, raw_payload, dedupe_hash, is_active, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26,
+                $27, NOW(), $28, $29, $30, $31,
+                $32, $33, $34, true, NOW()
+            )
+            ON CONFLICT (dedupe_hash) DO UPDATE SET
+                source_id = COALESCE(EXCLUDED.source_id, media_watch_items.source_id),
+                run_id = COALESCE(EXCLUDED.run_id, media_watch_items.run_id),
+                summary = COALESCE(EXCLUDED.summary, media_watch_items.summary),
+                content_text = COALESCE(EXCLUDED.content_text, media_watch_items.content_text),
+                ai_summary = COALESCE(EXCLUDED.ai_summary, media_watch_items.ai_summary),
+                sentiment_label = COALESCE(EXCLUDED.sentiment_label, media_watch_items.sentiment_label),
+                sentiment_score = COALESCE(EXCLUDED.sentiment_score, media_watch_items.sentiment_score),
+                severity_score = COALESCE(EXCLUDED.severity_score, media_watch_items.severity_score),
+                relevance_score = COALESCE(EXCLUDED.relevance_score, media_watch_items.relevance_score),
+                engagement_json = COALESCE(EXCLUDED.engagement_json, media_watch_items.engagement_json),
+                tags_json = COALESCE(EXCLUDED.tags_json, media_watch_items.tags_json),
+                topics_json = COALESCE(EXCLUDED.topics_json, media_watch_items.topics_json),
+                entities_json = COALESCE(EXCLUDED.entities_json, media_watch_items.entities_json),
+                recommendations_json = COALESCE(EXCLUDED.recommendations_json, media_watch_items.recommendations_json),
+                raw_payload = COALESCE(EXCLUDED.raw_payload, media_watch_items.raw_payload),
+                updated_at = NOW(),
+                is_active = true
+            RETURNING *
+        `, [
+            brandId,
+            rawItem.province_id || rawItem.provinceId || null,
+            sourceId,
+            runId,
+            channelType,
+            itemType,
+            truncateDbText(rawItem.platform_name || rawItem.platformName || '', 120),
+            truncateDbText(rawItem.source_name || rawItem.sourceName || rawItem.publisher || '', 255),
+            truncateDbText(rawItem.source_domain || rawItem.sourceDomain || '', 255),
+            truncateDbText(rawItem.source_url || rawItem.sourceUrl || '', 1000),
+            rawItem.title || 'İsimsiz kayıt',
+            rawItem.summary || null,
+            rawItem.content_text || rawItem.contentText || rawItem.content || null,
+            rawItem.ai_summary || rawItem.aiSummary || null,
+            truncateDbText(rawItem.author_name || rawItem.authorName || '', 255),
+            truncateDbText(rawItem.external_id || rawItem.externalId || '', 255),
+            truncateDbText(rawItem.language_code || rawItem.languageCode || 'tr', 10),
+            truncateDbText(rawItem.country_code || rawItem.countryCode || 'TR', 10),
+            truncateDbText(rawItem.model_name || rawItem.modelName || '', 255),
+            truncateDbText(rawItem.product_name || rawItem.productName || '', 255),
+            truncateDbText(rawItem.complaint_area || '', 120),
+            truncateDbText(rawItem.issue_type || rawItem.issueType || '', 120),
+            sentimentLabel,
+            sentimentScore,
+            severityScore,
+            relevanceScore,
+            rawItem.published_at || rawItem.publishedAt || rawItem.collected_at || rawItem.collectedAt || new Date().toISOString(),
+            JSON.stringify(rawItem.engagement_json || rawItem.engagement || {}),
+            JSON.stringify(normalizeArrayJson(rawItem.tags_json || rawItem.tags)),
+            JSON.stringify(normalizeArrayJson(rawItem.topics_json || rawItem.topics)),
+            JSON.stringify(normalizeArrayJson(rawItem.entities_json || rawItem.entities)),
+            JSON.stringify(rawItem.recommendations_json || rawItem.recommendations || {}),
+            JSON.stringify(rawItem.raw_payload || rawItem),
+            dedupeHash
+        ]);
+
+        if (result.rows[0]) insertedRows.push(result.rows[0]);
+    }
+
+    return insertedRows;
+}
+
+function pickTopCounts(rows = [], picker, limit = 6) {
+    const map = new Map();
+    rows.forEach(row => {
+        const value = picker(row);
+        if (!value) return;
+        map.set(value, (map.get(value) || 0) + 1);
+    });
+    return [...map.entries()]
+        .sort((left, right) => right[1] - left[1] || String(left[0]).localeCompare(String(right[0]), 'tr'))
+        .slice(0, limit)
+        .map(([label, count]) => ({ label, count }));
+}
+
+function averageMediaWatchScore(rows = [], picker) {
+    if (!rows.length) return 0;
+    const total = rows.reduce((sum, row) => sum + Number(picker(row) || 0), 0);
+    return Number((total / rows.length).toFixed(2));
+}
+
+function buildMediaWatchAlertKey(brandId, alertType, scopeValue = '') {
+    const base = [
+        brandId || '',
+        alertType || '',
+        normalizeSearchText(scopeValue || '')
+    ].join('|');
+    return crypto.createHash('sha1').update(base).digest('hex');
+}
+
+function buildMediaWatchAlertTitle(alertType, scopeLabel, count, brandName = '') {
+    const label = scopeLabel || brandName || 'Genel gundem';
+    if (alertType === 'complaint-pressure') return `${label} icin toplam sikayet baskisi ${count} kayda ulasti`;
+    if (alertType === 'complaint-cluster') return `${label} ekseninde ${count} tekrar eden sikayet sinyali`;
+    if (alertType === 'service-backlog') return `${label} ekseninde satis sonrasi baskisi artiyor`;
+    if (alertType === 'forum-buzz') return `${label} icin forum tartismasi hizlandi`;
+    if (alertType === 'launch-buzz') return `${label} icin lansman ve sosyal gorunurluk firsati`;
+    if (alertType === 'official-impact') return `${label} icin resmi karar / destek etkisi`;
+    return `${label} icin medya alarmi`;
+}
+
+function buildMediaWatchAlertSummary(alertType, rows = [], scopeLabel = '', brandName = '') {
+    const firstItem = rows[0] || {};
+    const channelMix = pickTopCounts(rows, item => item.platform_name || item.source_domain || item.channel_type, 3)
+        .map(item => `${item.label} (${item.count})`)
+        .join(', ');
+    const modelMix = pickTopCounts(rows, item => item.product_name || item.model_name, 2)
+        .map(item => `${item.label} (${item.count})`)
+        .join(', ');
+    const lastSeen = rows
+        .map(item => item.published_at || item.created_at)
+        .filter(Boolean)
+        .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+
+    if (alertType === 'complaint-pressure') {
+        return `${brandName || 'Marka'} icin son donemde toplam ${rows.length} sikayet / ariza kaydi toplandi. Kanal karmasi: ${channelMix || 'veri yok'}. ${modelMix ? `Dagilan urun / model izi: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
+    }
+    if (alertType === 'complaint-cluster') {
+        return `${brandName || 'Marka'} icin ${scopeLabel || 'saha'} ekseninde ${rows.length} sikayet / ariza sinyali toplandi. Kanal karmasi: ${channelMix || 'veri yok'}. ${modelMix ? `Urun / model yoğunluğu: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
+    }
+    if (alertType === 'service-backlog') {
+        return `${scopeLabel || 'Satis sonrasi'} tarafinda servis, garanti veya yedek parca baskisi goruluyor. Kanal karmasi: ${channelMix || 'veri yok'}.`;
+    }
+    if (alertType === 'forum-buzz') {
+        return `${scopeLabel || 'Kullanici gundemi'} etrafinda forum / tartisma yogunlugu var. ${modelMix ? `Konusulan modeller: ${modelMix}. ` : ''}Kanal karmasi: ${channelMix || 'veri yok'}.`;
+    }
+    if (alertType === 'launch-buzz') {
+        return `${scopeLabel || brandName || 'Marka'} icin lansman, video veya sosyal web gorunurlugu toplandi. ${modelMix ? `One cikan urunler: ${modelMix}. ` : ''}Kanal karmasi: ${channelMix || 'veri yok'}.`;
+    }
+    if (alertType === 'official-impact') {
+        return `${brandName || 'Marka'} ile ilgili resmi karar, destek veya mevzuat sinyali bulundu. Kaynaklar: ${channelMix || 'veri yok'}.`;
+    }
+    return `${brandName || 'Marka'} icin medya alarmi toplandi.`;
+}
+
+function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
+    const alerts = [];
+    const openItems = (items || []).filter(item => item && item.is_active !== false);
+
+    const pushAlert = (alertType, scopeLabel, rows, options = {}) => {
+        const validRows = (rows || []).filter(Boolean);
+        if (!validRows.length) return;
+
+        const severityMax = Math.max(...validRows.map(item => Number(item.severity_score || 0)), 0);
+        const avgSeverity = averageMediaWatchScore(validRows, item => item.severity_score);
+        const confidence = averageMediaWatchScore(validRows, item => item.relevance_score);
+        const sourceCount = new Set(validRows.map(item => item.source_domain || item.source_name || item.platform_name).filter(Boolean)).size;
+        const firstSeenAt = validRows
+            .map(item => item.published_at || item.created_at)
+            .filter(Boolean)
+            .sort((left, right) => new Date(left).getTime() - new Date(right).getTime())[0] || null;
+        const lastSeenAt = validRows
+            .map(item => item.published_at || item.created_at)
+            .filter(Boolean)
+            .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
+        const alertLevel = options.alertLevel || (
+            severityMax >= 0.9 || validRows.length >= 5
+                ? 'critical'
+                : avgSeverity >= 0.65 || validRows.length >= 3
+                    ? 'warning'
+                    : 'watch'
+        );
+
+        alerts.push({
+            alert_key: buildMediaWatchAlertKey(brand.id, alertType, `${scopeLabel}|${options.actionOwner || ''}`),
+            alert_level: alertLevel,
+            alert_type: alertType,
+            title: buildMediaWatchAlertTitle(alertType, scopeLabel, validRows.length, brand.name),
+            summary: buildMediaWatchAlertSummary(alertType, validRows, scopeLabel, brand.name),
+            action_owner: options.actionOwner || 'Ust yonetim',
+            source_count: sourceCount,
+            item_count: validRows.length,
+            average_severity: avgSeverity,
+            confidence_score: confidence,
+            source_item_ids_json: validRows.map(item => item.id).filter(Boolean),
+            meta_json: {
+                scope_label: scopeLabel || null,
+                top_sources: pickTopCounts(validRows, item => item.source_domain || item.source_name || item.platform_name, 4),
+                top_products: pickTopCounts(validRows, item => item.product_name || item.model_name, 4),
+                top_topics: pickTopCounts(validRows.flatMap(item => normalizeArrayJson(item.topics_json).map(topic => ({ topic }))), entry => entry.topic, 4)
+            },
+            first_seen_at: firstSeenAt,
+            last_seen_at: lastSeenAt
+        });
+    };
+
+    const complaintRows = openItems.filter(item =>
+        ['complaint', 'service'].includes(item.item_type) ||
+        ['complaint', 'forum'].includes(item.channel_type) ||
+        item.sentiment_label === 'negative'
+    );
+    if (complaintRows.length >= 4) {
+        pushAlert('complaint-pressure', `${brand.name || 'Marka'} genel baski`, complaintRows, {
+            actionOwner: 'Satis sonrasi',
+            alertLevel: complaintRows.length >= 8 ? 'critical' : 'warning'
+        });
+    }
+    const complaintGroups = new Map();
+    complaintRows.forEach(item => {
+        const key = item.complaint_area || item.issue_type || item.product_name || item.model_name || 'genel';
+        if (!complaintGroups.has(key)) complaintGroups.set(key, []);
+        complaintGroups.get(key).push(item);
+    });
+    complaintGroups.forEach((rows, scopeLabel) => {
+        const maxSeverity = Math.max(...rows.map(item => Number(item.severity_score || 0)), 0);
+        if (rows.length < 2 && maxSeverity < 0.86) return;
+        const issueKey = normalizeSearchText(scopeLabel);
+        const actionOwner = ['motor', 'sanziman', 'hidrolik', 'elektrik', 'teknik'].some(token => issueKey.includes(token))
+            ? 'Ar-Ge'
+            : 'Satis sonrasi';
+        pushAlert('complaint-cluster', scopeLabel, rows, { actionOwner });
+    });
+
+    const serviceRows = complaintRows.filter(item => (item.complaint_area || '').includes('satis') || (item.issue_type || '').includes('servis'));
+    if (serviceRows.length >= 2) {
+        pushAlert('service-backlog', 'Servis / garanti', serviceRows, {
+            actionOwner: 'Satis sonrasi',
+            alertLevel: serviceRows.length >= 4 ? 'critical' : 'warning'
+        });
+    }
+
+    const forumRows = openItems.filter(item => item.channel_type === 'forum' || item.item_type === 'discussion');
+    const forumGroups = new Map();
+    forumRows.forEach(item => {
+        const key = item.product_name || item.model_name || item.issue_type || 'Genel forum';
+        if (!forumGroups.has(key)) forumGroups.set(key, []);
+        forumGroups.get(key).push(item);
+    });
+    forumGroups.forEach((rows, scopeLabel) => {
+        if (rows.length < 2) return;
+        const negativeCount = rows.filter(item => item.sentiment_label === 'negative').length;
+        pushAlert('forum-buzz', scopeLabel, rows, {
+            actionOwner: negativeCount >= 2 ? 'Pazarlama' : 'Satis',
+            alertLevel: negativeCount >= 2 ? 'warning' : 'watch'
+        });
+    });
+
+    const launchRows = openItems.filter(item =>
+        ['launch', 'review', 'campaign'].includes(item.item_type) ||
+        ['social', 'video'].includes(item.channel_type)
+    );
+    const launchGroups = new Map();
+    launchRows.forEach(item => {
+        const key = item.product_name || item.model_name || item.title || 'Marka gundemi';
+        if (!launchGroups.has(key)) launchGroups.set(key, []);
+        launchGroups.get(key).push(item);
+    });
+    launchGroups.forEach((rows, scopeLabel) => {
+        const positiveCount = rows.filter(item => item.sentiment_label === 'positive').length;
+        if (rows.length < 2 && positiveCount < 2) return;
+        pushAlert('launch-buzz', scopeLabel, rows, {
+            actionOwner: 'Pazarlama',
+            alertLevel: rows.length >= 5 ? 'warning' : 'watch'
+        });
+    });
+
+    const officialRows = openItems.filter(item => item.item_type === 'regulation' || ['official', 'report'].includes(item.channel_type));
+    if (officialRows.length > 0) {
+        const latestOfficial = officialRows
+            .sort((left, right) => new Date(right.published_at || right.created_at).getTime() - new Date(left.published_at || left.created_at).getTime())
+            .slice(0, 4);
+        pushAlert('official-impact', 'Resmi kararlar', latestOfficial, {
+            actionOwner: 'Ust yonetim',
+            alertLevel: latestOfficial.some(item => Number(item.severity_score || 0) >= 0.82) ? 'critical' : 'warning'
+        });
+    }
+
+    return alerts
+        .sort((left, right) =>
+            Number(right.average_severity || 0) - Number(left.average_severity || 0) ||
+            Number(right.item_count || 0) - Number(left.item_count || 0)
+        )
+        .slice(0, 8);
+}
+
+async function loadRecentMediaWatchItems(brandId, options = {}) {
+    const limit = Math.max(20, Math.min(300, Number(options.limit || 250)));
+    const windowDays = Math.max(3, Math.min(45, Number(options.windowDays || 30)));
+    const result = await pool.query(`
+        SELECT *
+        FROM media_watch_items
+        WHERE brand_id = $1
+          AND is_active = true
+          AND (
+              COALESCE(published_at, created_at) >= NOW() - ($2::text || ' days')::interval
+              OR COALESCE(collected_at, created_at) >= NOW() - ($2::text || ' days')::interval
+          )
+        ORDER BY COALESCE(published_at, created_at) DESC
+        LIMIT $3
+    `, [brandId, windowDays, limit]);
+    return result.rows;
+}
+
+async function syncMediaWatchAlerts(brandId, options = {}) {
+    if (!brandId) return [];
+
+    const brandRes = await pool.query('SELECT id, name, slug FROM brands WHERE id = $1 LIMIT 1', [brandId]);
+    const brand = brandRes.rows[0];
+    if (!brand) return [];
+
+    const items = Array.isArray(options.items) && options.items.length
+        ? options.items
+        : await loadRecentMediaWatchItems(brandId, {
+            limit: options.limit || 250,
+            windowDays: options.windowDays || 30
+        });
+
+    const alerts = buildMediaWatchAlertsFromItems(brand, items);
+    const alertKeys = alerts.map(item => item.alert_key);
+    const client = await pool.connect();
+    const rows = [];
+
+    try {
+        await client.query('BEGIN');
+
+        if (alertKeys.length > 0) {
+            await client.query(`
+                UPDATE media_watch_alerts
+                SET is_open = false,
+                    updated_at = NOW()
+                WHERE brand_id = $1
+                  AND is_open = true
+                  AND NOT (alert_key = ANY($2::varchar[]))
+            `, [brandId, alertKeys]);
+        } else {
+            await client.query(`
+                UPDATE media_watch_alerts
+                SET is_open = false,
+                    updated_at = NOW()
+                WHERE brand_id = $1
+                  AND is_open = true
+            `, [brandId]);
+        }
+
+        for (const alert of alerts) {
+            const result = await client.query(`
+                INSERT INTO media_watch_alerts (
+                    brand_id, run_id, brief_id, alert_key, alert_level, alert_type, title, summary,
+                    action_owner, source_count, item_count, average_severity, confidence_score,
+                    source_item_ids_json, meta_json, first_seen_at, last_seen_at, is_open, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8,
+                    $9, $10, $11, $12, $13,
+                    $14, $15, $16, $17, true, NOW()
+                )
+                ON CONFLICT (alert_key) DO UPDATE SET
+                    run_id = COALESCE(EXCLUDED.run_id, media_watch_alerts.run_id),
+                    brief_id = COALESCE(EXCLUDED.brief_id, media_watch_alerts.brief_id),
+                    alert_level = EXCLUDED.alert_level,
+                    alert_type = EXCLUDED.alert_type,
+                    title = EXCLUDED.title,
+                    summary = EXCLUDED.summary,
+                    action_owner = EXCLUDED.action_owner,
+                    source_count = EXCLUDED.source_count,
+                    item_count = EXCLUDED.item_count,
+                    average_severity = EXCLUDED.average_severity,
+                    confidence_score = EXCLUDED.confidence_score,
+                    source_item_ids_json = EXCLUDED.source_item_ids_json,
+                    meta_json = EXCLUDED.meta_json,
+                    first_seen_at = COALESCE(media_watch_alerts.first_seen_at, EXCLUDED.first_seen_at),
+                    last_seen_at = GREATEST(COALESCE(media_watch_alerts.last_seen_at, EXCLUDED.last_seen_at), EXCLUDED.last_seen_at),
+                    is_open = true,
+                    updated_at = NOW()
+                RETURNING *
+            `, [
+                brandId,
+                options.runId || null,
+                options.briefId || null,
+                alert.alert_key,
+                alert.alert_level,
+                alert.alert_type,
+                truncateDbText(alert.title, 255),
+                alert.summary || null,
+                truncateDbText(alert.action_owner, 80),
+                Number(alert.source_count || 0),
+                Number(alert.item_count || 0),
+                Number(alert.average_severity || 0),
+                Number(alert.confidence_score || 0),
+                JSON.stringify(alert.source_item_ids_json || []),
+                JSON.stringify(alert.meta_json || {}),
+                alert.first_seen_at || null,
+                alert.last_seen_at || null
+            ]);
+            if (result.rows[0]) rows.push(result.rows[0]);
+        }
+
+        await client.query('COMMIT');
+    } catch (err) {
+        try {
+            await client.query('ROLLBACK');
+        } catch (rollbackErr) {
+            console.error('Media watch alert rollback error:', rollbackErr);
+        }
+        throw err;
+    } finally {
+        client.release();
+    }
+
+    try {
+        await syncMediaWatchAlertNotifications(brandId, rows);
+    } catch (notificationErr) {
+        console.error('Media watch alert notification sync error:', notificationErr);
+    }
+
+    return rows;
+}
+
+async function syncMediaWatchAlertNotifications(brandId, alerts = []) {
+    const notifiableAlerts = (alerts || []).filter(item => ['critical', 'warning'].includes(String(item.alert_level || '')));
+    if (!brandId || !notifiableAlerts.length) return [];
+
+    const usersRes = await pool.query(`
+        SELECT id, full_name, role
+        FROM users
+        WHERE is_active = true
+          AND (role = 'admin' OR brand_id = $1)
+        ORDER BY role = 'admin' DESC, id ASC
+    `, [brandId]);
+
+    const inserted = [];
+    for (const user of usersRes.rows) {
+        for (const alert of notifiableAlerts) {
+            const existingRes = await pool.query(`
+                SELECT id, COALESCE(data_json->>'alert_level', '') AS alert_level
+                FROM notifications
+                WHERE user_id = $1
+                  AND type = 'media_watch_alert'
+                  AND COALESCE(data_json->>'alert_key', '') = $2
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [user.id, alert.alert_key]);
+
+            const existing = existingRes.rows[0];
+            if (existing?.alert_level === alert.alert_level) continue;
+
+            const levelLabel = alert.alert_level === 'critical' ? 'Kritik alarm' : 'Yakın izleme';
+            const result = await pool.query(`
+                INSERT INTO notifications (
+                    user_id, brand_id, type, title, body, is_read, data_json, created_at
+                ) VALUES (
+                    $1, $2, 'media_watch_alert', $3, $4, false, $5, NOW()
+                )
+                RETURNING *
+            `, [
+                user.id,
+                brandId,
+                truncateDbText(`[${levelLabel}] ${alert.title || 'Medya alarmi'}`, 500),
+                truncateDbText(`${alert.summary || 'Detay bekleniyor.'} Aksiyon sahibi: ${alert.action_owner || 'Ust yonetim'}.`, 4000),
+                JSON.stringify({
+                    alert_id: alert.id,
+                    alert_key: alert.alert_key,
+                    alert_level: alert.alert_level,
+                    alert_type: alert.alert_type,
+                    item_count: alert.item_count,
+                    source_count: alert.source_count,
+                    action_owner: alert.action_owner
+                })
+            ]);
+
+            if (result.rows[0]) inserted.push(result.rows[0]);
+        }
+    }
+
+    return inserted;
+}
+
+function buildMediaWatchFallbackBrief(brand = {}, items = [], windowDays = 14) {
+    const complaints = items.filter(item => item.item_type === 'complaint');
+    const launches = items.filter(item => item.item_type === 'launch');
+    const regulations = items.filter(item => item.item_type === 'regulation');
+    const negative = items.filter(item => item.sentiment_label === 'negative');
+    const topIssues = pickTopCounts(complaints, item => item.complaint_area || item.issue_type || item.product_name || item.model_name || 'Genel şikayet', 4);
+    const topChannels = pickTopCounts(items, item => item.platform_name || item.source_domain || item.channel_type, 5);
+    const topProducts = pickTopCounts(items, item => item.product_name || item.model_name, 4);
+    const riskLevel = complaints.length >= 8 || regulations.length >= 3 ? 'critical' : complaints.length >= 3 || negative.length >= 8 ? 'warning' : 'watch';
+
+    return {
+        risk_level: riskLevel,
+        executive_summary_md: [
+            `## ${brand.name || 'Marka'} medya takip özeti`,
+            `Son ${windowDays} günde ${items.length} sinyal toplandı.`,
+            `Şikayet: ${complaints.length} | Lansman / yeni ürün: ${launches.length} | Resmi karar / destek: ${regulations.length}.`,
+            topIssues.length ? `En yoğun geri bildirim eksenleri: ${topIssues.map(item => `${item.label} (${item.count})`).join(', ')}.` : 'Şikayet ekseni henüz yoğun değil.',
+            topProducts.length ? `En görünür ürün / model başlıkları: ${topProducts.map(item => `${item.label} (${item.count})`).join(', ')}.` : 'Belirgin ürün yoğunluğu yok.'
+        ].join('\n\n'),
+        sections_json: {
+            board_brief_md: [
+                `### Üst Yönetim Brifi`,
+                `- Medya görünürlüğü ${items.length} kayıt ile ${riskLevel === 'critical' ? 'kritik' : riskLevel === 'warning' ? 'yakın izleme' : 'kontrollü'} seviyede.`,
+                `- En aktif kanallar: ${topChannels.map(item => `${item.label} (${item.count})`).join(', ') || 'veri yok'}.`,
+                `- Sonuç: Marka gündemi tek bir kanal sorunu değil; ürün, satış sonrası ve resmi duyurular birlikte izlenmeli.`
+            ].join('\n'),
+            marketing_md: [
+                `### Pazarlama`,
+                launches.length
+                    ? `- Lansman konuşmaları görünür. Ürün mesajı, bayi / saha videosu ve teknik içerik aynı haftada beslenmeli.`
+                    : `- Yeni ürün sinyali zayıf. Organik görünürlük için teknik içerik, kullanıcı hikayesi ve tarım odaklı haber dağıtımı artırılmalı.`,
+                negative.length
+                    ? `- Negatif yorum başlıkları için hazır cevap kütüphanesi ve sosyal medya kriz matrisi önerilir.`
+                    : `- Duygu tonu dengeli. Test sürüşü, performans ve yakıt ekonomisi temaları öne çıkarılabilir.`
+            ].join('\n'),
+            arge_md: [
+                `### Ar-Ge`,
+                topIssues.length
+                    ? `- İlk inceleme gereken alanlar: ${topIssues.map(item => item.label).join(', ')}.`
+                    : `- Toplanan veri daha çok görünürlük ve kanal etkisi üretiyor; teknik problem yoğunluğu sınırlı.`,
+                `- Forum ve şikayet içeriklerinde tekrarlayan arıza tipleri ayrı etiketlerle izlenmeli.`
+            ].join('\n'),
+            aftersales_md: [
+                `### Satış Sonrası`,
+                complaints.length
+                    ? `- Şikayet hattı ve servis süreçleri için günlük vaka listesi çıkarılmalı.`
+                    : `- Satış sonrası görünümü sakin. Yine de erken uyarı için servis, yedek parça ve garanti başlıkları izlenmeli.`,
+                `- Her yüksek riskli kayıt için önerilen çözüm kartı ve cevap SLA takibi eklenmeli.`
+            ].join('\n'),
+            issue_solutions_md: [
+                `### Arıza / Çözüm Önerileri`,
+                topIssues.length
+                    ? topIssues.map(item => `- ${item.label}: saha servis kontrol listesi, kullanıcı eğitim notu ve parça/işçilik kontrolü hazırlanmalı.`).join('\n')
+                    : `- Belirgin arıza kümesi yok. Çözüm öneri motoru kayıt geldikçe zenginleşecek.`
+            ].join('\n'),
+            monitoring_gaps_md: [
+                `### İzleme Açıkları`,
+                `- Sosyal ağ API anahtarları ve forum kaynakları n8n tarafında tam bağlanmalı.`,
+                `- Her kayda platform, ürün, şikayet alanı ve etki skoru zorunlu etiket olarak yazılmalı.`
+            ].join('\n')
+        },
+        source_mix_json: {
+            channels: topChannels,
+            products: topProducts,
+            issues: topIssues
+        }
+    };
+}
+
+async function generateMediaWatchBriefRecord(brandId, options = {}) {
+    const windowDays = Math.max(3, Math.min(30, Number(options.windowDays || 14)));
+    const brandRes = await pool.query('SELECT id, name, slug FROM brands WHERE id = $1 LIMIT 1', [brandId]);
+    const brand = brandRes.rows[0];
+    if (!brand) throw new Error('Marka bulunamadi');
+
+    const itemsRes = await pool.query(`
+        SELECT *
+        FROM media_watch_items
+        WHERE brand_id = $1
+          AND is_active = true
+          AND (
+              published_at >= NOW() - ($2::text || ' days')::interval
+              OR COALESCE(collected_at, created_at) >= NOW() - ($2::text || ' days')::interval
+          )
+        ORDER BY COALESCE(published_at, created_at) DESC
+        LIMIT 60
+    `, [brandId, windowDays]);
+    const items = itemsRes.rows;
+    const fallback = buildMediaWatchFallbackBrief(brand, items, windowDays);
+    let sections = fallback.sections_json;
+    let executiveSummary = fallback.executive_summary_md;
+    let aiModel = 'rule-based';
+
+    if (items.length > 0) {
+        const digest = items.slice(0, 40).map((item, index) => (
+            `${index + 1}. [${item.channel_type}/${item.item_type}] ${item.title}\n` +
+            `Kaynak: ${item.source_name || item.source_domain || '-'} | Tarih: ${item.published_at || item.created_at}\n` +
+            `Duygu: ${item.sentiment_label || '-'} (${item.sentiment_score ?? '-'}) | Ciddiyet: ${item.severity_score ?? '-'}\n` +
+            `Urun/Model: ${item.product_name || item.model_name || '-'} | Sikayet: ${item.complaint_area || item.issue_type || '-'}\n` +
+            `Ozet: ${(item.summary || item.ai_summary || item.content_text || '').slice(0, 280)}`
+        )).join('\n\n');
+
+        const ai = await callGroqJson(
+            'Sen tarim ve traktör sektöründe çalışan çok kıdemli bir medya istihbarat yöneticisisin. Verilen kayıtlar için JSON dön. Sadece geçerli JSON üret. Alanlar: executive_summary_md, board_brief_md, marketing_md, arge_md, aftersales_md, issue_solutions_md, monitoring_gaps_md, risk_level. Metinleri Türkçe, kısa ama yönetici seviyesinde, maddeli ve aksiyon odaklı yaz.',
+            `Marka: ${brand.name}\nPencere: son ${windowDays} gün\nKayıt sayısı: ${items.length}\n\nKayıtlar:\n${digest}`
+        );
+
+        if (ai && typeof ai === 'object') {
+            executiveSummary = ai.executive_summary_md || executiveSummary;
+            sections = {
+                board_brief_md: ai.board_brief_md || sections.board_brief_md,
+                marketing_md: ai.marketing_md || sections.marketing_md,
+                arge_md: ai.arge_md || sections.arge_md,
+                aftersales_md: ai.aftersales_md || sections.aftersales_md,
+                issue_solutions_md: ai.issue_solutions_md || sections.issue_solutions_md,
+                monitoring_gaps_md: ai.monitoring_gaps_md || sections.monitoring_gaps_md
+            };
+            fallback.risk_level = ai.risk_level || fallback.risk_level;
+            aiModel = MINIMAX_MODEL;
+        }
+    }
+
+    const insertRes = await pool.query(`
+        INSERT INTO media_watch_briefs (
+            brand_id, run_id, brief_type, period_label, window_days, item_count,
+            risk_level, executive_summary_md, sections_json, source_mix_json, ai_model, created_by, is_active
+        ) VALUES (
+            $1, $2, 'executive', $3, $4, $5,
+            $6, $7, $8, $9, $10, $11, true
+        )
+        RETURNING *
+    `, [
+        brandId,
+        options.runId || null,
+        `Son ${windowDays} gün`,
+        windowDays,
+        items.length,
+        fallback.risk_level,
+        executiveSummary,
+        JSON.stringify(sections || {}),
+        JSON.stringify(fallback.source_mix_json || {}),
+        aiModel,
+        options.createdBy || 'system'
+    ]);
+
+    const alerts = await syncMediaWatchAlerts(brandId, {
+        runId: options.runId || null,
+        briefId: insertRes.rows[0]?.id || null,
+        items,
+        windowDays: Math.max(windowDays, 30)
+    });
+
+    return {
+        ...insertRes.rows[0],
+        brand,
+        sections_json: sections,
+        source_mix_json: fallback.source_mix_json || {},
+        alerts
+    };
+}
+
+async function buildMediaWatchOverview(brandId) {
+    const [brandRes, itemsRes, briefRes, runsRes, workflowsRes, alertsRes] = await Promise.all([
+        pool.query('SELECT id, name, slug, primary_color, secondary_color, accent_color, logo_url FROM brands WHERE id = $1 LIMIT 1', [brandId]),
+        pool.query(`
+            SELECT *
+            FROM media_watch_items
+            WHERE brand_id = $1 AND is_active = true
+            ORDER BY COALESCE(published_at, created_at) DESC
+            LIMIT 250
+        `, [brandId]),
+        pool.query(`
+            SELECT *
+            FROM media_watch_briefs
+            WHERE brand_id = $1 AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [brandId]),
+        pool.query(`
+            SELECT *
+            FROM media_watch_runs
+            WHERE brand_id = $1
+            ORDER BY COALESCE(started_at, created_at) DESC
+            LIMIT 12
+        `, [brandId]),
+        pool.query(`
+            SELECT *
+            FROM n8n_workflows
+            WHERE workflow_type IN ('media-watch', 'media_monitoring', 'media-intelligence')
+            ORDER BY title
+        `),
+        pool.query(`
+            SELECT *
+            FROM media_watch_alerts
+            WHERE brand_id = $1 AND is_open = true
+            ORDER BY
+                CASE alert_level
+                    WHEN 'critical' THEN 1
+                    WHEN 'warning' THEN 2
+                    WHEN 'watch' THEN 3
+                    ELSE 4
+                END,
+                COALESCE(last_seen_at, updated_at, created_at) DESC
+            LIMIT 12
+        `, [brandId])
+    ]);
+
+    const brand = brandRes.rows[0] || null;
+    const items = itemsRes.rows || [];
+    const alerts = alertsRes.rows || [];
+    const now = Date.now();
+    const mentions24h = items.filter(item => {
+        const date = new Date(item.published_at || item.created_at).getTime();
+        return Number.isFinite(date) && now - date <= 24 * 60 * 60 * 1000;
+    }).length;
+    const complaints = items.filter(item => item.item_type === 'complaint');
+    const launches = items.filter(item => item.item_type === 'launch');
+    const regulations = items.filter(item => item.item_type === 'regulation');
+    const critical = items.filter(item => Number(item.severity_score || 0) >= 0.75);
+    const channelMix = pickTopCounts(items, item => item.channel_type, 8);
+    const sourceMix = pickTopCounts(items, item => item.source_name || item.source_domain, 8);
+    const productMix = pickTopCounts(items, item => item.product_name || item.model_name, 6);
+    const complaintMix = pickTopCounts(complaints, item => item.complaint_area || item.issue_type, 6);
+    const topicMix = pickTopCounts(items.flatMap(item => normalizeArrayJson(item.topics_json).map(topic => ({ topic }))), entry => entry.topic, 8);
+
+    return {
+        brand,
+        items,
+        alerts,
+        latest_brief: briefRes.rows[0] || null,
+        runs: runsRes.rows || [],
+        workflows: workflowsRes.rows || [],
+        overview: {
+            mentions_24h: mentions24h,
+            mentions_total: items.length,
+            complaint_count: complaints.length,
+            launch_count: launches.length,
+            regulation_count: regulations.length,
+            critical_count: critical.length,
+            open_alert_count: alerts.length,
+            critical_alert_count: alerts.filter(item => item.alert_level === 'critical').length,
+            warning_alert_count: alerts.filter(item => item.alert_level === 'warning').length,
+            active_source_count: new Set(items.map(item => item.source_domain || item.source_name).filter(Boolean)).size,
+            last_published_at: items[0]?.published_at || items[0]?.created_at || null,
+            last_run_at: runsRes.rows[0]?.started_at || null,
+            channel_mix: channelMix,
+            source_mix: sourceMix,
+            product_mix: productMix,
+            complaint_mix: complaintMix,
+            topic_mix: topicMix,
+            alert_mix: pickTopCounts(alerts, item => item.alert_type, 6)
+        }
+    };
+}
+
+function isMediaWatchWebhookAuthorized(req) {
+    const headerKey = String(req.headers['x-media-watch-key'] || req.headers['x-n8n-key'] || '').trim();
+    const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!MEDIA_WATCH_WEBHOOK_KEY) return false;
+    return headerKey === MEDIA_WATCH_WEBHOOK_KEY || bearer === MEDIA_WATCH_WEBHOOK_KEY;
+}
+
+app.get('/api/insights', authMiddleware, requireFeature('ai_insights', 'ai_insights_limited'), requireAiQuota(), async (req, res) => {
     try {
         const { brand_id, province_id, type } = req.query;
         const userBrandId = req.user.role === 'admin' ? brand_id : req.user.brand_id;
@@ -4247,26 +12158,1134 @@ app.post('/api/insights', async (req, res) => {
 });
 
 // ============================================
+// MEDIA WATCH
+// ============================================
+app.get('/api/media-watch/overview', authMiddleware, requireFeature('media_watch'), async (req, res) => {
+    try {
+        const brandId = resolveMediaWatchScopedBrandId(req, req.query.brand_id);
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+        const payload = await buildMediaWatchOverview(brandId);
+        res.json(payload);
+    } catch (err) {
+        console.error('Media watch overview error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.get('/api/media-watch/alerts', authMiddleware, requireFeature('media_watch'), async (req, res) => {
+    try {
+        const brandId = resolveMediaWatchScopedBrandId(req, req.query.brand_id);
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+
+        const params = [brandId];
+        let query = `
+            SELECT *
+            FROM media_watch_alerts
+            WHERE brand_id = $1
+              AND is_open = true
+        `;
+
+        if (req.query.level) {
+            params.push(String(req.query.level));
+            query += ` AND alert_level = $${params.length}`;
+        }
+        if (req.query.type) {
+            params.push(String(req.query.type));
+            query += ` AND alert_type = $${params.length}`;
+        }
+
+        params.push(Math.min(20, Math.max(4, parseInt(req.query.limit || '8', 10))));
+        query += `
+            ORDER BY
+                CASE alert_level
+                    WHEN 'critical' THEN 1
+                    WHEN 'warning' THEN 2
+                    WHEN 'watch' THEN 3
+                    ELSE 4
+                END,
+                COALESCE(last_seen_at, updated_at, created_at) DESC
+            LIMIT $${params.length}
+        `;
+
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Media watch alerts error:', err);
+        res.status(500).json({ error: 'Sunucu hatasÄ±' });
+    }
+});
+
+app.get('/api/media-watch/items', authMiddleware, requireFeature('media_watch'), async (req, res) => {
+    try {
+        const brandId = resolveMediaWatchScopedBrandId(req, req.query.brand_id);
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+
+        const params = [brandId];
+        let query = `
+            SELECT item.*, prov.name AS province_name, src.title AS source_title
+            FROM media_watch_items item
+            LEFT JOIN provinces prov ON prov.id = item.province_id
+            LEFT JOIN intelligence_sources src ON src.id = item.source_id
+            WHERE item.brand_id = $1 AND item.is_active = true
+        `;
+
+        if (req.query.channel) {
+            params.push(req.query.channel);
+            query += ` AND item.channel_type = $${params.length}`;
+        }
+        if (req.query.type) {
+            params.push(req.query.type);
+            query += ` AND item.item_type = $${params.length}`;
+        }
+        if (req.query.sentiment) {
+            params.push(req.query.sentiment);
+            query += ` AND item.sentiment_label = $${params.length}`;
+        }
+        if (req.query.search) {
+            params.push(`%${req.query.search}%`);
+            query += ` AND (item.title ILIKE $${params.length} OR COALESCE(item.summary, '') ILIKE $${params.length} OR COALESCE(item.content_text, '') ILIKE $${params.length})`;
+        }
+
+        query += ' ORDER BY COALESCE(item.published_at, item.created_at) DESC';
+        params.push(Math.min(200, Math.max(20, parseInt(req.query.limit || '80', 10))));
+        query += ` LIMIT $${params.length}`;
+
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Media watch items error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.get('/api/media-watch/brief', authMiddleware, requireFeature('ai_brief', 'media_watch'), async (req, res) => {
+    try {
+        const brandId = resolveMediaWatchScopedBrandId(req, req.query.brand_id);
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+
+        const result = await pool.query(`
+            SELECT *
+            FROM media_watch_briefs
+            WHERE brand_id = $1 AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [brandId]);
+
+        res.json(result.rows[0] || null);
+    } catch (err) {
+        console.error('Media watch brief error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/media-watch/brief/generate', authMiddleware, async (req, res) => {
+    try {
+        const brandId = resolveMediaWatchScopedBrandId(req, req.body.brand_id || req.query.brand_id);
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+        const brief = await generateMediaWatchBriefRecord(brandId, {
+            windowDays: req.body.window_days || req.query.window_days || 14,
+            createdBy: req.user?.role || 'user'
+        });
+        res.json(brief);
+    } catch (err) {
+        console.error('Media watch brief generate error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/media-watch/alerts/rebuild', authMiddleware, async (req, res) => {
+    try {
+        const brandId = resolveMediaWatchScopedBrandId(req, req.body.brand_id || req.query.brand_id);
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+
+        const alerts = await syncMediaWatchAlerts(brandId, {
+            windowDays: req.body.window_days || req.query.window_days || 30
+        });
+
+        res.json({
+            success: true,
+            brand_id: brandId,
+            alert_count: alerts.length,
+            critical_count: alerts.filter(item => item.alert_level === 'critical').length,
+            warning_count: alerts.filter(item => item.alert_level === 'warning').length,
+            alerts
+        });
+    } catch (err) {
+        console.error('Media watch alerts rebuild error:', err);
+        res.status(500).json({ error: 'Sunucu hatasÄ±' });
+    }
+});
+
+app.post('/api/media-watch/alerts/refresh', async (req, res) => {
+    try {
+        if (!isMediaWatchWebhookAuthorized(req)) {
+            return res.status(401).json({ error: 'Webhook yetkisiz' });
+        }
+
+        const brandId = await resolveMediaWatchBrandId(req.body || {});
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+
+        const alerts = await syncMediaWatchAlerts(brandId, {
+            runId: req.body.run_id || req.body.runId || null,
+            windowDays: req.body.window_days || req.body.windowDays || 30
+        });
+
+        res.json({
+            success: true,
+            brand_id: brandId,
+            alert_count: alerts.length,
+            critical_count: alerts.filter(item => item.alert_level === 'critical').length,
+            warning_count: alerts.filter(item => item.alert_level === 'warning').length
+        });
+    } catch (err) {
+        console.error('Media watch alerts refresh error:', err);
+        res.status(500).json({ error: 'Sunucu hatasÄ±' });
+    }
+});
+
+app.post('/api/media-watch/brief/refresh', async (req, res) => {
+    try {
+        if (!isMediaWatchWebhookAuthorized(req)) {
+            return res.status(401).json({ error: 'Webhook yetkisiz' });
+        }
+
+        const brandId = await resolveMediaWatchBrandId(req.body || {});
+        if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
+
+        const brief = await generateMediaWatchBriefRecord(brandId, {
+            runId: req.body.run_id || req.body.runId || null,
+            windowDays: req.body.window_days || req.body.windowDays || 14,
+            createdBy: req.body.created_by || req.body.createdBy || 'n8n'
+        });
+
+        res.json({
+            success: true,
+            brand_id: brandId,
+            brief_id: brief.id,
+            risk_level: brief.risk_level,
+            item_count: brief.item_count
+        });
+    } catch (err) {
+        console.error('Media watch brief refresh error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/media-watch/ingest', async (req, res) => {
+    try {
+        if (!isMediaWatchWebhookAuthorized(req)) {
+            return res.status(401).json({ error: 'Webhook yetkisiz' });
+        }
+
+        const payload = req.body || {};
+        const items = Array.isArray(payload.items) ? payload.items : (payload.item ? [payload.item] : []);
+        const brandId = await resolveMediaWatchBrandId(payload);
+        const run = await upsertMediaWatchRun(payload, brandId);
+        const inserted = await upsertMediaWatchItems(items, {
+            runId: run?.id || null,
+            brandId
+        });
+
+        if (run?.id) {
+            await pool.query(`
+                UPDATE media_watch_runs
+                SET item_count = $2,
+                    status = CASE WHEN status = 'queued' THEN 'completed' ELSE status END,
+                    finished_at = COALESCE(finished_at, NOW()),
+                    updated_at = NOW()
+                WHERE id = $1
+            `, [run.id, inserted.length]);
+        }
+
+        const alerts = brandId ? await syncMediaWatchAlerts(brandId, {
+            runId: run?.id || null,
+            windowDays: 30
+        }) : [];
+
+        res.json({
+            success: true,
+            run_id: run?.id || null,
+            inserted_count: inserted.length,
+            brand_id: brandId || null,
+            alert_count: alerts.length
+        });
+    } catch (err) {
+        console.error('Media watch ingest error:', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// MEDIA WATCH — Kaynak Registry + Manuel Tetikleme + Coğrafi İstatistikler
+// ============================================
+const MEDIA_WATCH_BRIDGE_PORT = parseInt(process.env.MEDIA_WATCH_BRIDGE_PORT || '3011', 10);
+const MEDIA_WATCH_BRIDGE_URL = (process.env.MEDIA_WATCH_BRIDGE_URL || `http://127.0.0.1:${MEDIA_WATCH_BRIDGE_PORT}`).replace(/\/$/, '');
+
+app.get('/api/media-watch/sources', authMiddleware, requireFeature('media_watch'), async (req, res) => {
+    try {
+        const r = await fetch(`${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/sources`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+        if (r && r.ok) return res.json(await r.json());
+        res.json({ international: [], sector: [], oem_groups: {}, total: 0, languages: [], countries: [] });
+    } catch (err) {
+        res.status(500).json({ error: 'Bridge erişilemedi' });
+    }
+});
+
+// Coğrafi/dil istatistikleri (DB tabanlı, son 30 gün)
+app.get('/api/media-watch/coverage', authMiddleware, requireFeature('media_watch'), async (req, res) => {
+    try {
+        const brandId = req.query.brand_id ? Number(req.query.brand_id) : null;
+        const params = brandId ? [brandId] : [];
+        const where = brandId ? 'WHERE brand_id = $1 AND' : 'WHERE';
+        const [byCountry, byLanguage, bySource, totals] = await Promise.all([
+            pool.query(`SELECT COALESCE(country_code,'TR') AS country, COUNT(*)::int AS items
+                        FROM media_watch_items ${where} published_at >= NOW() - INTERVAL '30 days'
+                        GROUP BY 1 ORDER BY 2 DESC LIMIT 30`, params),
+            pool.query(`SELECT COALESCE(language,'tr') AS language, COUNT(*)::int AS items
+                        FROM media_watch_items ${where} published_at >= NOW() - INTERVAL '30 days'
+                        GROUP BY 1 ORDER BY 2 DESC`, params),
+            pool.query(`SELECT COALESCE(source_name,'-') AS source, COALESCE(source_domain,'-') AS domain,
+                               COUNT(*)::int AS items, MAX(published_at) AS latest
+                        FROM media_watch_items ${where} published_at >= NOW() - INTERVAL '30 days'
+                        GROUP BY 1,2 ORDER BY 3 DESC LIMIT 25`, params),
+            pool.query(`SELECT COUNT(*)::int AS total,
+                               COUNT(DISTINCT country_code)::int AS country_count,
+                               COUNT(DISTINCT language)::int AS language_count,
+                               COUNT(DISTINCT source_domain)::int AS source_count,
+                               COUNT(*) FILTER (WHERE published_at >= NOW() - INTERVAL '24 hours')::int AS last_24h
+                        FROM media_watch_items ${where} published_at >= NOW() - INTERVAL '30 days'`, params)
+        ]);
+        res.json({
+            totals: totals.rows[0] || {},
+            by_country: byCountry.rows,
+            by_language: byLanguage.rows,
+            by_source: bySource.rows
+        });
+    } catch (err) {
+        console.error('media-watch coverage error', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// Manuel tarama tetikleme (Enterprise + admin) — bridge'i çağırır
+app.post('/api/media-watch/run-now', authMiddleware, requireFeature('media_watch'), async (req, res) => {
+    try {
+        const isElite = req.user.role === 'admin' || (req.subscription && req.subscription.tier_rank >= 3);
+        if (!isElite) {
+            return res.status(402).json({ code: 'ENTERPRISE_REQUIRED', error: 'Manuel tarama Enterprise pakette' });
+        }
+        const { pack, brand_id } = req.body || {};
+        const packCode = ['pack-1','pack-2','pack-3','pack-4','pack-5','pack-6'].includes(pack) ? pack : null;
+        const url = packCode
+            ? `${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/push-${packCode}`
+            : `${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/push-all`;
+        const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ brand_id: brand_id || null }),
+            signal: AbortSignal.timeout(60000)
+        });
+        const json = await r.json().catch(() => ({}));
+        if (!r.ok) return res.status(r.status).json(json);
+        res.json(json);
+    } catch (err) {
+        console.error('media-watch run-now error', err);
+        res.status(500).json({ error: err.message || 'Bridge çağrı hatası' });
+    }
+});
+
+// AI çeviri (Türkçe olmayan haberleri TR'ye çevirip özet üret)
+app.post('/api/media-watch/translate', authMiddleware, requireFeature('ai_brief', 'media_watch'), async (req, res) => {
+    try {
+        const { item_id } = req.body || {};
+        if (!item_id) return res.status(400).json({ error: 'item_id zorunlu' });
+        const r = await pool.query(`SELECT id, language, title, summary, content_text FROM media_watch_items WHERE id = $1`, [item_id]);
+        if (r.rows.length === 0) return res.status(404).json({ error: 'Kayıt bulunamadı' });
+        const item = r.rows[0];
+        if ((item.language || 'tr') === 'tr') {
+            return res.json({ skipped: true, reason: 'already_turkish' });
+        }
+        const groqKey = process.env.GROQ_API_KEY || '';
+        if (!groqKey) {
+            return res.status(503).json({ error: 'AI servisi yapılandırılmadı (GROQ_API_KEY yok)' });
+        }
+        const prompt = `Aşağıdaki tarım sektörü haberini TÜRKÇE'ye çevir ve 3 cümleyle özetle.\nORİJİNAL DİL: ${item.language}\nBAŞLIK: ${item.title}\nÖZET: ${item.summary || item.content_text || ''}\n\nLütfen sadece JSON döndür:\n{"translated_title": "...", "translated_summary": "..."}`;
+        const aiResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.2,
+                max_tokens: 600
+            }),
+            signal: AbortSignal.timeout(15000)
+        });
+        const aiJson = await aiResp.json();
+        const text = aiJson?.choices?.[0]?.message?.content || '';
+        const parsed = (() => { try { return JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}'); } catch { return {}; } })();
+        if (parsed.translated_title || parsed.translated_summary) {
+            await pool.query(
+                `UPDATE media_watch_items SET translated_title = $1, translated_summary = $2,
+                 translation_model = 'llama-3.3-70b-versatile', translated_at = NOW(),
+                 original_title = COALESCE(original_title, title) WHERE id = $3`,
+                [parsed.translated_title || null, parsed.translated_summary || null, item.id]
+            );
+            // AI usage record (Enterprise/Growth kotası)
+            try {
+                if (typeof recordAiUsage === 'function') {
+                    await recordAiUsage(req.user.id, 'media_watch_translate', 'llama-3.3-70b-versatile', aiJson?.usage?.prompt_tokens || 0, aiJson?.usage?.completion_tokens || 0);
+                }
+            } catch (e) {}
+        }
+        res.json({ success: true, ...parsed });
+    } catch (err) {
+        console.error('media-watch translate error', err);
+        res.status(500).json({ error: err.message || 'Çeviri hatası' });
+    }
+});
+
+// ============================================
 // SUBSCRIPTION & PAYMENT
 // ============================================
+const billingProviders = require('./billing/providers');
+
+// Plan feature key cache (5 dk TTL)
+const _planFeatureCache = new Map();
+async function getPlanFeatureKeys(planId) {
+    if (!planId) return [];
+    const cached = _planFeatureCache.get(planId);
+    if (cached && (Date.now() - cached.t) < 5 * 60 * 1000) return cached.keys;
+    const r = await pool.query('SELECT feature_keys FROM subscription_plans WHERE id = $1', [planId]);
+    let keys = [];
+    try {
+        const raw = r.rows[0]?.feature_keys;
+        keys = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch (e) { keys = []; }
+    _planFeatureCache.set(planId, { keys, t: Date.now() });
+    return keys;
+}
+
+async function getUserActiveSubscription(userId) {
+    if (!userId) return null;
+    const r = await pool.query(`
+        SELECT s.*, sp.name as plan_name, sp.slug as plan_slug, sp.tier_rank, sp.feature_keys,
+               sp.features, sp.has_ai_insights, sp.has_competitor_analysis, sp.has_weather_data, sp.has_export
+        FROM subscriptions s
+        JOIN subscription_plans sp ON s.plan_id = sp.id
+        WHERE s.user_id = $1 AND s.status IN ('active', 'trialing', 'pending')
+        ORDER BY s.created_at DESC LIMIT 1
+    `, [userId]);
+    return r.rows[0] || null;
+}
+
+async function getPreviewPlanSlug(userId) {
+    if (!userId) return null;
+    const r = await pool.query(`SELECT preview_plan_slug, is_superuser FROM users WHERE id = $1`, [userId]);
+    if (!r.rows[0] || !r.rows[0].is_superuser) return null;
+    return r.rows[0].preview_plan_slug || null;
+}
+async function getPreviewPlanFeatures(planSlug) {
+    if (!planSlug) return null;
+    const r = await pool.query(`SELECT feature_keys, plan_limits, tier_rank, slug, name FROM subscription_plans WHERE slug = $1`, [planSlug]);
+    if (r.rows.length === 0) return null;
+    let keys = [], limits = {};
+    try { keys = typeof r.rows[0].feature_keys === 'string' ? JSON.parse(r.rows[0].feature_keys) : r.rows[0].feature_keys || []; } catch (e) {}
+    try { limits = typeof r.rows[0].plan_limits === 'string' ? JSON.parse(r.rows[0].plan_limits) : r.rows[0].plan_limits || {}; } catch (e) {}
+    return { feature_keys: keys, plan_limits: limits, tier_rank: r.rows[0].tier_rank, plan_slug: r.rows[0].slug, plan_name: r.rows[0].name };
+}
+
+async function userHasFeature(userId, featureKey, userRole) {
+    if (userRole === 'admin') {
+        // Superuser preview modu — admin sadece seçtiği paketin özelliklerini görsün
+        const preview = await getPreviewPlanSlug(userId);
+        if (preview) {
+            const p = await getPreviewPlanFeatures(preview);
+            return p ? p.feature_keys.includes(featureKey) : true;
+        }
+        return true;
+    }
+    const sub = await getUserActiveSubscription(userId);
+    if (!sub) return false;
+    if (sub.status !== 'active' && sub.status !== 'trialing') return false;
+    let keys = [];
+    try {
+        keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
+    } catch (e) { keys = []; }
+    return keys.includes(featureKey);
+}
+
+// requireFeature middleware (bir veya birden çok özellik anahtarı verilebilir; biri varsa geçer)
+function requireFeature(...featureKeys) {
+    return async (req, res, next) => {
+        try {
+            if (req.user?.role === 'admin') {
+                // Superuser preview: seçtiği paketin özelliklerini geçer
+                const preview = await getPreviewPlanSlug(req.user.id);
+                if (preview) {
+                    const p = await getPreviewPlanFeatures(preview);
+                    if (p && featureKeys.some(k => p.feature_keys.includes(k))) return next();
+                    if (!p) return next();
+                    return res.status(402).json({
+                        code: 'FEATURE_LOCKED_PREVIEW',
+                        error: `Önizleme paketinizde (${p.plan_name}) bu özellik yok. Plan değiştirin veya önizlemeyi kapatın.`,
+                        current_plan: preview, required_features: featureKeys
+                    });
+                }
+                return next();
+            }
+            const sub = await getUserActiveSubscription(req.user?.id);
+            if (!sub || (sub.status !== 'active' && sub.status !== 'trialing')) {
+                return res.status(402).json({
+                    error: 'Aktif abonelik gerekiyor',
+                    code: 'NO_ACTIVE_SUBSCRIPTION',
+                    required_features: featureKeys,
+                    upgrade_url: '/?page=subscription'
+                });
+            }
+            let keys = [];
+            try {
+                keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
+            } catch (e) { keys = []; }
+            const hasAccess = featureKeys.some(k => keys.includes(k));
+            if (!hasAccess) {
+                return res.status(402).json({
+                    error: 'Bu özellik için planınızı yükseltmeniz gerekiyor',
+                    code: 'FEATURE_LOCKED',
+                    current_plan: sub.plan_slug,
+                    current_tier: sub.tier_rank,
+                    required_features: featureKeys,
+                    upgrade_url: '/?page=subscription'
+                });
+            }
+            req.subscription = sub;
+            next();
+        } catch (err) {
+            console.error('requireFeature error:', err);
+            res.status(500).json({ error: 'Yetkilendirme kontrolü başarısız' });
+        }
+    };
+}
+
+// Plan listesi (public)
 app.get('/api/plans', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM subscription_plans WHERE is_active = true ORDER BY price_monthly');
+        const result = await pool.query(`
+            SELECT id, name, slug, COALESCE(tier_rank, 1) AS tier_rank, COALESCE(currency, 'TRY') AS currency,
+                   COALESCE(description, '') AS description, price_monthly, price_yearly,
+                   features, COALESCE(feature_keys, '[]'::jsonb) AS feature_keys,
+                   max_users, has_ai_insights, has_competitor_analysis, has_weather_data, has_export
+            FROM subscription_plans WHERE is_active = true
+            ORDER BY tier_rank, price_monthly
+        `);
         res.json(result.rows);
+    } catch (err) {
+        console.error('GET /api/plans error', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// Aktif abonelik (kullanıcıya özel)
+app.get('/api/subscription', authMiddleware, async (req, res) => {
+    try {
+        const sub = await getUserActiveSubscription(req.user.id);
+        if (!sub) return res.json(null);
+        let keys = [];
+        try {
+            keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
+        } catch (e) { keys = []; }
+        res.json({ ...sub, feature_keys: keys });
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
 
-app.get('/api/subscription', authMiddleware, async (req, res) => {
+// Kullanıcının özellik anahtarları (frontend gating için hızlı endpoint)
+app.get('/api/me/features', authMiddleware, async (req, res) => {
     try {
-        const result = await pool.query(`
-            SELECT s.*, sp.name as plan_name, sp.features, sp.has_ai_insights, sp.has_competitor_analysis, sp.has_weather_data, sp.has_export
-            FROM subscriptions s JOIN subscription_plans sp ON s.plan_id = sp.id
-            WHERE s.user_id = $1 AND s.status = 'active'
-            ORDER BY s.created_at DESC LIMIT 1
+        if (req.user.role === 'admin') {
+            // Superuser preview varsa onu uygula, yoksa tüm özellikler
+            const preview = await getPreviewPlanSlug(req.user.id);
+            if (preview) {
+                const p = await getPreviewPlanFeatures(preview);
+                if (p) {
+                    return res.json({
+                        role: 'admin', is_superuser: true, preview_plan_slug: preview,
+                        tier_rank: p.tier_rank, plan_slug: p.plan_slug, plan_name: p.plan_name,
+                        feature_keys: p.feature_keys, has_active_subscription: true
+                    });
+                }
+            }
+            const r = await pool.query(`SELECT feature_keys FROM subscription_plans WHERE is_active = true ORDER BY tier_rank DESC LIMIT 1`);
+            let keys = [];
+            try {
+                const raw = r.rows[0]?.feature_keys;
+                keys = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+            } catch (e) { keys = []; }
+            return res.json({ role: 'admin', is_superuser: true, tier_rank: 99, plan_slug: 'admin', feature_keys: keys, has_active_subscription: true });
+        }
+        const sub = await getUserActiveSubscription(req.user.id);
+        let keys = [];
+        if (sub) {
+            try {
+                keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
+            } catch (e) { keys = []; }
+        }
+        res.json({
+            role: req.user.role,
+            tier_rank: sub?.tier_rank || 0,
+            plan_slug: sub?.plan_slug || null,
+            plan_name: sub?.plan_name || null,
+            status: sub?.status || 'none',
+            current_period_end: sub?.current_period_end || null,
+            feature_keys: keys,
+            has_active_subscription: !!sub && (sub.status === 'active' || sub.status === 'trialing')
+        });
+    } catch (err) {
+        console.error('GET /api/me/features error', err);
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// (Eski /api/auth/signup endpoint'i auth bloğuna taşındı — burası kullanılmıyor)
+app.post('/api/auth/_signup_legacy_disabled', async (req, res) => {
+    res.status(410).json({ error: 'Bu endpoint kullanım dışı. /api/auth/signup kullanın.' });
+});
+
+// ============================================
+// BILLING — Checkout / Webhook / Yönetim
+// ============================================
+app.get('/api/billing/payment-providers', (req, res) => {
+    try {
+        res.json(billingProviders.listProviders());
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/billing/checkout', authMiddleware, async (req, res) => {
+    try {
+        const { plan_slug, provider, period } = req.body || {};
+        if (!plan_slug || !provider) return res.status(400).json({ error: 'plan_slug ve provider zorunlu' });
+        const periodNorm = period === 'yearly' ? 'yearly' : 'monthly';
+
+        const planRes = await pool.query('SELECT * FROM subscription_plans WHERE slug = $1 AND is_active = true', [String(plan_slug).toLowerCase()]);
+        if (planRes.rows.length === 0) return res.status(404).json({ error: 'Plan bulunamadı' });
+        const plan = planRes.rows[0];
+
+        const providerImpl = billingProviders.getProvider(provider);
+        if (!providerImpl) return res.status(400).json({ error: 'Geçersiz ödeme sağlayıcısı' });
+
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const returnUrl = `${baseUrl}/billing/success?provider=${providerImpl.code}&plan=${plan.slug}&period=${periodNorm}`;
+        const cancelUrl = `${baseUrl}/billing/cancel`;
+
+        const session = await providerImpl.createCheckout({
+            user: req.user, plan, period: periodNorm, returnUrl, cancelUrl, baseUrl
+        });
+
+        // Pending subscription oluştur veya güncelle
+        const existing = await pool.query(
+            `SELECT id FROM subscriptions WHERE user_id = $1 AND status IN ('pending', 'active', 'trialing') ORDER BY created_at DESC LIMIT 1`,
+            [req.user.id]
+        );
+        let subscriptionId;
+        if (existing.rows.length > 0) {
+            subscriptionId = existing.rows[0].id;
+            await pool.query(
+                `UPDATE subscriptions SET plan_id = $1, status = 'pending', provider = $2, updated_at = NOW() WHERE id = $3`,
+                [plan.id, providerImpl.code, subscriptionId]
+            );
+        } else {
+            const ins = await pool.query(
+                `INSERT INTO subscriptions (user_id, plan_id, status, provider, current_period_start)
+                 VALUES ($1, $2, 'pending', $3, NOW()) RETURNING id`,
+                [req.user.id, plan.id, providerImpl.code]
+            );
+            subscriptionId = ins.rows[0].id;
+        }
+
+        // Pending payment kaydı
+        await pool.query(
+            `INSERT INTO payments (user_id, subscription_id, provider, provider_payment_id, amount, currency, status, payment_method, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)`,
+            [
+                req.user.id, subscriptionId, providerImpl.code, session.provider_session_id,
+                session.amount, session.currency || 'TRY',
+                providerImpl.code === 'bank_transfer' ? 'bank_transfer' : 'card',
+                JSON.stringify({ ...(session.metadata || {}), bank_reference: session.bank_reference || null, period: periodNorm })
+            ]
+        );
+
+        res.json({
+            success: true,
+            subscription_id: subscriptionId,
+            provider: providerImpl.code,
+            redirect_url: session.redirect_url,
+            amount: session.amount,
+            currency: session.currency || 'TRY',
+            is_mock: !!session.is_mock,
+            bank_reference: session.bank_reference || null,
+            bank_details: session.bank_details || null
+        });
+    } catch (err) {
+        console.error('Checkout error:', err);
+        res.status(500).json({ error: err.message || 'Sunucu hatası' });
+    }
+});
+
+// MOCK akış için success endpoint: kullanıcı tarayıcıdan dönerken aboneliği aktive eder.
+// Provider kullanıcıyı redirect ettikten sonra session_id ile pending payment'ı bulup aktive ederiz.
+app.get('/billing/success', async (req, res) => {
+    try {
+        const { provider, plan, period, session_id } = req.query;
+        let userId = null;
+
+        // 1) Yöntem: session_id'den pending payment kaydını bul
+        if (session_id) {
+            const r = await pool.query(`SELECT user_id FROM payments WHERE provider_payment_id = $1 ORDER BY created_at DESC LIMIT 1`, [session_id]);
+            userId = r.rows[0]?.user_id || null;
+        }
+        // 2) Yöntem: Authorization header
+        if (!userId && req.headers.authorization) {
+            try {
+                const token = req.headers.authorization.replace('Bearer ', '');
+                const decoded = jwt.verify(token, JWT_SECRET);
+                userId = decoded?.id || null;
+            } catch (e) {}
+        }
+        if (!userId) return res.redirect('/?page=subscription&billing=error');
+
+        await activateUserSubscription(userId, plan, provider || 'mock', period || 'monthly');
+        res.redirect('/?page=subscription&billing=success');
+    } catch (err) {
+        console.error('Billing success error:', err);
+        res.redirect('/?page=subscription&billing=error');
+    }
+});
+
+app.get('/billing/cancel', (req, res) => res.redirect('/?page=subscription&billing=cancelled'));
+
+app.get('/billing/bank-info', async (req, res) => {
+    const { ref, plan, period } = req.query;
+    const bank = billingProviders.BANK_DETAILS;
+    res.send(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><title>Banka Havalesi Bilgileri</title>
+<style>body{font-family:'Manrope',sans-serif;background:#0f172a;color:#f8fafc;padding:40px;max-width:720px;margin:0 auto;}
+h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-between;padding:12px 16px;background:rgba(30,41,59,0.7);border-radius:10px;margin:8px 0;}
+.row strong{color:#38bdf8;}a{color:#38bdf8;}</style></head><body>
+<h1>Banka Havalesi ile Abonelik</h1>
+<p>Lütfen aşağıdaki bilgilere göre transfer yapın. <strong>Açıklama alanına referans kodu yazmayı unutmayın</strong>; ödeme onaylandığında aboneliğiniz aktive edilir.</p>
+<div class="row"><span>Plan</span><strong>${plan} (${period === 'yearly' ? 'Yıllık' : 'Aylık'})</strong></div>
+<div class="row"><span>Banka</span><strong>${bank.bank_name}</strong></div>
+<div class="row"><span>Hesap Sahibi</span><strong>${bank.account_holder}</strong></div>
+<div class="row"><span>IBAN</span><strong>${bank.iban}</strong></div>
+<div class="row"><span>SWIFT</span><strong>${bank.swift}</strong></div>
+<div class="row"><span>Referans Kodu</span><strong>${ref}</strong></div>
+<p style="margin-top:24px;"><a href="/?page=subscription">← Abonelik sayfasına dön</a></p>
+</body></html>`);
+});
+
+async function activateUserSubscription(userId, planSlug, provider, period) {
+    const planRes = await pool.query('SELECT id FROM subscription_plans WHERE slug = $1', [String(planSlug).toLowerCase()]);
+    if (planRes.rows.length === 0) throw new Error('Plan bulunamadı');
+    const planId = planRes.rows[0].id;
+    const periodEnd = new Date();
+    if (period === 'yearly') periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    else periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+    const existing = await pool.query(
+        `SELECT id FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [userId]
+    );
+    if (existing.rows.length > 0) {
+        await pool.query(
+            `UPDATE subscriptions SET plan_id = $1, status = 'active', provider = $2,
+             current_period_start = NOW(), current_period_end = $3, updated_at = NOW()
+             WHERE id = $4`,
+            [planId, provider, periodEnd, existing.rows[0].id]
+        );
+        await pool.query(`UPDATE payments SET status = 'completed' WHERE subscription_id = $1 AND status = 'pending'`, [existing.rows[0].id]);
+        return existing.rows[0].id;
+    }
+    const ins = await pool.query(
+        `INSERT INTO subscriptions (user_id, plan_id, status, provider, current_period_start, current_period_end)
+         VALUES ($1, $2, 'active', $3, NOW(), $4) RETURNING id`,
+        [userId, planId, provider, periodEnd]
+    );
+    return ins.rows[0].id;
+}
+
+// Stripe webhook (raw body için ayrı parse)
+app.post('/api/billing/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+    try {
+        const provider = billingProviders.StripeProvider;
+        const { event } = provider.verifyWebhook(req.body.toString('utf8'), req.headers);
+        const parsed = provider.parseWebhookEvent(event);
+
+        if (parsed.status === 'completed' && parsed.user_id && parsed.plan_slug) {
+            await activateUserSubscription(parsed.user_id, parsed.plan_slug, 'stripe', parsed.period);
+        }
+        if (parsed.status === 'cancelled' && parsed.user_id) {
+            await pool.query(`UPDATE subscriptions SET status = 'cancelled', cancel_at_period_end = true, updated_at = NOW() WHERE user_id = $1 AND status = 'active'`, [parsed.user_id]);
+        }
+        // Audit
+        await pool.query(
+            `INSERT INTO payments (user_id, provider, provider_payment_id, amount, currency, status, metadata)
+             VALUES ($1, 'stripe', $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+            [parsed.user_id || null, parsed.provider_payment_id, parsed.amount || 0, parsed.currency || 'TRY', parsed.status, JSON.stringify(parsed.metadata)]
+        );
+        res.json({ received: true });
+    } catch (err) {
+        console.error('Stripe webhook error:', err);
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// iyzico webhook
+app.post('/api/billing/webhook/iyzico', express.json(), async (req, res) => {
+    try {
+        const provider = billingProviders.IyzicoProvider;
+        const { event } = provider.verifyWebhook(JSON.stringify(req.body), req.headers);
+        const parsed = provider.parseWebhookEvent(event);
+        if (parsed.status === 'completed' && parsed.user_id && parsed.plan_slug) {
+            await activateUserSubscription(parsed.user_id, parsed.plan_slug, 'iyzico', parsed.period);
+        }
+        await pool.query(
+            `INSERT INTO payments (user_id, provider, provider_payment_id, amount, currency, status, metadata)
+             VALUES ($1, 'iyzico', $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+            [parsed.user_id || null, parsed.provider_payment_id, parsed.amount || 0, parsed.currency || 'TRY', parsed.status, JSON.stringify(parsed.metadata)]
+        );
+        res.json({ received: true });
+    } catch (err) {
+        console.error('iyzico webhook error:', err);
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// Banka havalesi onay (admin)
+app.post('/api/billing/bank-confirm', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { reference, user_id, plan_slug, period } = req.body || {};
+        if (!user_id || !plan_slug) return res.status(400).json({ error: 'user_id ve plan_slug zorunlu' });
+        const subId = await activateUserSubscription(Number(user_id), plan_slug, 'bank_transfer', period || 'monthly');
+        await pool.query(`UPDATE payments SET status = 'completed' WHERE subscription_id = $1 AND status = 'pending'`, [subId]);
+        if (reference) {
+            await pool.query(`UPDATE payments SET bank_reference = $1 WHERE subscription_id = $2 AND provider = 'bank_transfer' AND status = 'completed'`, [reference, subId]);
+        }
+        res.json({ success: true, subscription_id: subId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Bekleyen banka havalelerini listele (admin)
+app.get('/api/billing/bank-pending', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT p.id, p.user_id, p.amount, p.currency, p.bank_reference, p.metadata, p.created_at,
+                   u.email, u.full_name, sp.slug AS plan_slug, sp.name AS plan_name
+            FROM payments p
+            JOIN users u ON p.user_id = u.id
+            LEFT JOIN subscriptions s ON p.subscription_id = s.id
+            LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
+            WHERE p.provider = 'bank_transfer' AND p.status = 'pending'
+            ORDER BY p.created_at DESC LIMIT 200
+        `);
+        res.json(r.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// Aboneliği iptal et
+app.post('/api/billing/cancel', authMiddleware, async (req, res) => {
+    try {
+        const sub = await getUserActiveSubscription(req.user.id);
+        if (!sub) return res.status(404).json({ error: 'Aktif abonelik yok' });
+        await pool.query(
+            `UPDATE subscriptions SET cancel_at_period_end = true, updated_at = NOW() WHERE id = $1`,
+            [sub.id]
+        );
+        res.json({ success: true, message: 'Mevcut dönem sonunda iptal edilecek' });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// Plan yükselt / düşür (provider üzerinden değil, doğrudan değiştirme — yeni dönem aktive olur)
+app.post('/api/billing/change-plan', authMiddleware, async (req, res) => {
+    try {
+        const { plan_slug, provider, period } = req.body || {};
+        if (!plan_slug || !provider) return res.status(400).json({ error: 'plan_slug ve provider zorunlu' });
+        // Yeni checkout başlat (mevcut abonelik checkout sırasında pending'e düşer, ödeme onaylanırken active olur)
+        req.body = { plan_slug, provider, period };
+        return app._router.handle(req, res, () => {});
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// Fatura geçmişi
+app.get('/api/billing/invoices', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT p.id, p.amount, p.currency, p.status, p.payment_method, p.provider, p.invoice_url,
+                   p.bank_reference, p.created_at, sp.name AS plan_name, sp.slug AS plan_slug,
+                   inv.invoice_number, inv.invoice_type, inv.is_legal_invoice, inv.legal_invoice_pending,
+                   inv.einvoice_pdf_url
+            FROM payments p
+            LEFT JOIN subscriptions s ON p.subscription_id = s.id
+            LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
+            LEFT JOIN invoices inv ON inv.payment_id = p.id
+            WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 50
         `, [req.user.id]);
-        res.json(result.rows[0] || null);
+        res.json(r.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// USAGE METERS — kullanım sayaçları
+// ============================================
+async function getCurrentMonthMeter(userId) {
+    const periodStart = new Date();
+    periodStart.setDate(1);
+    periodStart.setHours(0, 0, 0, 0);
+    const r = await pool.query(
+        `INSERT INTO usage_meters (user_id, period_start) VALUES ($1, $2)
+         ON CONFLICT (user_id, period_start) DO UPDATE SET updated_at = NOW()
+         RETURNING *`,
+        [userId, periodStart]
+    );
+    return r.rows[0];
+}
+
+async function getPlanLimits(userId, userRole) {
+    if (userRole === 'admin') {
+        const preview = await getPreviewPlanSlug(userId);
+        if (preview) {
+            const p = await getPreviewPlanFeatures(preview);
+            if (p) return p.plan_limits;
+        }
+        return { max_rivals: -1, history_months: -1, ai_queries_monthly: -1, export_rows_monthly: -1, api_requests_monthly: -1, whatsapp_phones: -1 };
+    }
+    const sub = await getUserActiveSubscription(userId);
+    if (!sub) return { max_rivals: 0, history_months: 0, ai_queries_monthly: 0, export_rows_monthly: 0, api_requests_monthly: 0, whatsapp_phones: 0 };
+    const r = await pool.query(`SELECT plan_limits FROM subscription_plans WHERE id = $1`, [sub.plan_id]);
+    try {
+        const raw = r.rows[0]?.plan_limits;
+        return typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+    } catch (e) { return {}; }
+}
+
+app.get('/api/billing/usage', authMiddleware, async (req, res) => {
+    try {
+        const meter = await getCurrentMonthMeter(req.user.id);
+        const limits = await getPlanLimits(req.user.id, req.user.role);
+        res.json({
+            period_start: meter.period_start,
+            usage: {
+                ai_queries: meter.ai_queries_count,
+                ai_tokens: Number(meter.ai_tokens_used || 0),
+                exports: meter.export_rows_count,
+                api_requests: meter.api_request_count,
+                whatsapp_queries: meter.whatsapp_query_count
+            },
+            limits,
+            warnings: buildUsageWarnings(meter, limits)
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+function buildUsageWarnings(meter, limits) {
+    const w = [];
+    const ai_limit = limits.ai_queries_monthly;
+    if (ai_limit > 0) {
+        const pct = (meter.ai_queries_count / ai_limit) * 100;
+        if (pct >= 100) w.push({ level: 'critical', key: 'ai_queries', message: 'AI sorgu kotanız tükendi. Yenilenme: bir sonraki ay başı.' });
+        else if (pct >= 80) w.push({ level: 'warn', key: 'ai_queries', message: `AI kotanızın %${Math.round(pct)}'i kullanıldı.` });
+    }
+    return w;
+}
+
+// requireAiQuota middleware — AI çağrılarında kota kontrolü
+function requireAiQuota() {
+    return async (req, res, next) => {
+        try {
+            if (req.user.role === 'admin') return next();
+            const limits = await getPlanLimits(req.user.id, req.user.role);
+            const limit = limits.ai_queries_monthly;
+            if (limit === 0) {
+                return res.status(402).json({
+                    code: 'AI_NOT_INCLUDED',
+                    error: 'Mevcut paketinizde AI sorgu yok',
+                    upgrade_url: '/?page=subscription'
+                });
+            }
+            if (limit > 0) {
+                const meter = await getCurrentMonthMeter(req.user.id);
+                if (meter.ai_queries_count >= limit) {
+                    return res.status(402).json({
+                        code: 'AI_QUOTA_EXHAUSTED',
+                        error: 'Aylık AI sorgu kotanız doldu',
+                        used: meter.ai_queries_count,
+                        limit,
+                        upgrade_url: '/?page=subscription'
+                    });
+                }
+            } else if (limit === -1) {
+                // Sınırsız ama fair-use: 24 saat içinde 200 sorgu üstü ise yavaşlat
+                const fr = await pool.query(
+                    `SELECT COUNT(*)::int AS c FROM ai_usage_log WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
+                    [req.user.id]
+                );
+                if ((fr.rows[0]?.c || 0) > 200) {
+                    return res.status(429).json({
+                        code: 'AI_FAIR_USE_THROTTLE',
+                        error: 'Fair-use limiti: son 24 saatte 200 sorgu aşıldı. Lütfen biraz bekleyin.'
+                    });
+                }
+            }
+            next();
+        } catch (err) {
+            console.error('requireAiQuota error:', err);
+            next();
+        }
+    };
+}
+
+async function recordAiUsage(userId, feature, model, inputTokens, outputTokens) {
+    const cost = ((Number(inputTokens) || 0) * 0.0000028) + ((Number(outputTokens) || 0) * 0.0000037);
+    const periodStart = new Date();
+    periodStart.setDate(1);
+    periodStart.setHours(0, 0, 0, 0);
+    await pool.query(
+        `INSERT INTO ai_usage_log (user_id, feature, model, input_tokens, output_tokens, cost_tl) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [userId, feature, model, inputTokens || 0, outputTokens || 0, cost.toFixed(4)]
+    );
+    await pool.query(
+        `INSERT INTO usage_meters (user_id, period_start, ai_queries_count, ai_tokens_used)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (user_id, period_start) DO UPDATE SET
+            ai_queries_count = usage_meters.ai_queries_count + 1,
+            ai_tokens_used = usage_meters.ai_tokens_used + $3,
+            updated_at = NOW()`,
+        [userId, periodStart, (Number(inputTokens) || 0) + (Number(outputTokens) || 0)]
+    );
+}
+
+// ============================================
+// RAKİP SEÇİMİ — Growth = 5 rakip, Enterprise = sınırsız
+// ============================================
+app.get('/api/billing/rivals', authMiddleware, async (req, res) => {
+    try {
+        const sub = await getUserActiveSubscription(req.user.id);
+        const limits = await getPlanLimits(req.user.id, req.user.role);
+        let rivals = [];
+        try {
+            rivals = typeof sub?.rivals_selection === 'string' ? JSON.parse(sub.rivals_selection) : (sub?.rivals_selection || []);
+        } catch (e) { rivals = []; }
+        res.json({
+            selected: rivals,
+            max_rivals: limits.max_rivals,
+            available_brands: req.user.role === 'admin' ? null : (await pool.query('SELECT id, name, slug FROM brands ORDER BY name')).rows
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.put('/api/billing/rivals', authMiddleware, async (req, res) => {
+    try {
+        const { rival_brand_ids } = req.body || {};
+        if (!Array.isArray(rival_brand_ids)) return res.status(400).json({ error: 'rival_brand_ids array olmalı' });
+        const limits = await getPlanLimits(req.user.id, req.user.role);
+        if (limits.max_rivals !== -1 && rival_brand_ids.length > limits.max_rivals) {
+            return res.status(400).json({ error: `Paketiniz en fazla ${limits.max_rivals} rakip seçimine izin veriyor`, max_rivals: limits.max_rivals });
+        }
+        const sub = await getUserActiveSubscription(req.user.id);
+        if (!sub) return res.status(404).json({ error: 'Aktif abonelik yok' });
+        await pool.query(
+            `UPDATE subscriptions SET rivals_selection = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+            [JSON.stringify(rival_brand_ids.map(Number)), sub.id]
+        );
+        res.json({ success: true, selected: rival_brand_ids });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// WHATSAPP TELEFON YÖNETİMİ — sadece Enterprise
+// ============================================
+app.get('/api/billing/whatsapp', authMiddleware, async (req, res) => {
+    try {
+        const limits = await getPlanLimits(req.user.id, req.user.role);
+        if (limits.whatsapp_phones === 0 && req.user.role !== 'admin') {
+            return res.status(402).json({ code: 'WHATSAPP_NOT_INCLUDED', error: 'WhatsApp kanalı sadece Enterprise pakette' });
+        }
+        const r = await pool.query(
+            `SELECT id, phone_e164, display_name, role_label, is_active, is_primary, admin_approved, last_query_at, monthly_query_count
+             FROM whatsapp_phones WHERE user_id = $1 ORDER BY is_primary DESC, activated_at`,
+            [req.user.id]
+        );
+        res.json({ phones: r.rows, max_phones: limits.whatsapp_phones, used: r.rows.length });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/billing/whatsapp', authMiddleware, async (req, res) => {
+    try {
+        const { phone_e164, display_name, role_label, is_primary } = req.body || {};
+        if (!phone_e164 || !/^\+?\d{10,15}$/.test(String(phone_e164).replace(/\s/g, ''))) {
+            return res.status(400).json({ error: 'Geçerli bir telefon numarası girin (+905xxxxxxxxx)' });
+        }
+        const normalized = String(phone_e164).replace(/\s/g, '').startsWith('+') ? String(phone_e164).replace(/\s/g, '') : '+' + String(phone_e164).replace(/\s/g, '');
+
+        const limits = await getPlanLimits(req.user.id, req.user.role);
+        if (limits.whatsapp_phones === 0 && req.user.role !== 'admin') {
+            return res.status(402).json({ code: 'WHATSAPP_NOT_INCLUDED', error: 'WhatsApp kanalı paketinizde yok' });
+        }
+        const existing = await pool.query(`SELECT COUNT(*)::int AS c FROM whatsapp_phones WHERE user_id = $1`, [req.user.id]);
+        if (limits.whatsapp_phones !== -1 && existing.rows[0].c >= limits.whatsapp_phones) {
+            return res.status(400).json({ error: `En fazla ${limits.whatsapp_phones} telefon hattı tanımlanabilir` });
+        }
+        const dup = await pool.query(`SELECT id FROM whatsapp_phones WHERE phone_e164 = $1`, [normalized]);
+        if (dup.rows.length > 0) return res.status(409).json({ error: 'Bu numara başka bir hesaba kayıtlı' });
+
+        const sub = await getUserActiveSubscription(req.user.id);
+        const ins = await pool.query(
+            `INSERT INTO whatsapp_phones (user_id, subscription_id, phone_e164, display_name, role_label, is_primary, admin_approved)
+             VALUES ($1, $2, $3, $4, $5, $6, false) RETURNING *`,
+            [req.user.id, sub?.id || null, normalized, display_name || null, role_label || null, !!is_primary]
+        );
+        res.status(201).json({ success: true, phone: ins.rows[0], note: 'Numaranız admin onayından sonra aktif olacaktır.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/billing/whatsapp/:id', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(`DELETE FROM whatsapp_phones WHERE id = $1 AND user_id = $2 RETURNING id`, [req.params.id, req.user.id]);
+        if (r.rows.length === 0) return res.status(404).json({ error: 'Telefon bulunamadı' });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/billing/whatsapp/:id/approve', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        await pool.query(
+            `UPDATE whatsapp_phones SET admin_approved = true, admin_approved_at = NOW(), admin_approved_by = $1 WHERE id = $2`,
+            [req.user.id, req.params.id]
+        );
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
@@ -4306,6 +13325,384 @@ app.get('/api/workflows', authMiddleware, async (req, res) => {
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+// ============================================
+// DASHBOARD DEEP DIVE
+// ============================================
+app.get('/api/dashboard/deep-dive', authMiddleware, async (req, res) => {
+    try {
+        const { year, brand_id, cabin_type, drive_type, hp_range, gear_config } = req.query;
+        const targetYear = year && year !== 'all' ? parseInt(year, 10) : null;
+        const focusBrandId = req.user.role === 'admin'
+            ? (brand_id ? parseInt(brand_id, 10) : null)
+            : (req.user.brand_id ? parseInt(req.user.brand_id, 10) : null);
+
+        const monthNamesShort = ['Oca', '\u015eub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'A\u011fu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const monthNamesLong = ['Ocak', '\u015eubat', 'Mart', 'Nisan', 'May\u0131s', 'Haziran', 'Temmuz', 'A\u011fustos', 'Eyl\u00fcl', 'Ekim', 'Kas\u0131m', 'Aral\u0131k'];
+        const categoryLabels = { tarla: 'Tarla', bahce: 'Bah\u00e7e' };
+        const cabinLabels = { kabinli: 'Kabinli', rollbar: 'Rollbar' };
+
+        const normalizedBrandExpr = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'K\u0130OT\u0130'
+                ELSE tv.marka
+            END
+        `;
+        const hpRangeExpr = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                WHEN tk.motor_gucu_hp > 120 THEN '120+'
+                ELSE NULL
+            END
+        `;
+        const cabinTypeExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%rops%' OR LOWER(COALESCE(tk.koruma, '')) LIKE '%roll%' THEN 'rollbar'
+                ELSE NULL
+            END
+        `;
+        const driveTypeExpr = `UPPER(COALESCE(tk.cekis_tipi, ''))`;
+        const gearConfigExpr = `COALESCE(tk.vites_sayisi, '')`;
+        const categoryExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahce%' OR LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bah\u00e7e%' THEN 'bahce'
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%tarla%' THEN 'tarla'
+                ELSE NULL
+            END
+        `;
+
+        const buildRowsQuery = (requestedYear) => {
+            const params = [];
+            let where = 'WHERE 1=1';
+
+            if (Number.isFinite(requestedYear)) {
+                params.push(requestedYear);
+                where += ` AND tv.tescil_yil = $${params.length}`;
+            }
+            if (cabin_type) {
+                params.push(cabin_type);
+                where += ` AND ${cabinTypeExpr} = $${params.length}`;
+            }
+            if (drive_type) {
+                params.push(String(drive_type).toUpperCase());
+                where += ` AND ${driveTypeExpr} = $${params.length}`;
+            }
+            if (hp_range) {
+                params.push(hp_range);
+                where += ` AND ${hpRangeExpr} = $${params.length}`;
+            }
+            if (gear_config) {
+                params.push(gear_config);
+                where += ` AND ${gearConfigExpr} = $${params.length}`;
+            }
+
+            return {
+                query: `
+                    SELECT
+                        tv.tescil_yil AS year,
+                        tv.tescil_ay AS month,
+                        p.id AS province_id,
+                        p.name AS province_name,
+                        p.region AS region,
+                        b.id AS brand_id,
+                        b.name AS brand_name,
+                        b.slug AS brand_slug,
+                        b.primary_color,
+                        COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi) AS model_name,
+                        ${categoryExpr} AS category,
+                        ${cabinTypeExpr} AS cabin_type,
+                        ${driveTypeExpr} AS drive_type,
+                        ${hpRangeExpr} AS hp_range,
+                        ${gearConfigExpr} AS gear_config,
+                        tk.motor_gucu_hp AS horsepower,
+                        tv.satis_adet AS quantity
+                    FROM tuik_veri tv
+                    JOIN brands b
+                        ON UPPER(b.name) = UPPER(${normalizedBrandExpr})
+                    JOIN provinces p
+                        ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                    LEFT JOIN teknik_veri tk
+                        ON UPPER(tk.marka) = UPPER(${normalizedBrandExpr})
+                       AND UPPER(tk.tuik_model_adi) = UPPER(tv.tuik_model_adi)
+                    ${where}
+                `,
+                params
+            };
+        };
+
+        const normalizeRows = (rows) => rows.map(row => ({
+            year: parseInt(row.year, 10),
+            month: parseInt(row.month, 10),
+            province_id: parseInt(row.province_id, 10),
+            province_name: row.province_name,
+            region: row.region,
+            brand_id: parseInt(row.brand_id, 10),
+            brand_name: row.brand_name,
+            brand_slug: row.brand_slug,
+            primary_color: row.primary_color,
+            model_name: row.model_name || '-',
+            category: row.category || null,
+            cabin_type: row.cabin_type || null,
+            drive_type: row.drive_type || null,
+            hp_range: row.hp_range || null,
+            gear_config: row.gear_config || null,
+            horsepower: row.horsepower == null ? null : parseFloat(row.horsepower),
+            quantity: parseInt(row.quantity, 10) || 0
+        }));
+
+        const sumQty = (items) => items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        const sumTotalSales = (items) => items.reduce((sum, item) => sum + (item.total_sales || 0), 0);
+        const countDistinct = (items, selector) => new Set(items.map(selector).filter(Boolean)).size;
+        const safePct = (value, total, digits = 1) => {
+            if (!total) return 0;
+            return parseFloat(((value * 100) / total).toFixed(digits));
+        };
+
+        const currentQuery = buildRowsQuery(targetYear);
+        const currentRows = normalizeRows((await pool.query(currentQuery.query, currentQuery.params)).rows);
+        const previousRows = Number.isFinite(targetYear)
+            ? normalizeRows((await pool.query(buildRowsQuery(targetYear - 1).query, buildRowsQuery(targetYear - 1).params)).rows)
+            : [];
+
+        const contextRows = focusBrandId ? currentRows.filter(row => row.brand_id === focusBrandId) : currentRows;
+        const contextPrevRows = focusBrandId ? previousRows.filter(row => row.brand_id === focusBrandId) : previousRows;
+        const marketTotal = sumQty(currentRows);
+        const contextTotal = sumQty(contextRows);
+        const maxMonth = Number.isFinite(targetYear) && currentRows.length
+            ? Math.max(...currentRows.map(row => row.month || 0))
+            : 12;
+        const previousMarketTotal = Number.isFinite(targetYear)
+            ? sumQty(previousRows.filter(row => !maxMonth || row.month <= maxMonth))
+            : null;
+        const previousContextTotal = Number.isFinite(targetYear)
+            ? sumQty(contextPrevRows.filter(row => !maxMonth || row.month <= maxMonth))
+            : null;
+
+        const marketYoyPct = previousMarketTotal ? safePct(marketTotal - previousMarketTotal, previousMarketTotal, 1) : null;
+        const contextYoyPct = previousContextTotal ? safePct(contextTotal - previousContextTotal, previousContextTotal, 1) : null;
+
+        const brandMap = new Map();
+        currentRows.forEach(row => {
+            const existing = brandMap.get(row.brand_id) || {
+                brand_id: row.brand_id,
+                brand_name: row.brand_name,
+                slug: row.brand_slug,
+                primary_color: row.primary_color,
+                total_sales: 0,
+                provinces: new Set()
+            };
+            existing.total_sales += row.quantity;
+            existing.provinces.add(row.province_id);
+            brandMap.set(row.brand_id, existing);
+        });
+
+        const brandRanking = Array.from(brandMap.values())
+            .map(item => ({
+                brand_id: item.brand_id,
+                brand_name: item.brand_name,
+                slug: item.slug,
+                primary_color: item.primary_color,
+                total_sales: item.total_sales,
+                province_count: item.provinces.size,
+                market_share_pct: safePct(item.total_sales, marketTotal, 2)
+            }))
+            .sort((a, b) => b.total_sales - a.total_sales);
+
+        const selectedBrand = focusBrandId
+            ? (brandRanking.find(item => item.brand_id === focusBrandId) || null)
+            : null;
+        const leaderBrand = brandRanking[0] || null;
+
+        const provinceMap = new Map();
+        contextRows.forEach(row => {
+            const current = provinceMap.get(row.province_id) || {
+                province_id: row.province_id,
+                province_name: row.province_name,
+                region: row.region,
+                total_sales: 0
+            };
+            current.total_sales += row.quantity;
+            provinceMap.set(row.province_id, current);
+        });
+        const topProvinces = Array.from(provinceMap.values())
+            .sort((a, b) => b.total_sales - a.total_sales)
+            .slice(0, 10)
+            .map(item => ({
+                ...item,
+                share_pct: safePct(item.total_sales, contextTotal, 1)
+            }));
+
+        const modelMap = new Map();
+        contextRows.forEach(row => {
+            const key = focusBrandId ? row.model_name : `${row.brand_id}::${row.model_name}`;
+            const existing = modelMap.get(key) || {
+                brand_name: row.brand_name,
+                model_name: row.model_name,
+                total_sales: 0,
+                horsepower_sum: 0,
+                horsepower_qty: 0
+            };
+            existing.total_sales += row.quantity;
+            if (Number.isFinite(row.horsepower)) {
+                existing.horsepower_sum += row.horsepower * row.quantity;
+                existing.horsepower_qty += row.quantity;
+            }
+            modelMap.set(key, existing);
+        });
+        const topModels = Array.from(modelMap.values())
+            .sort((a, b) => b.total_sales - a.total_sales)
+            .slice(0, 10)
+            .map(item => ({
+                brand_name: item.brand_name,
+                model_name: item.model_name,
+                total_sales: item.total_sales,
+                avg_hp: item.horsepower_qty ? parseFloat((item.horsepower_sum / item.horsepower_qty).toFixed(1)) : null,
+                share_pct: safePct(item.total_sales, contextTotal, 1)
+            }));
+
+        const buildMix = (rows, keySelector, labelSelector, limit = 8) => {
+            const map = new Map();
+            rows.forEach(row => {
+                const key = keySelector(row);
+                if (!key) return;
+                const existing = map.get(key) || {
+                    key,
+                    label: labelSelector(key, row),
+                    total_sales: 0
+                };
+                existing.total_sales += row.quantity;
+                map.set(key, existing);
+            });
+            return Array.from(map.values())
+                .sort((a, b) => b.total_sales - a.total_sales)
+                .slice(0, limit)
+                .map(item => ({
+                    ...item,
+                    share_pct: safePct(item.total_sales, contextTotal, 1)
+                }));
+        };
+
+        const categoryMix = buildMix(contextRows, row => row.category, key => categoryLabels[key] || key, 4);
+        const cabinMix = buildMix(contextRows, row => row.cabin_type, key => cabinLabels[key] || key, 4);
+        const driveMix = buildMix(contextRows, row => row.drive_type, key => key, 4);
+        const hpMix = buildMix(contextRows, row => row.hp_range, key => `${key} HP`, 8);
+        const gearMix = buildMix(contextRows, row => row.gear_config, key => key, 6);
+
+        const hpAccumulator = contextRows.reduce((acc, row) => {
+            if (Number.isFinite(row.horsepower)) {
+                acc.weighted += row.horsepower * row.quantity;
+                acc.total += row.quantity;
+            }
+            return acc;
+        }, { weighted: 0, total: 0 });
+
+        const avgHp = hpAccumulator.total
+            ? parseFloat((hpAccumulator.weighted / hpAccumulator.total).toFixed(1))
+            : null;
+        const ratio4wdPct = contextTotal
+            ? safePct(sumQty(contextRows.filter(row => row.drive_type === '4WD')), contextTotal, 1)
+            : 0;
+
+        const monthlyTrend = monthNamesShort.map((label, index) => {
+            const month = index + 1;
+            const marketSales = sumQty(currentRows.filter(row => row.month === month));
+            const contextSales = sumQty(contextRows.filter(row => row.month === month));
+            const prevMarketSales = Number.isFinite(targetYear)
+                ? sumQty(previousRows.filter(row => row.month === month))
+                : null;
+            const prevContextSales = Number.isFinite(targetYear)
+                ? sumQty(contextPrevRows.filter(row => row.month === month))
+                : null;
+            return {
+                month,
+                label,
+                market_sales: marketSales,
+                context_sales: contextSales,
+                prev_market_sales: prevMarketSales,
+                prev_context_sales: prevContextSales
+            };
+        });
+
+        const availableYears = Array.from(new Set(currentRows.map(row => row.year))).sort((a, b) => a - b);
+        const minYear = availableYears[0] || targetYear || null;
+        const maxYear = availableYears[availableYears.length - 1] || targetYear || null;
+        const periodLabel = Number.isFinite(targetYear)
+            ? `${targetYear} ${maxMonth && maxMonth < 12 ? `Ocak-${monthNamesLong[Math.max(0, maxMonth - 1)]}` : 'tam yil'}`
+            : (minYear && maxYear ? `${minYear}-${maxYear} birikimli gorunum` : 'Tum yillar');
+
+        res.json({
+            filters: {
+                year: Number.isFinite(targetYear) ? String(targetYear) : 'all',
+                brand_id: focusBrandId || null,
+                cabin_type: cabin_type || '',
+                drive_type: drive_type ? String(drive_type).toUpperCase() : '',
+                hp_range: hp_range || '',
+                gear_config: gear_config || ''
+            },
+            period: {
+                target_year: targetYear,
+                max_month: maxMonth,
+                label: periodLabel,
+                previous_market_sales: previousMarketTotal,
+                previous_context_sales: previousContextTotal,
+                market_yoy_pct: marketYoyPct,
+                context_yoy_pct: contextYoyPct
+            },
+            overview: {
+                market_sales: marketTotal,
+                context_sales: contextTotal,
+                market_share_pct: selectedBrand ? selectedBrand.market_share_pct : null,
+                leader_share_pct: leaderBrand ? leaderBrand.market_share_pct : null,
+                active_provinces: countDistinct(contextRows, row => row.province_id),
+                brand_count: countDistinct(currentRows, row => row.brand_id),
+                model_count: countDistinct(contextRows, row => `${row.brand_id}::${row.model_name}`),
+                avg_hp: avgHp,
+                ratio_4wd_pct: ratio4wdPct
+            },
+            selected_brand: selectedBrand,
+            leader_brand: leaderBrand,
+            highlights: {
+                top_category: categoryMix[0] || null,
+                top_cabin: cabinMix[0] || null,
+                top_drive: driveMix[0] || null,
+                top_hp: hpMix[0] || null,
+                top_province: topProvinces[0] || null,
+                top_model: topModels[0] || null
+            },
+            trend_mode: selectedBrand ? 'focus-brand' : (Number.isFinite(targetYear) ? 'market-yoy' : 'market-aggregate'),
+            monthly_trend: monthlyTrend,
+            market_share: brandRanking.slice(0, 10),
+            brand_ranking: brandRanking.slice(0, 15),
+            top_provinces: topProvinces,
+            top_models: topModels,
+            category_mix: categoryMix,
+            cabin_mix: cabinMix,
+            drive_mix: driveMix,
+            hp_mix: hpMix,
+            gear_mix: gearMix,
+            totals: {
+                market_share_total: sumTotalSales(brandRanking),
+                context_total: contextTotal
+            }
+        });
+    } catch (err) {
+        console.error('Dashboard deep dive error:', err);
+        res.status(500).json({ error: 'Sunucu hatasi' });
     }
 });
 
@@ -4390,31 +13787,118 @@ app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
 app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
     try {
         const { year, metric } = req.query;
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
-        const maxYear = parseInt(latestRes.rows[0].max_year);
-        const targetYear = year ? parseInt(year) : maxYear;
-        const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [targetYear]);
-        const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
+        const latestRes = await pool.query('SELECT MAX(tescil_yil) as max_year FROM tuik_veri');
+        const maxYear = parseInt(latestRes.rows[0].max_year, 10);
+        const targetYear = year ? parseInt(year, 10) : maxYear;
+        const latestMonthRes = await pool.query('SELECT COALESCE(MAX(tescil_ay), 12) as max_month FROM tuik_veri WHERE tescil_yil = $1', [targetYear]);
+        const maxMonth = parseInt(latestMonthRes.rows[0].max_month || 12, 10);
+        const trendYears = [targetYear - 2, targetYear - 1, targetYear].filter(item => item > 0);
+
+        const normalizedBrandExprTv = `
+            CASE
+                WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE tv.marka
+            END
+        `;
+        const normalizedBrandExprTk = `
+            CASE
+                WHEN UPPER(tk.marka) = 'CASE IH' THEN 'CASE'
+                WHEN UPPER(tk.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+                WHEN UPPER(tk.marka) = 'KIOTI' THEN 'KİOTİ'
+                ELSE tk.marka
+            END
+        `;
+        const hpRangeExpr = `
+            CASE
+                WHEN tk.motor_gucu_hp IS NULL THEN NULL
+                WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+                WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+                WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+                WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+                WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+                WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+                WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+                WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+                WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+                WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+                ELSE '120+'
+            END
+        `;
+        const categoryExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahce%' OR LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bahçe%' THEN 'bahce'
+                WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%tarla%' THEN 'tarla'
+                ELSE NULL
+            END
+        `;
+        const driveExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.cekis_tipi, '')) LIKE '%4wd%' OR LOWER(COALESCE(tk.cekis_tipi, '')) LIKE '%4x4%' OR LOWER(COALESCE(tk.cekis_tipi, '')) LIKE '%4 wd%' THEN '4WD'
+                WHEN LOWER(COALESCE(tk.cekis_tipi, '')) LIKE '%2wd%' OR LOWER(COALESCE(tk.cekis_tipi, '')) LIKE '%2x4%' OR LOWER(COALESCE(tk.cekis_tipi, '')) LIKE '%2 wd%' THEN '2WD'
+                ELSE NULL
+            END
+        `;
+        const cabinExpr = `
+            CASE
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli'
+                WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%rops%' OR LOWER(COALESCE(tk.koruma, '')) LIKE '%roll%' THEN 'rollbar'
+                ELSE NULL
+            END
+        `;
+        const gearExpr = `NULLIF(TRIM(COALESCE(tk.vites_sayisi, '')), '')`;
 
         // Province info
         const provRes = await pool.query(`SELECT id, name, plate_code, region, latitude, longitude, population, agricultural_area_hectare, primary_crops, soil_type, climate_zone, annual_rainfall_mm, avg_temperature, elevation_m FROM provinces ORDER BY name`);
 
-        // Sales by province with category, hp, drive, cabin breakdown
-        const salesRes = await pool.query(`
-            SELECT s.province_id, s.category, s.hp_range, s.drive_type, s.cabin_type, s.gear_config,
-                   SUM(s.quantity) as total
-            FROM sales_view s
-            WHERE s.year = $1
-            GROUP BY s.province_id, s.category, s.hp_range, s.drive_type, s.cabin_type, s.gear_config
-        `, [targetYear]);
-
-        // Yearly trend by province (last 3 years)
-        const trendYears = [targetYear - 2, targetYear - 1, targetYear];
-        const trendRes = await pool.query(`
-            SELECT province_id, year, SUM(quantity) as total
-            FROM sales_view WHERE year = ANY($1)
-            GROUP BY province_id, year
-        `, [trendYears]);
+        const [salesRes, trendRes] = await Promise.all([
+            pool.query(`
+                WITH teknik_match AS (
+                    SELECT DISTINCT ON (UPPER(${normalizedBrandExprTk}), UPPER(COALESCE(tk.tuik_model_adi, '')))
+                        UPPER(${normalizedBrandExprTk}) AS brand_key,
+                        UPPER(COALESCE(tk.tuik_model_adi, '')) AS model_key,
+                        tk.motor_gucu_hp,
+                        tk.kullanim_alani,
+                        tk.cekis_tipi,
+                        tk.koruma,
+                        tk.vites_sayisi
+                    FROM teknik_veri tk
+                    ORDER BY UPPER(${normalizedBrandExprTk}), UPPER(COALESCE(tk.tuik_model_adi, '')), tk.motor_gucu_hp DESC NULLS LAST
+                )
+                SELECT
+                    p.id AS province_id,
+                    ${categoryExpr} AS category,
+                    ${hpRangeExpr} AS hp_range,
+                    ${driveExpr} AS drive_type,
+                    ${cabinExpr} AS cabin_type,
+                    ${gearExpr} AS gear_config,
+                    SUM(tv.satis_adet)::int AS total
+                FROM tuik_veri tv
+                JOIN provinces p
+                    ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                LEFT JOIN teknik_match tk
+                    ON tk.brand_key = UPPER(${normalizedBrandExprTv})
+                   AND tk.model_key = UPPER(COALESCE(tv.tuik_model_adi, ''))
+                WHERE tv.tescil_yil = $1
+                  AND tv.tescil_ay <= $2
+                  AND (tv.model_yili IS NULL OR tv.tescil_yil = tv.model_yili OR tv.tescil_yil = tv.model_yili + 1)
+                GROUP BY p.id, ${categoryExpr}, ${hpRangeExpr}, ${driveExpr}, ${cabinExpr}, ${gearExpr}
+            `, [targetYear, maxMonth]),
+            pool.query(`
+                SELECT
+                    p.id AS province_id,
+                    tv.tescil_yil AS year,
+                    SUM(tv.satis_adet)::int AS total
+                FROM tuik_veri tv
+                JOIN provinces p
+                    ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                WHERE tv.tescil_yil = ANY($1)
+                  AND tv.tescil_ay <= $2
+                  AND (tv.model_yili IS NULL OR tv.tescil_yil = tv.model_yili OR tv.tescil_yil = tv.model_yili + 1)
+                GROUP BY p.id, tv.tescil_yil
+            `, [trendYears, maxMonth])
+        ]);
         const trendMap = {};
         trendRes.rows.forEach(r => {
             if (!trendMap[r.province_id]) trendMap[r.province_id] = {};
@@ -4496,7 +13980,7 @@ app.get('/api/sales/regional-index', authMiddleware, async (req, res) => {
 // ============================================
 // MODEL-REGION COMPATIBILITY
 // ============================================
-app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
+app.get('/api/sales/model-region-legacy', authMiddleware, async (req, res) => {
     try {
         const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
@@ -4642,6 +14126,603 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
     try {
         const { brand1_id, brand2_id } = req.query;
         if (!brand1_id || !brand2_id) return res.status(400).json({ error: 'brand1_id ve brand2_id gerekli' });
+
+        {
+            const requestedIds = [parseInt(brand1_id, 10), parseInt(brand2_id, 10)].filter(Number.isFinite);
+            const compareLatestRes = await pool.query('SELECT MAX(tescil_yil) as max_year FROM tuik_veri');
+            const compareMaxYear = parseInt(compareLatestRes.rows[0].max_year, 10);
+            const compareLatestMonthRes = await pool.query('SELECT MAX(tescil_ay) as max_month FROM tuik_veri WHERE tescil_yil = $1', [compareMaxYear]);
+            const compareMaxMonth = parseInt(compareLatestMonthRes.rows[0].max_month, 10);
+            const comparePrevYear = compareMaxYear - 1;
+            const compareMinYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
+            const compareMinYear = parseInt(compareMinYearRes.rows[0].min_year, 10);
+            const compareYears = Array.from({ length: Math.max(compareMaxYear - compareMinYear + 1, 0) }, (_, index) => compareMinYear + index);
+            const compareHpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
+            const compareHpMidpoints = { '1-39': 25, '40-49': 45, '50-54': 52, '55-59': 57, '60-69': 65, '70-79': 75, '80-89': 85, '90-99': 95, '100-109': 105, '110-119': 115, '120+': 130 };
+
+            const [compareBrandRes, compareMarketYearlyRes, compareMarketCurrentRes, compareMarketPrevRes, compareMarketHpRes] = await Promise.all([
+                pool.query(`
+                    SELECT id, name, slug, primary_color, secondary_color, country_of_origin, parent_company
+                    FROM brands
+                    WHERE id = ANY($1::int[])
+                `, [requestedIds]),
+                pool.query(`
+                    SELECT year, SUM(quantity)::int AS total
+                    FROM sales_view
+                    GROUP BY year
+                    ORDER BY year
+                `),
+                pool.query(`
+                    SELECT COALESCE(SUM(quantity), 0)::int AS total_sales
+                    FROM sales_view
+                    WHERE year = $1 AND month <= $2
+                `, [compareMaxYear, compareMaxMonth]),
+                pool.query(`
+                    SELECT COALESCE(SUM(quantity), 0)::int AS total_sales
+                    FROM sales_view
+                    WHERE year = $1 AND month <= $2
+                `, [comparePrevYear, compareMaxMonth]),
+                pool.query(`
+                    SELECT hp_range, SUM(quantity)::int AS total
+                    FROM sales_view
+                    WHERE year = $1 AND month <= $2 AND hp_range IS NOT NULL
+                    GROUP BY hp_range
+                `, [compareMaxYear, compareMaxMonth])
+            ]);
+
+            const compareBrandMap = new Map(compareBrandRes.rows.map(row => [parseInt(row.id, 10), row]));
+            const compareFirstBrand = compareBrandMap.get(requestedIds[0]);
+            const compareSecondBrand = compareBrandMap.get(requestedIds[1]);
+            if (!compareFirstBrand || !compareSecondBrand) {
+                return res.status(404).json({ error: 'Marka bulunamadi' });
+            }
+
+            const compareMarketYearly = {};
+            compareYears.forEach(year => { compareMarketYearly[year] = 0; });
+            compareMarketYearlyRes.rows.forEach(row => {
+                compareMarketYearly[parseInt(row.year, 10)] = parseInt(row.total, 10) || 0;
+            });
+            const compareMarketCurrent = parseInt(compareMarketCurrentRes.rows[0]?.total_sales || 0, 10);
+            const compareMarketPrevious = parseInt(compareMarketPrevRes.rows[0]?.total_sales || 0, 10);
+            const compareMarketHp = {};
+            compareMarketHpRes.rows.forEach(row => {
+                compareMarketHp[row.hp_range] = parseInt(row.total, 10) || 0;
+            });
+
+            async function buildDeepCompareBrandData(brand) {
+                const brandAliases = getBrandSqlAliases(brand);
+                const [
+                    currentSalesRes,
+                    previousSalesRes,
+                    yearlyRes,
+                    monthlyRes,
+                    hpRes,
+                    categoryRes,
+                    driveRes,
+                    cabinRes,
+                    gearRes,
+                    provinceRes,
+                    technicalSummaryRes,
+                    topModelsRes,
+                    catalogRes,
+                    featureComboRes
+                ] = await Promise.all([
+                    pool.query(`
+                        SELECT COALESCE(SUM(quantity), 0)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT COALESCE(SUM(quantity), 0)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                    `, [brand.id, comparePrevYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT year, SUM(quantity)::int AS total
+                        FROM sales_view
+                        WHERE brand_id = $1
+                        GROUP BY year
+                        ORDER BY year
+                    `, [brand.id]),
+                    pool.query(`
+                        SELECT month, SUM(quantity)::int AS total
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                        GROUP BY month
+                        ORDER BY month
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT hp_range, SUM(quantity)::int AS total
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3 AND hp_range IS NOT NULL
+                        GROUP BY hp_range
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT COALESCE(category, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                        GROUP BY category
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT UPPER(COALESCE(drive_type, 'belirsiz')) AS label, SUM(quantity)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                        GROUP BY drive_type
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT LOWER(COALESCE(cabin_type, 'belirsiz')) AS label, SUM(quantity)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                        GROUP BY cabin_type
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT COALESCE(gear_config, 'belirsiz') AS label, SUM(quantity)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                        GROUP BY gear_config
+                    `, [brand.id, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        SELECT
+                            tv.tescil_yil AS year,
+                            p.id AS province_id,
+                            p.name AS province_name,
+                            p.region,
+                            SUM(tv.satis_adet)::int AS total_sales
+                        FROM tuik_veri tv
+                        JOIN provinces p
+                            ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                        WHERE UPPER(tv.marka) = ANY($1::text[])
+                          AND tv.tescil_yil IN ($2, $3)
+                          AND tv.tescil_ay <= $4
+                        GROUP BY tv.tescil_yil, p.id, p.name, p.region
+                        ORDER BY tv.tescil_yil ASC, total_sales DESC, p.name ASC
+                    `, [brandAliases, comparePrevYear, compareMaxYear, compareMaxMonth]),
+                    pool.query(`
+                        WITH grouped_models AS (
+                            SELECT
+                                COALESCE(NULLIF(model, ''), tuik_model_adi) AS model_name,
+                                ROUND(AVG(motor_gucu_hp)::numeric, 1) AS avg_hp,
+                                MIN(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS min_price_usd,
+                                MAX(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS max_price_usd
+                            FROM teknik_veri
+                            WHERE UPPER(marka) = ANY($1::text[])
+                            GROUP BY COALESCE(NULLIF(model, ''), tuik_model_adi)
+                        )
+                        SELECT
+                            COUNT(*)::int AS technical_model_count,
+                            (SELECT COUNT(*)::int FROM teknik_veri WHERE UPPER(marka) = ANY($1::text[])) AS variant_count,
+                            ROUND(AVG(avg_hp)::numeric, 1) AS avg_hp,
+                            (SELECT ROUND(AVG(fiyat_usd)::numeric, 2) FROM teknik_veri WHERE UPPER(marka) = ANY($1::text[]) AND fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS avg_price_usd,
+                            MIN(min_price_usd) AS min_price_usd,
+                            MAX(max_price_usd) AS max_price_usd
+                        FROM grouped_models
+                    `, [brandAliases]),
+                    pool.query(`
+                        SELECT
+                            COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi) AS model_name,
+                            SUM(tv.satis_adet)::int AS total_sales,
+                            ROUND(AVG(tk.motor_gucu_hp)::numeric, 1) AS avg_hp,
+                            MIN(tk.fiyat_usd) FILTER (WHERE tk.fiyat_usd IS NOT NULL AND tk.fiyat_usd > 0) AS min_price_usd,
+                            MAX(tk.fiyat_usd) FILTER (WHERE tk.fiyat_usd IS NOT NULL AND tk.fiyat_usd > 0) AS max_price_usd,
+                            ARRAY_REMOVE(ARRAY_AGG(DISTINCT UPPER(COALESCE(tk.cekis_tipi, ''))), '') AS drive_types,
+                            ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(tk.koruma, '')), '') AS protections,
+                            ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(tk.vites_sayisi, '')), '') AS gear_configs,
+                            MAX(NULLIF(tk.emisyon_seviyesi, '')) AS emission_standard
+                        FROM tuik_veri tv
+                        LEFT JOIN teknik_veri tk
+                            ON UPPER(tk.marka) = ANY($4::text[])
+                           AND UPPER(tk.tuik_model_adi) = UPPER(tv.tuik_model_adi)
+                        WHERE UPPER(tv.marka) = ANY($1::text[])
+                          AND tv.tescil_yil = $2
+                          AND tv.tescil_ay <= $3
+                        GROUP BY COALESCE(NULLIF(tk.model, ''), tv.tuik_model_adi)
+                        ORDER BY total_sales DESC, model_name ASC
+                        LIMIT 16
+                    `, [brandAliases, compareMaxYear, compareMaxMonth, brandAliases]),
+                    pool.query(`
+                        SELECT
+                            COALESCE(NULLIF(model, ''), tuik_model_adi) AS model_name,
+                            ROUND(AVG(motor_gucu_hp)::numeric, 1) AS avg_hp,
+                            MIN(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS min_price_usd,
+                            MAX(fiyat_usd) FILTER (WHERE fiyat_usd IS NOT NULL AND fiyat_usd > 0) AS max_price_usd,
+                            ARRAY_REMOVE(ARRAY_AGG(DISTINCT UPPER(COALESCE(cekis_tipi, ''))), '') AS drive_types,
+                            ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(koruma, '')), '') AS protections,
+                            ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(vites_sayisi, '')), '') AS gear_configs,
+                            MAX(NULLIF(emisyon_seviyesi, '')) AS emission_standard,
+                            MAX(NULLIF(mensei, '')) AS origin
+                        FROM teknik_veri
+                        WHERE UPPER(marka) = ANY($1::text[])
+                        GROUP BY COALESCE(NULLIF(model, ''), tuik_model_adi)
+                        ORDER BY avg_hp ASC NULLS LAST, model_name ASC
+                        LIMIT 28
+                    `, [brandAliases]),
+                    pool.query(`
+                        SELECT
+                            UPPER(COALESCE(drive_type, '-')) AS drive_type,
+                            LOWER(COALESCE(cabin_type, '-')) AS cabin_type,
+                            LOWER(COALESCE(category, '-')) AS category,
+                            SUM(quantity)::int AS total_sales
+                        FROM sales_view
+                        WHERE brand_id = $1 AND year = $2 AND month <= $3
+                        GROUP BY drive_type, cabin_type, category
+                    `, [brand.id, compareMaxYear, compareMaxMonth])
+                ]);
+
+                const currentSales = parseInt(currentSalesRes.rows[0]?.total_sales || 0, 10);
+                const prevSales = parseInt(previousSalesRes.rows[0]?.total_sales || 0, 10);
+                const yoyGrowth = calculateYoY(currentSales, prevSales);
+
+                const yearly = {};
+                compareYears.forEach(year => { yearly[year] = 0; });
+                yearlyRes.rows.forEach(row => {
+                    yearly[parseInt(row.year, 10)] = parseInt(row.total, 10) || 0;
+                });
+
+                const monthly = {};
+                for (let month = 1; month <= compareMaxMonth; month++) monthly[month] = 0;
+                monthlyRes.rows.forEach(row => {
+                    monthly[parseInt(row.month, 10)] = parseInt(row.total, 10) || 0;
+                });
+
+                const marketShare = {};
+                compareYears.forEach(year => {
+                    marketShare[year] = compareMarketYearly[year] > 0 ? roundMetric((yearly[year] * 100) / compareMarketYearly[year], 2) : 0;
+                });
+                const currentShare = compareMarketCurrent > 0 ? roundMetric((currentSales * 100) / compareMarketCurrent, 2) : 0;
+                const previousShare = compareMarketPrevious > 0 ? roundMetric((prevSales * 100) / compareMarketPrevious, 2) : 0;
+                const shareDeltaPp = roundMetric(currentShare - previousShare, 2);
+
+                const hpBag = {};
+                hpRes.rows.forEach(row => { hpBag[row.hp_range] = parseInt(row.total, 10) || 0; });
+                let salesWeightedHpRaw = 0;
+                const hpDist = compareHpOrder.map(hp => {
+                    const qty = hpBag[hp] || 0;
+                    salesWeightedHpRaw += (compareHpMidpoints[hp] || 60) * qty;
+                    return {
+                        hp,
+                        qty,
+                        pct: currentSales > 0 ? roundMetric((qty * 100) / currentSales, 1) : 0,
+                        marketSharePct: (compareMarketHp[hp] || 0) > 0 ? roundMetric((qty * 100) / compareMarketHp[hp], 1) : 0
+                    };
+                });
+                const salesWeightedHp = currentSales > 0 ? roundMetric(salesWeightedHpRaw / currentSales, 1) : 0;
+
+                const categories = {};
+                categoryRes.rows.forEach(row => { categories[row.label || 'belirsiz'] = parseInt(row.total_sales, 10) || 0; });
+                const driveTypes = {};
+                driveRes.rows.forEach(row => { driveTypes[row.label || 'belirsiz'] = parseInt(row.total_sales, 10) || 0; });
+                const cabinTypes = {};
+                cabinRes.rows.forEach(row => { cabinTypes[row.label || 'belirsiz'] = parseInt(row.total_sales, 10) || 0; });
+                const gearTypes = {};
+                gearRes.rows.forEach(row => { gearTypes[row.label || 'belirsiz'] = parseInt(row.total_sales, 10) || 0; });
+
+                const provincePrevMap = new Map();
+                const provincesCurrent = [];
+                provinceRes.rows.forEach(row => {
+                    const rowYear = parseInt(row.year, 10);
+                    const quantity = parseInt(row.total_sales, 10) || 0;
+                    if (rowYear === comparePrevYear) provincePrevMap.set(parseInt(row.province_id, 10), quantity);
+                    if (rowYear === compareMaxYear) {
+                        provincesCurrent.push({
+                            id: parseInt(row.province_id, 10),
+                            name: row.province_name,
+                            region: row.region,
+                            qty: quantity
+                        });
+                    }
+                });
+
+                const provinces = provincesCurrent
+                    .map(item => {
+                        const previousQty = provincePrevMap.get(item.id) || 0;
+                        return {
+                            name: item.name,
+                            region: item.region,
+                            qty: item.qty,
+                            prev_qty: previousQty,
+                            yoy_pct: calculateYoY(item.qty, previousQty),
+                            share_pct: currentSales > 0 ? roundMetric((item.qty * 100) / currentSales, 1) : 0
+                        };
+                    })
+                    .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
+
+                const regionCurrentBag = {};
+                const regionPreviousBag = {};
+                provinces.forEach(item => {
+                    regionCurrentBag[item.region] = (regionCurrentBag[item.region] || 0) + item.qty;
+                    regionPreviousBag[item.region] = (regionPreviousBag[item.region] || 0) + (item.prev_qty || 0);
+                });
+                const regions = Object.keys(regionCurrentBag)
+                    .map(region => ({
+                        name: region,
+                        qty: regionCurrentBag[region] || 0,
+                        prev_qty: regionPreviousBag[region] || 0,
+                        yoy_pct: calculateYoY(regionCurrentBag[region] || 0, regionPreviousBag[region] || 0),
+                        share_pct: currentSales > 0 ? roundMetric(((regionCurrentBag[region] || 0) * 100) / currentSales, 1) : 0
+                    }))
+                    .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
+
+                const technicalSummary = technicalSummaryRes.rows[0] || {};
+                const avgPrice = technicalSummary.avg_price_usd ? parseFloat(technicalSummary.avg_price_usd) : 0;
+                const minPrice = technicalSummary.min_price_usd ? parseFloat(technicalSummary.min_price_usd) : 0;
+                const maxPrice = technicalSummary.max_price_usd ? parseFloat(technicalSummary.max_price_usd) : 0;
+                const portfolioAvgHp = technicalSummary.avg_hp ? parseFloat(technicalSummary.avg_hp) : 0;
+                const modelCount = parseInt(technicalSummary.technical_model_count || 0, 10);
+                const variantCount = parseInt(technicalSummary.variant_count || 0, 10);
+                const costPerHp = avgPrice > 0 && portfolioAvgHp > 0 ? roundMetric(avgPrice / portfolioAvgHp, 1) : 0;
+
+                const topModelSalesMap = new Map();
+                topModelsRes.rows.forEach(row => {
+                    const modelName = row.model_name || 'Model';
+                    topModelSalesMap.set(modelName, {
+                        name: modelName,
+                        currentSales: parseInt(row.total_sales, 10) || 0,
+                        hp: row.avg_hp ? parseFloat(row.avg_hp) : null,
+                        minPrice: row.min_price_usd ? parseFloat(row.min_price_usd) : 0,
+                        maxPrice: row.max_price_usd ? parseFloat(row.max_price_usd) : 0,
+                        price: row.min_price_usd ? parseFloat(row.min_price_usd) : (row.max_price_usd ? parseFloat(row.max_price_usd) : 0),
+                        driveTypes: Array.isArray(row.drive_types) ? row.drive_types.filter(Boolean) : [],
+                        protections: Array.isArray(row.protections) ? row.protections.filter(Boolean) : [],
+                        gearConfigs: Array.isArray(row.gear_configs) ? row.gear_configs.filter(Boolean) : [],
+                        emission: row.emission_standard || null
+                    });
+                });
+
+                const catalogModels = catalogRes.rows.map(row => {
+                    const modelName = row.model_name || 'Model';
+                    const currentModel = topModelSalesMap.get(modelName);
+                    const minModelPrice = row.min_price_usd ? parseFloat(row.min_price_usd) : (currentModel?.minPrice || 0);
+                    const maxModelPrice = row.max_price_usd ? parseFloat(row.max_price_usd) : (currentModel?.maxPrice || 0);
+                    const basePrice = minModelPrice || maxModelPrice || currentModel?.price || 0;
+                    return {
+                        name: modelName,
+                        hp: row.avg_hp ? parseFloat(row.avg_hp) : (currentModel?.hp || null),
+                        minPrice: minModelPrice,
+                        maxPrice: maxModelPrice,
+                        price: basePrice,
+                        currentSales: currentModel?.currentSales || 0,
+                        driveTypes: Array.isArray(row.drive_types) ? row.drive_types.filter(Boolean) : (currentModel?.driveTypes || []),
+                        protections: Array.isArray(row.protections) ? row.protections.filter(Boolean) : (currentModel?.protections || []),
+                        gearConfigs: Array.isArray(row.gear_configs) ? row.gear_configs.filter(Boolean) : (currentModel?.gearConfigs || []),
+                        emission: row.emission_standard || currentModel?.emission || null,
+                        origin: row.origin || null
+                    };
+                });
+
+                const fallbackModels = Array.from(topModelSalesMap.values())
+                    .filter(item => !catalogModels.some(model => model.name === item.name));
+                const models = [...catalogModels, ...fallbackModels]
+                    .sort((a, b) => ((a.hp ?? 9999) - (b.hp ?? 9999)) || a.name.localeCompare(b.name));
+                const topModels = [...models]
+                    .sort((a, b) => (b.currentSales - a.currentSales) || ((a.hp ?? 9999) - (b.hp ?? 9999)) || a.name.localeCompare(b.name))
+                    .slice(0, 10);
+
+                const featureCombos = {};
+                let featureTotal = 0;
+                featureComboRes.rows.forEach(row => {
+                    const key = `${String(row.drive_type || '-').toUpperCase()}_${String(row.cabin_type || '-').toLowerCase()}_${String(row.category || '-').toLowerCase()}`;
+                    const total = parseInt(row.total_sales, 10) || 0;
+                    featureCombos[key] = total;
+                    featureTotal += total;
+                });
+
+                const top5ProvinceVolume = provinces.slice(0, 5).reduce((sum, item) => sum + item.qty, 0);
+
+                return {
+                    periodLabel: formatPeriodLabel(compareMaxYear, compareMaxMonth, compareMaxYear, compareMaxMonth),
+                    currPartial: currentSales,
+                    prevPartial: prevSales,
+                    currentSales,
+                    prevSales,
+                    yoyGrowth,
+                    yoyPartial: yoyGrowth,
+                    yearly,
+                    monthly,
+                    marketShare,
+                    currentShare,
+                    previousShare,
+                    shareDeltaPp,
+                    totalSales: currentSales,
+                    hpDist,
+                    hpSegments: hpDist,
+                    categories,
+                    driveTypes,
+                    cabinTypes,
+                    gearTypes,
+                    topProvinces: provinces.slice(0, 10),
+                    provinces,
+                    topRegions: regions.slice(0, 8),
+                    regions,
+                    models,
+                    topModels,
+                    avgPrice,
+                    minPrice,
+                    maxPrice,
+                    avgHp: portfolioAvgHp,
+                    salesWeightedHp,
+                    costPerHp,
+                    modelCount,
+                    variantCount,
+                    activeProvinces: provinces.length,
+                    top5ProvinceShare: currentSales > 0 ? roundMetric((top5ProvinceVolume * 100) / currentSales, 1) : 0,
+                    featureCombos: {
+                        total: featureTotal,
+                        combos: featureCombos
+                    }
+                };
+            }
+
+            const [compareFirstData, compareSecondData] = await Promise.all([
+                buildDeepCompareBrandData(compareFirstBrand),
+                buildDeepCompareBrandData(compareSecondBrand)
+            ]);
+
+            const compareDominanceRes = await pool.query(`
+                SELECT
+                    p.id,
+                    p.name,
+                    p.plate_code,
+                    p.latitude,
+                    p.longitude,
+                    p.region,
+                    SUM(CASE WHEN UPPER(tv.marka) = ANY($1::text[]) THEN tv.satis_adet ELSE 0 END)::int AS s1,
+                    SUM(CASE WHEN UPPER(tv.marka) = ANY($2::text[]) THEN tv.satis_adet ELSE 0 END)::int AS s2
+                FROM tuik_veri tv
+                JOIN provinces p
+                    ON p.plate_code = LPAD(COALESCE(tv.sehir_kodu, 0)::text, 2, '0')
+                WHERE tv.tescil_yil = $3
+                  AND tv.tescil_ay <= $4
+                  AND (UPPER(tv.marka) = ANY($1::text[]) OR UPPER(tv.marka) = ANY($2::text[]))
+                GROUP BY p.id, p.name, p.plate_code, p.latitude, p.longitude, p.region
+                ORDER BY p.name ASC
+            `, [getBrandSqlAliases(compareFirstBrand), getBrandSqlAliases(compareSecondBrand), compareMaxYear, compareMaxMonth]);
+
+            const dominanceMap = compareDominanceRes.rows
+                .map(row => {
+                    const s1 = parseInt(row.s1, 10) || 0;
+                    const s2 = parseInt(row.s2, 10) || 0;
+                    const total = s1 + s2;
+                    const diffPct = total > 0 ? ((s1 - s2) * 100) / total : 0;
+                    let dominance = 'neutral';
+                    if (diffPct >= 12) dominance = 'brand1';
+                    else if (diffPct <= -12) dominance = 'brand2';
+                    return {
+                        id: parseInt(row.id, 10),
+                        name: row.name,
+                        plate_code: row.plate_code,
+                        lat: row.latitude ? parseFloat(row.latitude) : null,
+                        lng: row.longitude ? parseFloat(row.longitude) : null,
+                        region: row.region,
+                        s1,
+                        s2,
+                        total,
+                        gap: Math.abs(s1 - s2),
+                        dominance
+                    };
+                })
+                .filter(item => item.total > 0);
+
+            const provinceBattles = [...dominanceMap]
+                .sort((a, b) => b.total - a.total || b.gap - a.gap || a.name.localeCompare(b.name))
+                .slice(0, 20)
+                .map(item => ({
+                    name: item.name,
+                    region: item.region,
+                    s1: item.s1,
+                    s2: item.s2,
+                    total: item.total,
+                    gap: item.gap,
+                    leader: item.s1 === item.s2 ? 'tie' : (item.s1 > item.s2 ? 'brand1' : 'brand2')
+                }));
+
+            const provinceWins = {
+                brand1: dominanceMap.filter(item => item.s1 > item.s2).length,
+                brand2: dominanceMap.filter(item => item.s2 > item.s1).length,
+                tie: dominanceMap.filter(item => item.s1 === item.s2).length
+            };
+
+            const whitespaceSegments = compareHpOrder
+                .map(hp => {
+                    const marketSales = compareMarketHp[hp] || 0;
+                    const firstSegment = compareFirstData.hpDist.find(item => item.hp === hp) || { qty: 0, marketSharePct: 0 };
+                    const secondSegment = compareSecondData.hpDist.find(item => item.hp === hp) || { qty: 0, marketSharePct: 0 };
+                    const leaderKey = firstSegment.marketSharePct >= secondSegment.marketSharePct ? 'brand1' : 'brand2';
+                    const leaderShare = Math.max(firstSegment.marketSharePct || 0, secondSegment.marketSharePct || 0);
+                    const challengerKey = leaderKey === 'brand1' ? 'brand2' : 'brand1';
+                    return {
+                        hp,
+                        marketSales,
+                        brand1Sales: firstSegment.qty || 0,
+                        brand2Sales: secondSegment.qty || 0,
+                        brand1SharePct: firstSegment.marketSharePct || 0,
+                        brand2SharePct: secondSegment.marketSharePct || 0,
+                        leader: leaderKey,
+                        challenger: challengerKey,
+                        shareGapPp: roundMetric(Math.abs((firstSegment.marketSharePct || 0) - (secondSegment.marketSharePct || 0)), 1),
+                        openVolume: Math.max(marketSales - Math.max(firstSegment.qty || 0, secondSegment.qty || 0), 0),
+                        opportunityIndex: roundMetric((marketSales * (100 - leaderShare)) / 100, 1)
+                    };
+                })
+                .filter(item => item.marketSales > 0)
+                .sort((a, b) => b.opportunityIndex - a.opportunityIndex || b.marketSales - a.marketSales);
+
+            const featureLabels = {
+                '4WD_kabinli_tarla': '4WD + Kabin + Tarla',
+                '4WD_kabinli_bahce': '4WD + Kabin + Bahce',
+                '4WD_rollbar_tarla': '4WD + Rollbar + Tarla',
+                '4WD_rollbar_bahce': '4WD + Rollbar + Bahce',
+                '2WD_kabinli_tarla': '2WD + Kabin + Tarla',
+                '2WD_kabinli_bahce': '2WD + Kabin + Bahce',
+                '2WD_rollbar_tarla': '2WD + Rollbar + Tarla',
+                '2WD_rollbar_bahce': '2WD + Rollbar + Bahce'
+            };
+            const featureOverlap = Object.entries(featureLabels)
+                .map(([key, label]) => {
+                    const b1 = compareFirstData.featureCombos.combos[key] || 0;
+                    const b2 = compareSecondData.featureCombos.combos[key] || 0;
+                    return {
+                        key,
+                        label,
+                        b1,
+                        b2,
+                        p1: compareFirstData.featureCombos.total > 0 ? roundMetric((b1 * 100) / compareFirstData.featureCombos.total, 1) : 0,
+                        p2: compareSecondData.featureCombos.total > 0 ? roundMetric((b2 * 100) / compareSecondData.featureCombos.total, 1) : 0
+                    };
+                })
+                .filter(item => item.b1 > 0 || item.b2 > 0);
+
+            const scorecard = [
+                { id: 'sales', label: `${compareMaxYear} ilk ${compareMaxMonth} ay satış`, v1: compareFirstData.currentSales, v2: compareSecondData.currentSales, better_when: 'higher' },
+                { id: 'share', label: 'Pazar payı', v1: compareFirstData.currentShare, v2: compareSecondData.currentShare, better_when: 'higher' },
+                { id: 'yoy', label: 'Yıllık momentum', v1: compareFirstData.yoyGrowth, v2: compareSecondData.yoyGrowth, better_when: 'higher' },
+                { id: 'reach', label: 'Aktif il', v1: compareFirstData.activeProvinces, v2: compareSecondData.activeProvinces, better_when: 'higher' },
+                { id: 'avg_hp', label: 'Satış ağırlıklı HP', v1: compareFirstData.salesWeightedHp, v2: compareSecondData.salesWeightedHp, better_when: 'higher' },
+                { id: 'cost_hp', label: 'Fiyat / HP', v1: compareFirstData.costPerHp, v2: compareSecondData.costPerHp, better_when: 'lower' },
+                { id: 'portfolio', label: 'Model genişliği', v1: compareFirstData.modelCount, v2: compareSecondData.modelCount, better_when: 'higher' },
+                { id: 'concentration', label: 'Top 5 il konsantrasyonu', v1: compareFirstData.top5ProvinceShare, v2: compareSecondData.top5ProvinceShare, better_when: 'lower' }
+            ].map(item => {
+                let winner = 'tie';
+                if (item.v1 !== item.v2) {
+                    winner = item.better_when === 'lower'
+                        ? (item.v1 < item.v2 ? 'brand1' : 'brand2')
+                        : (item.v1 > item.v2 ? 'brand1' : 'brand2');
+                }
+                return { ...item, winner };
+            });
+
+            const winnerScore = {
+                brand1: scorecard.filter(item => item.winner === 'brand1').length,
+                brand2: scorecard.filter(item => item.winner === 'brand2').length,
+                tie: scorecard.filter(item => item.winner === 'tie').length
+            };
+
+            return res.json({
+                period_label: formatPeriodLabel(compareMaxYear, compareMaxMonth, compareMaxYear, compareMaxMonth),
+                source_stack: ['sales_view', 'tuik_veri', 'teknik_veri'],
+                years: compareYears,
+                max_year: compareMaxYear,
+                max_month: compareMaxMonth,
+                prev_year: comparePrevYear,
+                hp_order: compareHpOrder,
+                market: {
+                    current_total: compareMarketCurrent,
+                    previous_total: compareMarketPrevious,
+                    yoy_pct: calculateYoY(compareMarketCurrent, compareMarketPrevious),
+                    yearly: compareMarketYearly
+                },
+                total_market: compareMarketYearly,
+                brand1: { ...compareFirstBrand, data: compareFirstData },
+                brand2: { ...compareSecondBrand, data: compareSecondData },
+                dominanceMap,
+                provinceBattles,
+                provinceWins,
+                mktHp: compareMarketHp,
+                whitespaceSegments,
+                featureOverlap,
+                scorecard,
+                winnerScore
+            });
+        }
 
         const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
         const maxYear = parseInt(latestRes.rows[0].max_year);
@@ -4854,7 +14935,7 @@ app.get('/api/sales/benchmark', authMiddleware, async (req, res) => {
 // ============================================
 // DYNAMIC BRAND COMPARISON
 // ============================================
-app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
+app.get('/api/sales/brand-compare', authMiddleware, requireFeature('competitor_analysis', 'brand_compare'), async (req, res) => {
     try {
         const { brand1_id, brand2_id } = req.query;
         if (!brand1_id || !brand2_id) return res.status(400).json({ error: 'brand1_id ve brand2_id gerekli' });
@@ -4984,9 +15065,11 @@ app.get('/api/sales/brand-compare', authMiddleware, async (req, res) => {
 });
 
 // ============================================
-// GROQ AI ANALYSIS
+// MINIMAX AI ANALYSIS (OpenAI-compatible API)
 // ============================================
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || process.env.GROQ_API_KEY;
+const MINIMAX_BASE_URL = 'https://api.minimax.io/v1';
+const MINIMAX_MODEL = 'MiniMax-M2.7';
 
 // ============================================
 // WHATSAPP KONUŞMA HAFIZASI (Session Memory)
@@ -5028,7 +15111,7 @@ function buildConversationContext(history) {
 
 app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
     try {
-        if (!GROQ_API_KEY) return res.status(500).json({ error: 'GROQ_API_KEY tanımlı değil' });
+        if (!MINIMAX_API_KEY) return res.status(500).json({ error: 'MINIMAX_API_KEY tanımlı değil' });
 
         const { type, context } = req.body;
         if (!type) return res.status(400).json({ error: 'Analiz tipi gerekli' });
@@ -5038,7 +15121,78 @@ app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
 
         let userPrompt = '';
 
-        if (type === 'brand-region') {
+        if (type === 'model-region') {
+            const {
+                brandName,
+                modelName,
+                overview = {},
+                regionLadder = [],
+                whitespaceProvinces = [],
+                provinceArena = [],
+                siblingStack = [],
+                rivalStack = []
+            } = context || {};
+
+            const regionStr = regionLadder.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.region}: ${item.total_sales} adet, pay ${item.share_pct}%, uyum ${item.avg_fit_score}, YoY ${item.yoy_growth_pct ?? 'yeni'}, ana urun ${item.dominant_crop || '-'}, rol ${item.mission_label || '-'}`
+            ).join('\n');
+
+            const whitespaceStr = whitespaceProvinces.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.province_name} (${item.region}): firsat ${item.opportunity_score}, uyum ${item.fit_score}, il pazari ${item.province_market_units}, model payi ${item.province_share_pct}%, urun ${item.dominant_crop || '-'}, destek ${item.support_programs || 'yok'}`
+            ).join('\n');
+
+            const arenaStr = provinceArena.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.province_name} (${item.region}): toplam ${item.total_sales} adet, il payi ${item.province_share_pct}%, uyum ${item.fit_score}, YoY ${item.yoy_growth_pct ?? 'yeni'}, urun ${item.dominant_crop || '-'}`
+            ).join('\n');
+
+            const siblingStr = siblingStack.slice(0, 6).map((item, index) =>
+                `${index + 1}. ${item.model_name}: ${item.hp_range || '-'} HP, toplam ${item.total_sales} adet, rol ${item.role_note || '-'}`
+            ).join('\n');
+
+            const rivalStr = rivalStack.slice(0, 6).map((item, index) =>
+                `${index + 1}. ${item.brand_name} / ${item.model_name}: ${item.total_sales} adet, baskin bolge ${item.dominant_region || '-'}`
+            ).join('\n');
+
+            userPrompt = `**${brandName || '-'} / ${modelName || '-'}** icin model-bolge saha plani hazirla.
+
+MODEL OZETI:
+- Toplam model satisi: ${overview.total_sales || 0} adet
+- Son pencere satisi: ${overview.current_year_sales || 0} adet
+- Yillik degisim: ${overview.yoy_growth_pct ?? 'yeni'}%
+- Aktif il: ${overview.active_provinces || 0}
+- Aktif bolge: ${overview.active_regions || 0}
+- Ulusal model payi: ${overview.national_model_share_pct || 0}%
+- Ortalama il payi: ${overview.avg_province_share_pct || 0}%
+- Dogal habitat: ${overview.dominant_region || '-'}
+- Agro eksen: ${overview.dominant_crop || '-'}
+- Destek etkisi: ${overview.support_driven_share_pct || 0}%
+- Tahmini toplam ciro: ${overview.estimated_revenue_usd ? Math.round(overview.estimated_revenue_usd / 1000) + 'K $' : 'fiyat verisi sinirli'}
+
+BOLGE KOMUT CETVELI:
+${regionStr || '-'}
+
+BEYAZ ALAN ILLERI:
+${whitespaceStr || '-'}
+
+MEVCUT HABITAT ILLERI:
+${arenaStr || '-'}
+
+KARDES MODEL ROUTING:
+${siblingStr || '-'}
+
+RAKIP MODEL BASKISI:
+${rivalStr || '-'}
+
+Su basliklarda yonetim kuruluna sunulacak kadar net ve profesyonel bir analiz yap:
+1. **Modelin Dogal Habitat Tezi**: Bu modelin hangi bolge ve urun deseninde dogal olarak kazandigini acikla.
+2. **Savunulacak Kale / Buyutulecek Cephe**: Mevcut habitatta korunacak illerle buyume yatirimi yapilacak illeri ayir.
+3. **Beyaz Alan Saldiri Plani**: Ilk 90 gunde gidilecek ilk 3 il ve nedenleri.
+4. **Kardes Model Routing**: Portfoy icinde bu model hangi rolleri ustlenmeli, hangi kardes modelle saha cakisimi onlenmeli?
+5. **Rakip Kirma Taktikleri**: Ayni koridordaki rakip modellere karsi fiyatlama, bayi, demo ve ekipman paketi bazli somut taktikler ver.
+6. **Riskler ve Ongoruler**: Destek, iklim, urun deseni ve pazar yogunluguna gore gelecek donem risk/firsat analizi yap.
+7. **CEO Ozet Notu**: En sonda 5 maddelik cok net aksiyon listesi ver.`;
+
+        } else if (type === 'brand-region') {
             // Brand-specific regional analysis
             const { brandName, provinces, models, totalSales, totalRevenue } = context;
             const topProvStr = (provinces || []).slice(0, 10).map((p, i) =>
@@ -5064,6 +15218,89 @@ ${topProvStr}
 5. **Risk Değerlendirmesi**: Pazar kaybı riski olan bölgeler ve nedenleri.
 6. **Gelecek Beklentileri**: Trendlere göre önümüzdeki dönem öngörüleri.`;
 
+        } else if (type === 'regional-province') {
+            const {
+                provinceName,
+                region,
+                provinceMetrics = {},
+                overview = {},
+                focusBrand = {},
+                topBrands = [],
+                topModels = [],
+                soilMachineRows = [],
+                cropOperationRows = [],
+                climateActions = [],
+                narrative = []
+            } = context || {};
+
+            const brandStr = topBrands.slice(0, 6).map((item, index) =>
+                `${index + 1}. ${item.brand_name || item.name || '-'}: ${item.total_sales || item.total || 0} adet, pay ${item.share_pct || item.share || 0}%, HP ${item.avg_hp || item.avgHp || '-'}, tahmini gelir ${item.revenue_band || '-'}`
+            ).join('\n');
+
+            const modelStr = topModels.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.model_name || '-'}: ${item.sales || item.total_sales || 0} adet, ${item.hp || item.hp_band || '-'}, ${item.drive || item.drive_type || '-'}, ${item.reason || item.fit_note || '-'}`
+            ).join('\n');
+
+            const soilStr = soilMachineRows.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.soil || '-'} / ${item.texture || '-'}: urun ${item.crop || '-'}, cekis ${item.drive || '-'}, HP ${item.hpBand || '-'}, ekipman ${item.implement || '-'}`
+            ).join('\n');
+
+            const cropStr = cropOperationRows.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.crop || '-'}: alan ${item.area || '-'}, uretim ${item.production || '-'}, HP ${item.hpBand || '-'}, arketip ${item.archetype || '-'}, ekipman ${item.implement || '-'}`
+            ).join('\n');
+
+            const climateStr = climateActions.slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.month || '-'}: sicaklik ${item.temp ?? '-'}, yagis ${item.rain ?? '-'}, kuraklik ${item.drought ?? '-'}, aksiyon ${item.action || '-'}`
+            ).join('\n');
+
+            const narrativeStr = Array.isArray(narrative) && narrative.length
+                ? narrative.map((item, index) => `${index + 1}. ${item}`).join('\n')
+                : '-';
+
+            userPrompt = `**${provinceName || '-'} / ${region || '-'}** icin bolgesel mekanizasyon strateji raporu hazirla.
+
+IL KOMUTA OZETI:
+- Toplam satis: ${provinceMetrics.total || overview.total_sales || 0} adet
+- Mekanizasyon endeksi: ${provinceMetrics.mechIndex || provinceMetrics.mech_index || 0}
+- Ortalama HP: ${provinceMetrics.avgHp || provinceMetrics.avg_hp || overview.avg_hp || 0}
+- 4WD orani: ${provinceMetrics.ratio4wd || provinceMetrics.drive_ratio_4wd || 0}%
+- Kabin orani: ${provinceMetrics.cabinRatio || provinceMetrics.cabin_ratio || 0}%
+- Yillik degisim: ${provinceMetrics.yoyGrowth || provinceMetrics.yoy_growth_pct || 0}%
+- Fokus marka: ${focusBrand?.brand_name || focusBrand?.name || '-'}
+- Fokus marka payi: ${focusBrand?.share_pct || focusBrand?.share || 0}%
+- Dominant urun/desen: ${overview.dominant_crop || overview.primary_crop || '-'}
+- Toprak tipi: ${overview.soil_type || provinceMetrics.soil_type || '-'}
+- Iklim zonu: ${overview.climate_zone || provinceMetrics.climate_zone || '-'}
+
+AKICI SAHA OKUMASI:
+${narrativeStr}
+
+MARKA LIDERLIK CETVELI:
+${brandStr || '-'}
+
+TERCIH EDILEN TRAKTOR STACKI:
+${modelStr || '-'}
+
+TOPRAK - MAKINA MATRISI:
+${soilStr || '-'}
+
+URUN - OPERASYON ORKESTRASI:
+${cropStr || '-'}
+
+IKLIM AKSIYON CETVELI:
+${climateStr || '-'}
+
+Yonetim kuruluna sunulacak profesyonel bir strateji raporu yaz. Sunum dili net, akici ve premium olsun.
+Su basliklarda cikti ver:
+1. **Ilin Mekanizasyon Kimligi**: Il hangi tarimsal ve mekanik DNA ile tanimlaniyor?
+2. **Toprak-Urun-Makina Tezi**: Toprak yapisi, ekili urunler ve tercih edilen traktor mimarisi arasindaki iliskiyi derinlikli kur.
+3. **Marka ve Portfoy Rekabeti**: Hangi markalar ve modeller kazaniyor, neden kazaniyor?
+4. **Onerilen Traktor ve Ekipman Mimarisi**: Bu il icin satilmasi gereken ideal HP, cekis, kabin, ekipman paketini acikla.
+5. **90 Gunluk Saha Plani**: Bayi, demo, ekipman paketi, kampanya ve stok tarafinda cok somut hamleler ver.
+6. **Riskler ve Firsatlar**: Iklim, urun deseni, mekanizasyon seviyesi ve pazar yogunluguna gore firsat/risk matrisi kur.
+7. **5 Yillik Ongoruler**: Bu ilde gelecek yillarda hangi tip traktorlere ve ekipmanlara kayis olacagini aciklanabilir sekilde tahmin et.
+8. **CEO Aksiyon Notu**: En sonda 5 maddelik cok net yonetici ozet listesi ver.`;
+
         } else if (type === 'regional-index') {
             const { year, provinces: provs } = context;
             const top10 = (provs || []).slice(0, 15).map((p, i) =>
@@ -5082,6 +15319,57 @@ ${top10}
 4. **Teknoloji Adaptasyonu**: 4WD ve kabinli traktör oranlarının bölgesel dağılımı ne söylüyor?
 5. **Büyüme Haritası**: En hızlı büyüyen ve gerileyen bölgeler. Nedenler.
 6. **Stratejik Öneriler**: Sektör oyuncuları için bölgesel strateji önerileri.`;
+
+        } else if (type === 'tarmakbir-command') {
+            const {
+                year,
+                filteredTotal,
+                fullTotal,
+                carryoverTotal,
+                carryoverShare,
+                filteredYoy,
+                topBrands,
+                focusBrand,
+                pressureMonths
+            } = context;
+
+            const topBrandStr = (topBrands || []).slice(0, 8).map((item, index) =>
+                `${index + 1}. ${item.name}: ${item.total} adet, pay ${item.share}%, zirve ay ${item.peakMonth}, Q4 agirligi ${item.q4Share}%`
+            ).join('\n');
+
+            const pressureStr = (pressureMonths || []).slice(0, 6).map(item =>
+                `${item.month}: butun madde ${item.fullTotal}, N+N1 ${item.filteredTotal}, fark ${item.gap}, fark orani ${item.gapShare}%`
+            ).join('\n');
+
+            const focusBrandStr = focusBrand
+                ? `${focusBrand.name}: sira ${focusBrand.rank}, toplam ${focusBrand.total} adet, pay ${focusBrand.share}%, zirve ay ${focusBrand.peakMonth}, ritim ${focusBrand.rhythm}`
+                : 'Odak marka secili degil; analizi toplam pazar bakisiyla yap.';
+
+            userPrompt = `${year} yili icin TarmakBir komuta merkezi analizi yap.
+
+ANA KPI:
+- N+N1 filtreli toplam: ${filteredTotal} adet
+- Butun madde toplam: ${fullTotal} adet
+- Eski model / carryover etkisi: ${carryoverTotal} adet
+- Carryover payi: ${carryoverShare}%
+- N+N1 yillik degisim: ${filteredYoy}%
+
+ODAK MARKA:
+${focusBrandStr}
+
+MARKA LIDERLIK TABLOSU:
+${topBrandStr}
+
+AYLIK BASKI NOKTALARI:
+${pressureStr}
+
+Su basliklarda yonetime sunulacak kadar aksiyon odakli analiz yap:
+1. **Pazar Ritim Okumasi**: N+N1 ve butun madde arasindaki fark ne anlatiyor?
+2. **Carryover / Eski Model Baskisi**: Hangi aylarda stok veya gecis baskisi yuksek?
+3. **Marka Yogunlugu**: Lider markalar pazari nasil kilitliyor, nerede acik alan olabilir?
+4. **Odak Marka Hamlesi**: Secili marka varsa hangi 3 hamleyle saha pozisyonu guclenir?
+5. **Ticari Alarm Listesi**: Hemen izlenmesi gereken riskler ve nedenleri.
+6. **90 Gunluk Plan**: Kisa vadede uygulanabilir 5 somut aksiyon oner.`;
 
         } else if (type === 'brand-compare') {
             const { brand1, brand2, data1, data2, maxYear } = context;
@@ -5102,14 +15390,14 @@ ${brand2}: ${maxYear} satış: ${data2.currPartial} adet, YoY: ${data2.yoyGrowth
         }
 
         // Call Groq API
-        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        const groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${GROQ_API_KEY}`
+                'Authorization': `Bearer ${MINIMAX_API_KEY}`
             },
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: MINIMAX_MODEL,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
@@ -5137,6 +15425,27 @@ ${brand2}: ${maxYear} satış: ${data2.currPartial} adet, YoY: ${data2.yoyGrowth
     } catch (err) {
         console.error('AI analyze error:', err);
         res.status(500).json({ error: 'AI analiz hatası: ' + err.message });
+    }
+});
+
+// ============================================
+// SEED MODEL IMAGE GALLERY (admin)
+// ============================================
+app.post('/api/admin/seed-model-images', authMiddleware, async (req, res) => {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ error: 'Sadece admin bu işlemi yapabilir' });
+    }
+    try {
+        const { seedModelImages } = require('./scripts/seed-model-images');
+        const result = await seedModelImages();
+        res.json({
+            success: true,
+            message: `Model görseli seed tamamlandı: ${result.inserted} eklendi, ${result.updated} güncellendi, ${result.errors} hata`,
+            ...result
+        });
+    } catch (err) {
+        console.error('Seed model images error:', err);
+        res.status(500).json({ error: 'Model görseli seed başarısız: ' + err.message });
     }
 });
 
@@ -5479,14 +15788,16 @@ app.get('/api/sales/tarmakbir', authMiddleware, async (req, res) => {
 
 app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
     try {
-        const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
+        const latestRes = await pool.query('SELECT MAX(year) as max_year, MIN(year) as min_year FROM sales_data');
         const maxYear = parseInt(latestRes.rows[0].max_year) || 2025;
-        const selectedYear = req.query.year ? parseInt(req.query.year) : maxYear;
+        const minYear = parseInt(latestRes.rows[0].min_year) || 2019;
+        const requestedYear = req.query.year ? parseInt(req.query.year, 10) : maxYear;
+        const selectedYear = !isNaN(requestedYear) ? Math.min(Math.max(requestedYear, minYear), maxYear) : maxYear;
 
-        // Get sales by brand and month (NO model year filter)
+        // Get sales by brand and month from raw sales_data to preserve the all-model-years view
         const salesRes = await pool.query(`
             SELECT b.name as brand_name, s.month, SUM(s.quantity) as total
-            FROM sales_view s
+            FROM sales_data s
             LEFT JOIN brands b ON s.brand_id = b.id
             WHERE s.year = $1
             GROUP BY b.name, s.month
@@ -5516,14 +15827,17 @@ app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
             brandsData[b][0] = rSum; // Row total stored at index 0
         });
 
-        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_view ORDER BY year DESC');
+        const yearsRes = await pool.query('SELECT DISTINCT year FROM sales_data ORDER BY year DESC');
 
         res.json({
             selected_year: selectedYear,
             brands_data: brandsData,
             months_total: monthsTotal,
             grand_total: grandTotalAll,
-            available_years: yearsRes.rows.map(r => parseInt(r.year))
+            available_years: yearsRes.rows.map(r => parseInt(r.year, 10)),
+            min_year: minYear,
+            max_year: maxYear,
+            source_table: 'sales_data'
         });
     } catch (err) {
         console.error('TarmakBirTotal error:', err);
@@ -5637,6 +15951,1602 @@ app.post('/api/admin/seed-sales', async (req, res) => {
     }
 });
 
+async function ensureBrandPortalSeeded() {
+    const curatedPortalSeed = require('./database/brand-portal-seed');
+    const { brands: seedBrands } = require('./database/seed-data');
+    const brandsRes = await pool.query(`
+        SELECT id, name, slug, website, description
+        FROM brands
+        WHERE is_active = true
+        ORDER BY name
+    `);
+
+    const brandMap = new Map(brandsRes.rows.map(row => [getCanonicalBrandPortalSlug(row.name), row]));
+    const seedBrandMap = new Map(seedBrands.map(brand => [getCanonicalBrandPortalSlug(brand.name), brand]));
+
+    for (const brand of brandsRes.rows) {
+        const canonicalSlug = getCanonicalBrandPortalSlug(brand.name);
+        const seedBrand = seedBrandMap.get(canonicalSlug);
+        const defaultSourceNotes = JSON.stringify(
+            brand.website
+                ? [{ label: 'Resmi site', url: brand.website }]
+                : []
+        );
+
+        if (seedBrand) {
+            await pool.query(`
+                UPDATE brands
+                SET
+                    primary_color = $1,
+                    secondary_color = $2,
+                    accent_color = $3,
+                    text_color = $4,
+                    country_of_origin = COALESCE(country_of_origin, $5),
+                    parent_company = COALESCE(parent_company, $6)
+                WHERE id = $7
+            `, [
+                seedBrand.primary_color,
+                seedBrand.secondary_color,
+                seedBrand.accent_color,
+                seedBrand.text_color,
+                seedBrand.country_of_origin,
+                seedBrand.parent_company,
+                brand.id
+            ]);
+        }
+
+        await pool.query(`
+            INSERT INTO brand_portal_profiles (
+                brand_id, tagline, hero_title, hero_subtitle, overview,
+                website_url, source_notes_json
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+            ON CONFLICT (brand_id) DO NOTHING
+        `, [
+            brand.id,
+            `${brand.name} icin ozel marka deneyimi`,
+            `${brand.name} Marka Merkezi`,
+            `${brand.name} markasi icin login, urun, saha ve haber akislarini bir araya getiren ozel deneyim.`,
+            brand.description || `${brand.name} icin marka deneyimini zenginlestiren portal profili.`,
+            brand.website || null,
+            defaultSourceNotes
+        ]);
+    }
+
+    for (const [slug, seedPayload] of Object.entries(curatedPortalSeed || {})) {
+        const brand = brandMap.get(slug);
+        if (!brand) continue;
+
+        const profile = seedPayload.profile || {};
+        await pool.query(`
+            INSERT INTO brand_portal_profiles (
+                brand_id, tagline, hero_title, hero_subtitle, overview,
+                website_url, dealer_locator_url, price_list_url, portal_url,
+                contact_phone, contact_email, whatsapp_url, headquarters,
+                hero_stats_json, social_links_json, product_lines_json,
+                focus_regions_json, source_notes_json, updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9,
+                $10, $11, $12, $13,
+                $14::jsonb, $15::jsonb, $16::jsonb,
+                $17::jsonb, $18::jsonb, NOW()
+            )
+            ON CONFLICT (brand_id) DO UPDATE SET
+                tagline = EXCLUDED.tagline,
+                hero_title = EXCLUDED.hero_title,
+                hero_subtitle = EXCLUDED.hero_subtitle,
+                overview = EXCLUDED.overview,
+                website_url = EXCLUDED.website_url,
+                dealer_locator_url = EXCLUDED.dealer_locator_url,
+                price_list_url = EXCLUDED.price_list_url,
+                portal_url = EXCLUDED.portal_url,
+                contact_phone = EXCLUDED.contact_phone,
+                contact_email = EXCLUDED.contact_email,
+                whatsapp_url = EXCLUDED.whatsapp_url,
+                headquarters = EXCLUDED.headquarters,
+                hero_stats_json = EXCLUDED.hero_stats_json,
+                social_links_json = EXCLUDED.social_links_json,
+                product_lines_json = EXCLUDED.product_lines_json,
+                focus_regions_json = EXCLUDED.focus_regions_json,
+                source_notes_json = EXCLUDED.source_notes_json,
+                updated_at = NOW()
+        `, [
+            brand.id,
+            profile.tagline || null,
+            profile.hero_title || null,
+            profile.hero_subtitle || null,
+            profile.overview || null,
+            profile.website_url || brand.website || null,
+            profile.dealer_locator_url || null,
+            profile.price_list_url || null,
+            profile.portal_url || null,
+            profile.contact_phone || null,
+            profile.contact_email || null,
+            profile.whatsapp_url || null,
+            profile.headquarters || null,
+            JSON.stringify(profile.hero_stats_json || []),
+            JSON.stringify(profile.social_links_json || []),
+            JSON.stringify(profile.product_lines_json || []),
+            JSON.stringify(profile.focus_regions_json || []),
+            JSON.stringify(profile.source_notes_json || [])
+        ]);
+
+        for (const item of seedPayload.items || []) {
+            await pool.query(`
+                INSERT INTO brand_portal_items (
+                    brand_id, item_type, title, summary, cta_label, cta_url,
+                    image_url, meta_json, published_at, priority, is_featured, is_active, updated_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8::jsonb, $9, $10, $11, true, NOW()
+                )
+                ON CONFLICT (brand_id, item_type, title) DO UPDATE SET
+                    summary = EXCLUDED.summary,
+                    cta_label = EXCLUDED.cta_label,
+                    cta_url = EXCLUDED.cta_url,
+                    image_url = EXCLUDED.image_url,
+                    meta_json = EXCLUDED.meta_json,
+                    published_at = EXCLUDED.published_at,
+                    priority = EXCLUDED.priority,
+                    is_featured = EXCLUDED.is_featured,
+                    is_active = true,
+                    updated_at = NOW()
+            `, [
+                brand.id,
+                item.item_type,
+                item.title,
+                item.summary || null,
+                item.cta_label || null,
+                item.cta_url || null,
+                item.image_url || null,
+                JSON.stringify(item.meta_json || {}),
+                item.published_at || null,
+                item.priority || 100,
+                item.is_featured === true
+            ]);
+        }
+
+        for (const contact of seedPayload.contacts || []) {
+            await pool.query(`
+                INSERT INTO brand_portal_contacts (
+                    brand_id, contact_type, label, region_name, city,
+                    contact_name, title, phone, email, url, sort_order, is_active, updated_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5,
+                    $6, $7, $8, $9, $10, $11, true, NOW()
+                )
+                ON CONFLICT (brand_id, contact_type, label, city) DO UPDATE SET
+                    region_name = EXCLUDED.region_name,
+                    contact_name = EXCLUDED.contact_name,
+                    title = EXCLUDED.title,
+                    phone = EXCLUDED.phone,
+                    email = EXCLUDED.email,
+                    url = EXCLUDED.url,
+                    sort_order = EXCLUDED.sort_order,
+                    is_active = true,
+                    updated_at = NOW()
+            `, [
+                brand.id,
+                contact.contact_type,
+                contact.label,
+                contact.region_name || null,
+                contact.city || null,
+                contact.contact_name || null,
+                contact.title || null,
+                contact.phone || null,
+                contact.email || null,
+                contact.url || null,
+                contact.sort_order || 100
+            ]);
+        }
+    }
+}
+
+async function ensureFutureIntelligenceSeeded() {
+    const {
+        intelligenceSources = [],
+        supportPrograms = [],
+        supportApplicationWindows = []
+    } = require('./database/future-intelligence-seed');
+
+    const sourceIdMap = new Map();
+
+    for (const source of intelligenceSources) {
+        const result = await pool.query(`
+            INSERT INTO intelligence_sources (
+                source_code, title, publisher, source_type, geography_scope,
+                official_url, publication_date, notes, is_active, updated_at
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,NOW())
+            ON CONFLICT (source_code) DO UPDATE SET
+                title = EXCLUDED.title,
+                publisher = EXCLUDED.publisher,
+                source_type = EXCLUDED.source_type,
+                geography_scope = EXCLUDED.geography_scope,
+                official_url = EXCLUDED.official_url,
+                publication_date = EXCLUDED.publication_date,
+                notes = EXCLUDED.notes,
+                is_active = true,
+                updated_at = NOW()
+            RETURNING id, source_code
+        `, [
+            source.source_code,
+            source.title,
+            source.publisher || null,
+            source.source_type,
+            source.geography_scope || 'turkiye',
+            source.official_url || null,
+            source.publication_date || null,
+            source.notes || null
+        ]);
+        sourceIdMap.set(result.rows[0].source_code, result.rows[0].id);
+    }
+
+    const programIdMap = new Map();
+
+    for (const program of supportPrograms) {
+        const sourceId = sourceIdMap.get(program.source_code) || null;
+        const result = await pool.query(`
+            INSERT INTO support_programs (
+                program_code, authority_name, program_name, program_type, status,
+                support_scope, support_mode, currency, min_grant_rate_pct,
+                max_grant_rate_pct, source_id, official_url, notes, updated_at
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+            ON CONFLICT (program_code) DO UPDATE SET
+                authority_name = EXCLUDED.authority_name,
+                program_name = EXCLUDED.program_name,
+                program_type = EXCLUDED.program_type,
+                status = EXCLUDED.status,
+                support_scope = EXCLUDED.support_scope,
+                support_mode = EXCLUDED.support_mode,
+                currency = EXCLUDED.currency,
+                min_grant_rate_pct = EXCLUDED.min_grant_rate_pct,
+                max_grant_rate_pct = EXCLUDED.max_grant_rate_pct,
+                source_id = EXCLUDED.source_id,
+                official_url = EXCLUDED.official_url,
+                notes = EXCLUDED.notes,
+                updated_at = NOW()
+            RETURNING id, program_code
+        `, [
+            program.program_code,
+            program.authority_name,
+            program.program_name,
+            program.program_type || null,
+            program.status || 'announced',
+            program.support_scope || null,
+            program.support_mode || null,
+            program.currency || 'TRY',
+            program.min_grant_rate_pct ?? null,
+            program.max_grant_rate_pct ?? null,
+            sourceId,
+            program.official_url || null,
+            program.notes || null
+        ]);
+        programIdMap.set(result.rows[0].program_code, result.rows[0].id);
+    }
+
+    for (const windowItem of supportApplicationWindows) {
+        const programId = programIdMap.get(windowItem.program_code);
+        if (!programId) continue;
+
+        await pool.query(`
+            INSERT INTO support_application_windows (
+                program_id, application_year, call_no, open_date, close_date,
+                budget_amount, budget_currency, status, notes
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            ON CONFLICT (program_id, application_year, call_no) DO UPDATE SET
+                open_date = EXCLUDED.open_date,
+                close_date = EXCLUDED.close_date,
+                budget_amount = EXCLUDED.budget_amount,
+                budget_currency = EXCLUDED.budget_currency,
+                status = EXCLUDED.status,
+                notes = EXCLUDED.notes
+        `, [
+            programId,
+            windowItem.application_year,
+            windowItem.call_no || null,
+            windowItem.open_date || null,
+            windowItem.close_date || null,
+            windowItem.budget_amount ?? null,
+            windowItem.budget_currency || 'EUR',
+            windowItem.status || 'announced',
+            windowItem.notes || null
+        ]);
+    }
+
+    const ipardProgramId = programIdMap.get('IPARD_III_2025');
+    if (ipardProgramId) {
+        const provinceRows = await pool.query('SELECT id FROM provinces ORDER BY id');
+        for (const province of provinceRows.rows) {
+            await pool.query(`
+                INSERT INTO support_program_coverage (
+                    program_id, province_id, coverage_scope, eligible_investments,
+                    target_segments, notes
+                )
+                SELECT $1, $2, 'province', $3::text[], $4::text[], $5
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM support_program_coverage
+                    WHERE program_id = $1 AND province_id = $2 AND coverage_scope = 'province'
+                )
+            `, [
+                ipardProgramId,
+                province.id,
+                ['mekanizasyon', 'tarimsal modernizasyon', 'altyapi', 'isletme yatirimi'],
+                ['tarla', 'bahce', 'karma isletme'],
+                'IPARD III programi kapsami il bazinda izlenmek uzere referans coverage kaydi.'
+            ]);
+        }
+    }
+
+    const irrigationProgramId = programIdMap.get('IPARD_III_OPEN_FIELD_IRRIGATION');
+    if (irrigationProgramId) {
+        await pool.query(`
+            INSERT INTO support_program_coverage (
+                program_id, province_id, region_name, coverage_scope, eligible_investments,
+                target_segments, notes
+            )
+            SELECT $1, NULL, 'Turkiye', 'national', $2::text[], $3::text[], $4
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM support_program_coverage
+                WHERE program_id = $1 AND coverage_scope = 'national'
+            )
+        `, [
+            irrigationProgramId,
+            ['sulama', 'acik alan sulama', 'su verimliligi', 'altyapi'],
+            ['sulu tarim', 'yuksek verim hedefi', 'su stresi bolgeleri'],
+            'Sulama desteklerinin ulusal etkisini izlemek icin referans coverage kaydi.'
+        ]);
+    }
+}
+
+function clampMetric(value, min, max) {
+    return Math.min(Math.max(Number(value || 0), min), max);
+}
+
+function addUtcMonths(dateValue, months) {
+    const date = new Date(dateValue);
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+}
+
+function toIsoDate(dateValue) {
+    const date = new Date(dateValue);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function regionKey(value = '') {
+    return normalizeSearchText(value);
+}
+
+async function bulkInsertRows(tableName, columns, rows, chunkSize = 400) {
+    if (!rows.length) return;
+    for (let start = 0; start < rows.length; start += chunkSize) {
+        const chunk = rows.slice(start, start + chunkSize);
+        const values = [];
+        const placeholders = chunk.map((row, rowIndex) => {
+            const baseOffset = rowIndex * columns.length;
+            columns.forEach(column => values.push(row[column] ?? null));
+            return `(${columns.map((_, colIndex) => `$${baseOffset + colIndex + 1}`).join(',')})`;
+        }).join(',');
+        await pool.query(`INSERT INTO ${tableName} (${columns.join(',')}) VALUES ${placeholders}`, values);
+    }
+}
+
+async function ensureReferenceMarketSignalsSeeded(options = {}) {
+    const { replaceExisting = false } = options;
+    const { commodityCatalog = [] } = require('./database/future-intelligence-seed');
+    const { commodityYearBase, monthlySeasonality, regionClimateScenarioReference } = require('./database/future-market-reference');
+
+    const sourceRes = await pool.query(`
+        SELECT source_code, id
+        FROM intelligence_sources
+        WHERE source_code IN ('tuik_data_portal', 'mgm_climate_projections')
+    `);
+    const sourceMap = new Map(sourceRes.rows.map(row => [row.source_code, row.id]));
+    const tuikSourceId = sourceMap.get('tuik_data_portal') || null;
+    const mgmSourceId = sourceMap.get('mgm_climate_projections') || null;
+
+    const commodityCountRes = await pool.query(`SELECT COUNT(*)::int AS count FROM commodity_prices WHERE market_scope = 'reference-index'`);
+    const climateCountRes = await pool.query(`SELECT COUNT(*)::int AS count FROM climate_projection_scenarios WHERE scenario_code IN ('reference_base', 'reference_stress')`);
+    const commodityCount = parseInt(commodityCountRes.rows[0]?.count || 0, 10);
+    const climateCount = parseInt(climateCountRes.rows[0]?.count || 0, 10);
+
+    if (replaceExisting) {
+        await pool.query(`DELETE FROM commodity_prices WHERE market_scope = 'reference-index'`);
+        await pool.query(`DELETE FROM climate_projection_scenarios WHERE scenario_code IN ('reference_base', 'reference_stress')`);
+    }
+
+    if (replaceExisting || commodityCount === 0) {
+        const commodityNameMap = new Map(commodityCatalog.map(item => [item.commodity_code, item.commodity_name]));
+        const rows = [];
+
+        for (const [commodityCode, years] of Object.entries(commodityYearBase || {})) {
+            const commodityName = commodityNameMap.get(commodityCode) || commodityCode;
+            for (const [yearText, baseIndex] of Object.entries(years || {})) {
+                const year = parseInt(yearText, 10);
+                monthlySeasonality.forEach((multiplier, monthIndex) => {
+                    const month = monthIndex + 1;
+                    rows.push({
+                        commodity_code: commodityCode,
+                        commodity_name: commodityName,
+                        market_scope: 'reference-index',
+                        province_id: null,
+                        price_date: `${year}-${String(month).padStart(2, '0')}-01`,
+                        year,
+                        month,
+                        unit: 'index_2022_100',
+                        currency: 'INDEX',
+                        nominal_price: Number((Number(baseIndex) * Number(multiplier)).toFixed(2)),
+                        source_id: tuikSourceId,
+                        metadata_json: JSON.stringify({
+                            mode: 'reference_seed',
+                            note: 'Official import gelene kadar forecast motoru icin referans endeks serisi.',
+                            year_base: Number(baseIndex),
+                            seasonality_multiplier: Number(multiplier)
+                        })
+                    });
+                });
+            }
+        }
+
+        await bulkInsertRows('commodity_prices', [
+            'commodity_code', 'commodity_name', 'market_scope', 'province_id', 'price_date', 'year', 'month',
+            'unit', 'currency', 'nominal_price', 'source_id', 'metadata_json'
+        ], rows, 500);
+    }
+
+    if (replaceExisting || climateCount === 0) {
+        const rows = [];
+        const metricLabels = {
+            temp_change_c: 'Sicaklik degisimi',
+            rainfall_change_pct: 'Yagis degisimi',
+            drought_risk_pct: 'Kuraklik riski kaymasi'
+        };
+
+        for (const [regionName, scenarios] of Object.entries(regionClimateScenarioReference || {})) {
+            for (const [scenarioCode, horizons] of Object.entries(scenarios || {})) {
+                for (const [horizonText, metrics] of Object.entries(horizons || {})) {
+                    const horizonYear = parseInt(horizonText, 10);
+                    for (const [metricCode, changeValue] of Object.entries(metrics || {})) {
+                        rows.push({
+                            province_id: null,
+                            region_name: regionName,
+                            scenario_code: scenarioCode,
+                            horizon_year: horizonYear,
+                            metric_code: metricCode,
+                            metric_label: metricLabels[metricCode] || metricCode,
+                            change_value: changeValue,
+                            change_unit: metricCode.includes('pct') ? 'pct' : 'celsius',
+                            baseline_period: '2020-2024',
+                            source_id: mgmSourceId,
+                            notes: 'Reference scenario scaffold. Resmi MGM importu geldiginde degistirilecek.'
+                        });
+                    }
+                }
+            }
+        }
+
+        await bulkInsertRows('climate_projection_scenarios', [
+            'province_id', 'region_name', 'scenario_code', 'horizon_year', 'metric_code', 'metric_label',
+            'change_value', 'change_unit', 'baseline_period', 'source_id', 'notes'
+        ], rows, 500);
+    }
+}
+
+function adjustFeatureShareRows(featureType, rows, context = {}) {
+    const baseRows = rows.map(item => ({ ...item }));
+    if (!baseRows.length) return baseRows;
+
+    const adjustments = new Map();
+    if (featureType === 'drive_type') {
+        if (context.supportBoost > 0 || context.climatePenalty < -0.005) {
+            adjustments.set('4WD', 0.03);
+            adjustments.set('2WD', -0.03);
+        }
+    } else if (featureType === 'cabin_type') {
+        adjustments.set('kabinli', 0.04);
+        adjustments.set('rollbar', -0.04);
+    } else if (featureType === 'hp_range') {
+        adjustments.set('90-99', 0.02);
+        adjustments.set('100-109', 0.02);
+        adjustments.set('110-119', 0.01);
+        adjustments.set('1-39', -0.02);
+        adjustments.set('40-49', -0.015);
+        adjustments.set('50-54', -0.01);
+    }
+
+    if (adjustments.size === 0) return baseRows;
+
+    baseRows.forEach(item => {
+        item.demand_share_pct = clampMetric(Number(item.demand_share_pct || 0) + (adjustments.get(item.feature_value) || 0), 0.001, 0.999);
+    });
+
+    const shareTotal = baseRows.reduce((sum, item) => sum + Number(item.demand_share_pct || 0), 0) || 1;
+    baseRows.forEach(item => {
+        item.demand_share_pct = Number((Number(item.demand_share_pct || 0) / shareTotal).toFixed(6));
+        item.demand_units = Number((Number(item.demand_units || 0)).toFixed(4));
+    });
+    return baseRows;
+}
+
+async function runBaselineForecast(options = {}) {
+    const horizonMonths = Math.max(12, Math.min(parseInt(options.horizonMonths || 24, 10), 120));
+    const scenarioCode = String(options.scenarioCode || 'base');
+    const createdByUserId = Number(options.createdByUserId || 0) || null;
+    const normalizedTuikBrandExpr = `
+        CASE
+            WHEN UPPER(tv.marka) = 'CASE IH' THEN 'CASE'
+            WHEN UPPER(tv.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+            WHEN UPPER(tv.marka) = 'KIOTI' THEN 'KİOTİ'
+            ELSE UPPER(tv.marka)
+        END
+    `;
+    const normalizedTeknikBrandExpr = `
+        CASE
+            WHEN UPPER(tk.marka) = 'CASE IH' THEN 'CASE'
+            WHEN UPPER(tk.marka) = 'DEUTZ-FAHR' THEN 'DEUTZ'
+            WHEN UPPER(tk.marka) = 'KIOTI' THEN 'KİOTİ'
+            ELSE UPPER(tk.marka)
+        END
+    `;
+    const hpRangeExpr = `
+        CASE
+            WHEN tk.motor_gucu_hp IS NULL THEN NULL
+            WHEN tk.motor_gucu_hp <= 39 THEN '1-39'
+            WHEN tk.motor_gucu_hp <= 49 THEN '40-49'
+            WHEN tk.motor_gucu_hp <= 54 THEN '50-54'
+            WHEN tk.motor_gucu_hp <= 59 THEN '55-59'
+            WHEN tk.motor_gucu_hp <= 69 THEN '60-69'
+            WHEN tk.motor_gucu_hp <= 79 THEN '70-79'
+            WHEN tk.motor_gucu_hp <= 89 THEN '80-89'
+            WHEN tk.motor_gucu_hp <= 99 THEN '90-99'
+            WHEN tk.motor_gucu_hp <= 109 THEN '100-109'
+            WHEN tk.motor_gucu_hp <= 119 THEN '110-119'
+            ELSE '120+'
+        END
+    `;
+    const latestRes = await pool.query(`SELECT MAX(MAKE_DATE(tescil_yil, tescil_ay, 1)) AS latest_period FROM tuik_veri`);
+    const latestPeriod = latestRes.rows[0]?.latest_period;
+    if (!latestPeriod) {
+        return { created: false, reason: 'sales_view bos oldugu icin forecast uretilemedi' };
+    }
+
+    await ensureReferenceMarketSignalsSeeded();
+
+    const latestDate = new Date(latestPeriod);
+    const latestYear = latestDate.getUTCFullYear();
+    const forecastKey = `baseline_${scenarioCode}_${Date.now()}`;
+
+    const seasonalityRes = await pool.query(`
+        SELECT tv.tescil_ay AS month, SUM(tv.satis_adet)::decimal AS total_units
+        FROM tuik_veri tv
+        WHERE MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) >= (DATE_TRUNC('month', $1::date) - INTERVAL '23 months')
+        GROUP BY tv.tescil_ay
+        ORDER BY month
+    `, [toIsoDate(latestDate)]);
+    const seasonalityMap = new Map();
+    const seasonalityValues = seasonalityRes.rows.map(row => Number(row.total_units || 0));
+    const seasonalityAvg = seasonalityValues.reduce((sum, item) => sum + item, 0) / Math.max(seasonalityValues.length, 1);
+    seasonalityRes.rows.forEach(row => {
+        seasonalityMap.set(Number(row.month), seasonalityAvg > 0 ? Number(row.total_units || 0) / seasonalityAvg : 1);
+    });
+
+    const comboRes = await pool.query(`
+        WITH monthly AS (
+            SELECT
+                p.id AS province_id,
+                b.id AS brand_id,
+                MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) AS period_date,
+                SUM(tv.satis_adet)::decimal AS total_units
+            FROM tuik_veri tv
+            JOIN provinces p ON p.plate_code = LPAD(tv.sehir_kodu::text, 2, '0')
+            JOIN brands b ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+            WHERE tv.tescil_yil IS NOT NULL
+              AND tv.tescil_ay IS NOT NULL
+              AND MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) >= (DATE_TRUNC('month', $1::date) - INTERVAL '23 months')
+            GROUP BY p.id, b.id, MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1)
+        )
+        SELECT
+            province_id,
+            brand_id,
+            SUM(CASE WHEN period_date >= (DATE_TRUNC('month', $1::date) - INTERVAL '11 months') THEN total_units ELSE 0 END) AS last12_units,
+            SUM(CASE WHEN period_date BETWEEN (DATE_TRUNC('month', $1::date) - INTERVAL '23 months') AND (DATE_TRUNC('month', $1::date) - INTERVAL '12 months') THEN total_units ELSE 0 END) AS prev12_units,
+            AVG(CASE WHEN period_date >= (DATE_TRUNC('month', $1::date) - INTERVAL '5 months') THEN total_units END) AS last6_avg_units,
+            COUNT(*)::int AS observed_months
+        FROM monthly
+        GROUP BY province_id, brand_id
+        HAVING SUM(total_units) >= 12
+    `, [toIsoDate(latestDate)]);
+
+    const provinceMetaRes = await pool.query(`
+        SELECT
+            p.id,
+            p.name,
+            p.region,
+            EXISTS (
+                SELECT 1
+                FROM support_program_coverage spc
+                JOIN support_programs sp ON sp.id = spc.program_id
+                WHERE spc.province_id = p.id
+                  AND sp.status IN ('announced', 'active')
+            ) AS has_support
+        FROM provinces p
+    `);
+    const provinceMetaMap = new Map(provinceMetaRes.rows.map(row => [Number(row.id), row]));
+
+    const climateRes = await pool.query(`
+        SELECT
+            region_name,
+            scenario_code,
+            horizon_year,
+            MAX(CASE WHEN metric_code = 'temp_change_c' THEN change_value END) AS temp_change_c,
+            MAX(CASE WHEN metric_code = 'rainfall_change_pct' THEN change_value END) AS rainfall_change_pct,
+            MAX(CASE WHEN metric_code = 'drought_risk_pct' THEN change_value END) AS drought_risk_pct
+        FROM climate_projection_scenarios
+        WHERE scenario_code IN ('reference_base', 'reference_stress')
+          AND horizon_year = 2030
+        GROUP BY region_name, scenario_code, horizon_year
+    `);
+    const climateMap = new Map(climateRes.rows.map(row => [`${regionKey(row.region_name)}:${row.scenario_code}`, row]));
+
+    const commoditySignalRes = await pool.query(`
+        SELECT AVG(growth_ratio)::decimal AS avg_growth_ratio
+        FROM (
+            SELECT
+                curr.commodity_code,
+                AVG((curr.nominal_price - prev.nominal_price) / NULLIF(prev.nominal_price, 0)) AS growth_ratio
+            FROM commodity_prices curr
+            JOIN commodity_prices prev
+              ON prev.commodity_code = curr.commodity_code
+             AND prev.market_scope = curr.market_scope
+             AND COALESCE(prev.province_id, 0) = COALESCE(curr.province_id, 0)
+             AND prev.month = curr.month
+             AND prev.year = curr.year - 1
+            WHERE curr.market_scope = 'reference-index'
+              AND curr.year = $1
+            GROUP BY curr.commodity_code
+        ) s
+    `, [latestYear]);
+    const commoditySignal = Number(commoditySignalRes.rows[0]?.avg_growth_ratio || 0);
+
+    const runInsertRes = await pool.query(`
+        INSERT INTO forecast_runs (
+            forecast_key, model_family, scope_level, target_entity_type, target_entity_id,
+            scenario_code, forecast_horizon_months, training_start_year, training_end_year,
+            run_status, metrics_json, feature_snapshot_json, notes, created_by_user_id
+        )
+        VALUES ($1, 'baseline_momentum_v1', 'province_brand', 'market', NULL, $2, $3, $4, $5, 'running', '{}'::jsonb, '{}'::jsonb, $6, $7)
+        RETURNING id
+    `, [
+        forecastKey,
+        scenarioCode,
+        horizonMonths,
+        Math.max(2022, latestYear - 2),
+        latestYear,
+        'Sales momentum + support + climate + commodity reference signal ile uretilen ilk baz forecast kosusu.',
+        createdByUserId
+    ]);
+    const forecastRunId = runInsertRes.rows[0].id;
+
+    const featureStoreRows = [];
+    const forecastOutputRows = [];
+    const baselineAnnualUnitsMap = new Map();
+
+    comboRes.rows.forEach(row => {
+        const provinceId = Number(row.province_id);
+        const brandId = Number(row.brand_id);
+        const provinceMeta = provinceMetaMap.get(provinceId) || {};
+        const normalizedRegion = regionKey(provinceMeta.region || '');
+        const climateBase = climateMap.get(`${normalizedRegion}:reference_base`) || {};
+        const climateStress = climateMap.get(`${normalizedRegion}:reference_stress`) || climateBase;
+        const last12Units = Number(row.last12_units || 0);
+        const prev12Units = Number(row.prev12_units || 0);
+        const last6Avg = Number(row.last6_avg_units || 0);
+        const yoyGrowth = prev12Units > 0 ? (last12Units - prev12Units) / prev12Units : 0.04;
+        const supportBoost = provinceMeta.has_support ? 0.02 : 0;
+        const climatePenaltyBase = (Number(climateBase.rainfall_change_pct || 0) < -4 ? -0.012 : -0.004) + (Number(climateBase.temp_change_c || 0) > 1.1 ? -0.008 : 0);
+        const climatePenaltyStress = (Number(climateStress.rainfall_change_pct || 0) < -5 ? -0.018 : -0.006) + (Number(climateStress.temp_change_c || 0) > 1.25 ? -0.012 : 0);
+        const climatePenalty = scenarioCode === 'stress' ? climatePenaltyStress : climatePenaltyBase;
+        const commodityBoost = clampMetric(commoditySignal * 0.20, -0.02, 0.04);
+        const yoyFactor = clampMetric(yoyGrowth * 0.35, -0.16, 0.22);
+        const annualDrift = 1 + yoyFactor + supportBoost + commodityBoost + climatePenalty;
+        const baselineMonthlyUnits = Math.max(last12Units / 12, last6Avg, 1);
+        const uncertainty = clampMetric(0.18 + Math.abs(yoyGrowth) * 0.25, 0.12, 0.35);
+
+        baselineAnnualUnitsMap.set(`${provinceId}:${brandId}`, Number((baselineMonthlyUnits * 12).toFixed(4)));
+
+        featureStoreRows.push(
+            {
+                forecast_key: forecastKey,
+                snapshot_date: toIsoDate(latestDate),
+                province_id: provinceId,
+                brand_id: brandId,
+                commodity_code: null,
+                feature_code: 'recent_12m_units',
+                feature_value: last12Units,
+                feature_unit: 'units',
+                feature_source: 'sales_view',
+                source_id: null,
+                metadata_json: JSON.stringify({ mode: 'observed' })
+            },
+            {
+                forecast_key: forecastKey,
+                snapshot_date: toIsoDate(latestDate),
+                province_id: provinceId,
+                brand_id: brandId,
+                commodity_code: null,
+                feature_code: 'yoy_growth_ratio',
+                feature_value: Number(yoyGrowth.toFixed(4)),
+                feature_unit: 'ratio',
+                feature_source: 'sales_view',
+                source_id: null,
+                metadata_json: JSON.stringify({ mode: 'observed' })
+            },
+            {
+                forecast_key: forecastKey,
+                snapshot_date: toIsoDate(latestDate),
+                province_id: provinceId,
+                brand_id: brandId,
+                commodity_code: null,
+                feature_code: 'support_boost',
+                feature_value: Number(supportBoost.toFixed(4)),
+                feature_unit: 'ratio',
+                feature_source: 'support_program_coverage',
+                source_id: null,
+                metadata_json: JSON.stringify({ has_support: Boolean(provinceMeta.has_support) })
+            },
+            {
+                forecast_key: forecastKey,
+                snapshot_date: toIsoDate(latestDate),
+                province_id: provinceId,
+                brand_id: brandId,
+                commodity_code: 'AGRI_BASKET',
+                feature_code: 'commodity_signal_ratio',
+                feature_value: Number(commodityBoost.toFixed(4)),
+                feature_unit: 'ratio',
+                feature_source: 'commodity_prices',
+                source_id: null,
+                metadata_json: JSON.stringify({ reference_mode: true })
+            },
+            {
+                forecast_key: forecastKey,
+                snapshot_date: toIsoDate(latestDate),
+                province_id: provinceId,
+                brand_id: brandId,
+                commodity_code: null,
+                feature_code: 'climate_penalty',
+                feature_value: Number(climatePenalty.toFixed(4)),
+                feature_unit: 'ratio',
+                feature_source: 'climate_projection_scenarios',
+                source_id: null,
+                metadata_json: JSON.stringify({ region: provinceMeta.region || null, scenario_code: scenarioCode })
+            }
+        );
+
+        for (let offset = 1; offset <= horizonMonths; offset++) {
+            const targetDate = addUtcMonths(latestDate, offset);
+            const month = targetDate.getUTCMonth() + 1;
+            const seasonality = seasonalityMap.get(month) || 1;
+            const growthCurve = Math.pow(Math.max(0.90, annualDrift), offset / 12);
+            const predictedUnits = Math.max(0.5, baselineMonthlyUnits * seasonality * growthCurve);
+            const summaryParts = [
+                `yoy ${Number((yoyGrowth * 100).toFixed(1))}%`,
+                provinceMeta.has_support ? 'destek etkisi +' : 'destek etkisi 0',
+                `iklim ${Number((climatePenalty * 100).toFixed(1))}%`,
+                `emtia ${Number((commodityBoost * 100).toFixed(1))}%`
+            ];
+
+            forecastOutputRows.push({
+                forecast_run_id: forecastRunId,
+                period_year: targetDate.getUTCFullYear(),
+                period_month: month,
+                province_id: provinceId,
+                brand_id: brandId,
+                hp_range: null,
+                drive_type: null,
+                cabin_type: null,
+                category: null,
+                predicted_units: Number(predictedUnits.toFixed(4)),
+                confidence_low: Number((predictedUnits * (1 - uncertainty)).toFixed(4)),
+                confidence_high: Number((predictedUnits * (1 + uncertainty)).toFixed(4)),
+                baseline_units: Number(baselineMonthlyUnits.toFixed(4)),
+                signal_summary: summaryParts.join(' | ')
+            });
+        }
+    });
+
+    const featureMixRes = await pool.query(`
+        WITH base AS (
+            SELECT
+                p.id AS province_id,
+                b.id AS brand_id,
+                ${hpRangeExpr}::text AS feature_value,
+                'hp_range'::text AS feature_type,
+                SUM(tv.satis_adet)::decimal AS units
+            FROM tuik_veri tv
+            JOIN provinces p ON p.plate_code = LPAD(tv.sehir_kodu::text, 2, '0')
+            JOIN brands b ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+            LEFT JOIN teknik_veri tk
+              ON ${normalizedTeknikBrandExpr} = ${normalizedTuikBrandExpr}
+             AND UPPER(COALESCE(tk.tuik_model_adi, '')) = UPPER(COALESCE(tv.tuik_model_adi, ''))
+            WHERE MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) >= (DATE_TRUNC('month', $1::date) - INTERVAL '23 months')
+              AND ${hpRangeExpr} IS NOT NULL
+            GROUP BY p.id, b.id, ${hpRangeExpr}
+            UNION ALL
+            SELECT
+                p.id,
+                b.id,
+                COALESCE(NULLIF(tk.cekis_tipi, ''), '4WD')::text,
+                'drive_type'::text,
+                SUM(tv.satis_adet)::decimal
+            FROM tuik_veri tv
+            JOIN provinces p ON p.plate_code = LPAD(tv.sehir_kodu::text, 2, '0')
+            JOIN brands b ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+            LEFT JOIN teknik_veri tk
+              ON ${normalizedTeknikBrandExpr} = ${normalizedTuikBrandExpr}
+             AND UPPER(COALESCE(tk.tuik_model_adi, '')) = UPPER(COALESCE(tv.tuik_model_adi, ''))
+            WHERE MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) >= (DATE_TRUNC('month', $1::date) - INTERVAL '23 months')
+            GROUP BY p.id, b.id, COALESCE(NULLIF(tk.cekis_tipi, ''), '4WD')
+            UNION ALL
+            SELECT
+                p.id,
+                b.id,
+                CASE WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli' ELSE 'rollbar' END::text,
+                'cabin_type'::text,
+                SUM(tv.satis_adet)::decimal
+            FROM tuik_veri tv
+            JOIN provinces p ON p.plate_code = LPAD(tv.sehir_kodu::text, 2, '0')
+            JOIN brands b ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+            LEFT JOIN teknik_veri tk
+              ON ${normalizedTeknikBrandExpr} = ${normalizedTuikBrandExpr}
+             AND UPPER(COALESCE(tk.tuik_model_adi, '')) = UPPER(COALESCE(tv.tuik_model_adi, ''))
+            WHERE MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) >= (DATE_TRUNC('month', $1::date) - INTERVAL '23 months')
+            GROUP BY p.id, b.id, CASE WHEN LOWER(COALESCE(tk.koruma, '')) LIKE '%kabin%' THEN 'kabinli' ELSE 'rollbar' END
+            UNION ALL
+            SELECT
+                p.id,
+                b.id,
+                CASE WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bah%' THEN 'bahce' ELSE 'tarla' END::text,
+                'category'::text,
+                SUM(tv.satis_adet)::decimal
+            FROM tuik_veri tv
+            JOIN provinces p ON p.plate_code = LPAD(tv.sehir_kodu::text, 2, '0')
+            JOIN brands b ON UPPER(b.name) = ${normalizedTuikBrandExpr}
+            LEFT JOIN teknik_veri tk
+              ON ${normalizedTeknikBrandExpr} = ${normalizedTuikBrandExpr}
+             AND UPPER(COALESCE(tk.tuik_model_adi, '')) = UPPER(COALESCE(tv.tuik_model_adi, ''))
+            WHERE MAKE_DATE(tv.tescil_yil, tv.tescil_ay, 1) >= (DATE_TRUNC('month', $1::date) - INTERVAL '23 months')
+            GROUP BY p.id, b.id, CASE WHEN LOWER(COALESCE(tk.kullanim_alani, '')) LIKE '%bah%' THEN 'bahce' ELSE 'tarla' END
+        )
+        SELECT * FROM base
+    `, [toIsoDate(latestDate)]);
+
+    const groupedFeatureMix = new Map();
+    featureMixRes.rows.forEach(row => {
+        const key = `${row.province_id}:${row.brand_id}:${row.feature_type}`;
+        if (!groupedFeatureMix.has(key)) groupedFeatureMix.set(key, []);
+        groupedFeatureMix.get(key).push({
+            province_id: Number(row.province_id),
+            brand_id: Number(row.brand_id),
+            feature_type: row.feature_type,
+            feature_value: String(row.feature_value || 'bilinmiyor'),
+            units: Number(row.units || 0)
+        });
+    });
+
+    const modelFeatureDemandRows = [];
+    for (const items of groupedFeatureMix.values()) {
+        const provinceId = items[0].province_id;
+        const brandId = items[0].brand_id;
+        const provinceMeta = provinceMetaMap.get(provinceId) || {};
+        const normalizedRegion = regionKey(provinceMeta.region || '');
+        const climateBase = climateMap.get(`${normalizedRegion}:reference_base`) || {};
+        const totalUnits = items.reduce((sum, item) => sum + Number(item.units || 0), 0) || 1;
+        const baseRows = items.map(item => ({
+            province_id: provinceId,
+            brand_id: brandId,
+            feature_type: item.feature_type,
+            feature_value: item.feature_value,
+            demand_share_pct: Number((Number(item.units || 0) / totalUnits).toFixed(6)),
+            demand_units: Number(item.units || 0)
+        }));
+
+        const context = {
+            supportBoost: provinceMeta.has_support ? 0.02 : 0,
+            climatePenalty: (Number(climateBase.rainfall_change_pct || 0) < -4 ? -0.012 : -0.004) + (Number(climateBase.temp_change_c || 0) > 1.1 ? -0.008 : 0)
+        };
+
+        const nextYearRows = adjustFeatureShareRows(items[0].feature_type, baseRows, context);
+        const longTermRows = adjustFeatureShareRows(items[0].feature_type, nextYearRows, context);
+
+        nextYearRows.forEach(item => modelFeatureDemandRows.push({
+            forecast_run_id: forecastRunId,
+            province_id: item.province_id,
+            brand_id: item.brand_id,
+            horizon_year: latestYear + 1,
+            feature_type: item.feature_type,
+            feature_value: item.feature_value,
+            demand_share_pct: item.demand_share_pct,
+            demand_units: Number(((baselineAnnualUnitsMap.get(`${item.province_id}:${item.brand_id}`) || 0) * item.demand_share_pct).toFixed(4)),
+            evidence_json: JSON.stringify({ mode: 'baseline_share', reference_shift: false })
+        }));
+
+        longTermRows.forEach(item => modelFeatureDemandRows.push({
+            forecast_run_id: forecastRunId,
+            province_id: item.province_id,
+            brand_id: item.brand_id,
+            horizon_year: latestYear + 10,
+            feature_type: item.feature_type,
+            feature_value: item.feature_value,
+            demand_share_pct: item.demand_share_pct,
+            demand_units: Number((((forecastOutputRows.find(output => output.province_id === item.province_id && output.brand_id === item.brand_id)?.baseline_units || 0) * 12) * item.demand_share_pct).toFixed(4)),
+            evidence_json: JSON.stringify({ mode: 'baseline_share', reference_shift: true })
+        }));
+    }
+
+    await bulkInsertRows('forecast_feature_store', [
+        'forecast_key', 'snapshot_date', 'province_id', 'brand_id', 'commodity_code',
+        'feature_code', 'feature_value', 'feature_unit', 'feature_source', 'source_id', 'metadata_json'
+    ], featureStoreRows, 500);
+
+    await bulkInsertRows('forecast_outputs', [
+        'forecast_run_id', 'period_year', 'period_month', 'province_id', 'brand_id', 'hp_range',
+        'drive_type', 'cabin_type', 'category', 'predicted_units', 'confidence_low', 'confidence_high',
+        'baseline_units', 'signal_summary'
+    ], forecastOutputRows, 500);
+
+    await bulkInsertRows('model_feature_demand', [
+        'forecast_run_id', 'province_id', 'brand_id', 'horizon_year', 'feature_type', 'feature_value',
+        'demand_share_pct', 'demand_units', 'evidence_json'
+    ], modelFeatureDemandRows, 500);
+
+    const totalPredicted = forecastOutputRows.reduce((sum, row) => sum + Number(row.predicted_units || 0), 0);
+    await pool.query(`
+        UPDATE forecast_runs
+        SET
+            run_status = 'completed',
+            metrics_json = $2::jsonb,
+            feature_snapshot_json = $3::jsonb,
+            updated_at = NOW()
+        WHERE id = $1
+    `, [
+        forecastRunId,
+        JSON.stringify({
+            output_row_count: forecastOutputRows.length,
+            feature_row_count: featureStoreRows.length,
+            feature_demand_row_count: modelFeatureDemandRows.length,
+            total_predicted_units: Number(totalPredicted.toFixed(2))
+        }),
+        JSON.stringify({
+            latest_period: toIsoDate(latestDate),
+            commodity_signal_ratio: Number(commoditySignal.toFixed(4)),
+            scenario_code: scenarioCode,
+            reference_mode: true
+        })
+    ]);
+
+    return {
+        created: true,
+        forecast_run_id: forecastRunId,
+        forecast_key: forecastKey,
+        latest_period: toIsoDate(latestDate),
+        output_row_count: forecastOutputRows.length,
+        feature_row_count: featureStoreRows.length,
+        feature_demand_row_count: modelFeatureDemandRows.length,
+        total_predicted_units: Number(totalPredicted.toFixed(2))
+    };
+}
+
+async function getForecastExecutiveView(options = {}) {
+    const requestedRunId = options.forecastRunId ? parseInt(options.forecastRunId, 10) : null;
+    const requestedProvinceId = options.provinceId ? parseInt(options.provinceId, 10) : null;
+    const requestedBrandId = options.brandId ? parseInt(options.brandId, 10) : null;
+    const featureTypeLabels = {
+        hp_range: 'HP koridoru',
+        drive_type: 'Cekis mimarisi',
+        cabin_type: 'Kabin yapisi',
+        category: 'Kullanim alanı'
+    };
+
+    const runRes = requestedRunId
+        ? await pool.query(`
+            SELECT *
+            FROM forecast_runs
+            WHERE id = $1
+            LIMIT 1
+        `, [requestedRunId])
+        : await pool.query(`
+            SELECT *
+            FROM forecast_runs
+            WHERE run_status = 'completed'
+            ORDER BY created_at DESC
+            LIMIT 1
+        `);
+
+    const run = runRes.rows[0];
+    if (!run) {
+        return {
+            run: null,
+            overview: null,
+            monthly_curve: [],
+            top_provinces: [],
+            feature_outlook: [],
+            feature_shift: []
+        };
+    }
+
+    const snapshot = run.feature_snapshot_json || {};
+    const latestPeriodIso = snapshot.latest_period || toIsoDate(run.created_at);
+    const next12EndIso = toIsoDate(addUtcMonths(latestPeriodIso, 12));
+
+    const summaryParams = [run.id, next12EndIso];
+    let outputFilterSql = '';
+    if (requestedProvinceId) {
+        summaryParams.push(requestedProvinceId);
+        outputFilterSql += ` AND fo.province_id = $${summaryParams.length}`;
+    }
+    if (requestedBrandId) {
+        summaryParams.push(requestedBrandId);
+        outputFilterSql += ` AND fo.brand_id = $${summaryParams.length}`;
+    }
+
+    const monthlyParams = [run.id];
+    let monthlyFilterSql = '';
+    if (requestedProvinceId) {
+        monthlyParams.push(requestedProvinceId);
+        monthlyFilterSql += ` AND fo.province_id = $${monthlyParams.length}`;
+    }
+    if (requestedBrandId) {
+        monthlyParams.push(requestedBrandId);
+        monthlyFilterSql += ` AND fo.brand_id = $${monthlyParams.length}`;
+    }
+
+    const provinceParams = [run.id, next12EndIso, run.forecast_key];
+    let provinceOutputFilterSql = '';
+    let provinceFeatureFilterSql = '';
+    if (requestedProvinceId) {
+        provinceParams.push(requestedProvinceId);
+        provinceOutputFilterSql += ` AND fo.province_id = $${provinceParams.length}`;
+        provinceFeatureFilterSql += ` AND fs.province_id = $${provinceParams.length}`;
+    }
+    if (requestedBrandId) {
+        provinceParams.push(requestedBrandId);
+        provinceOutputFilterSql += ` AND fo.brand_id = $${provinceParams.length}`;
+        provinceFeatureFilterSql += ` AND fs.brand_id = $${provinceParams.length}`;
+    }
+
+    const featureParams = [run.id];
+    let featureFilterSql = '';
+    if (requestedProvinceId) {
+        featureParams.push(requestedProvinceId);
+        featureFilterSql += ` AND mfd.province_id = $${featureParams.length}`;
+    }
+    if (requestedBrandId) {
+        featureParams.push(requestedBrandId);
+        featureFilterSql += ` AND mfd.brand_id = $${featureParams.length}`;
+    }
+
+    const [summaryRes, monthlyCurveRes, provinceRes, featureDemandRes] = await Promise.all([
+        pool.query(`
+            SELECT
+                COUNT(*)::int AS row_count,
+                COUNT(DISTINCT fo.province_id)::int AS province_count,
+                COUNT(DISTINCT fo.brand_id)::int AS brand_count,
+                SUM(fo.predicted_units)::decimal AS total_horizon_units,
+                SUM(CASE
+                    WHEN MAKE_DATE(fo.period_year, fo.period_month, 1) <= $2::date THEN fo.predicted_units
+                    ELSE 0
+                END)::decimal AS next_12m_units,
+                AVG(fo.predicted_units)::decimal AS avg_monthly_units
+            FROM forecast_outputs fo
+            WHERE fo.forecast_run_id = $1
+            ${outputFilterSql}
+        `, summaryParams),
+        pool.query(`
+            SELECT
+                fo.period_year,
+                fo.period_month,
+                SUM(fo.predicted_units)::decimal AS predicted_units_total,
+                SUM(fo.confidence_low)::decimal AS confidence_low_total,
+                SUM(fo.confidence_high)::decimal AS confidence_high_total
+            FROM forecast_outputs fo
+            WHERE fo.forecast_run_id = $1
+            ${monthlyFilterSql}
+            GROUP BY fo.period_year, fo.period_month
+            ORDER BY fo.period_year, fo.period_month
+            LIMIT 24
+        `, monthlyParams),
+        pool.query(`
+            WITH province_forecast AS (
+                SELECT
+                    fo.province_id,
+                    p.name AS province_name,
+                    p.region AS region_name,
+                    EXISTS (
+                        SELECT 1
+                        FROM support_program_coverage spc
+                        JOIN support_programs sp ON sp.id = spc.program_id
+                        WHERE spc.province_id = fo.province_id
+                          AND sp.status IN ('announced', 'active')
+                    ) AS has_support,
+                    SUM(CASE
+                        WHEN MAKE_DATE(fo.period_year, fo.period_month, 1) <= $2::date THEN fo.predicted_units
+                        ELSE 0
+                    END)::decimal AS next_12m_units,
+                    SUM(fo.predicted_units)::decimal AS total_horizon_units,
+                    AVG(fo.predicted_units)::decimal AS avg_monthly_units
+                FROM forecast_outputs fo
+                LEFT JOIN provinces p ON p.id = fo.province_id
+                WHERE fo.forecast_run_id = $1
+                ${provinceOutputFilterSql}
+                GROUP BY fo.province_id, p.name, p.region
+            ),
+            province_observed AS (
+                SELECT
+                    fs.province_id,
+                    SUM(fs.feature_value)::decimal AS recent_12m_units
+                FROM forecast_feature_store fs
+                WHERE fs.forecast_key = $3
+                  AND fs.feature_code = 'recent_12m_units'
+                ${provinceFeatureFilterSql}
+                GROUP BY fs.province_id
+            )
+            SELECT
+                pf.province_id,
+                pf.province_name,
+                pf.region_name,
+                pf.has_support,
+                pf.next_12m_units,
+                pf.total_horizon_units,
+                pf.avg_monthly_units,
+                po.recent_12m_units,
+                CASE
+                    WHEN COALESCE(po.recent_12m_units, 0) > 0
+                        THEN ((pf.next_12m_units - po.recent_12m_units) / po.recent_12m_units) * 100
+                    ELSE NULL
+                END AS growth_pct
+            FROM province_forecast pf
+            LEFT JOIN province_observed po ON po.province_id = pf.province_id
+            ORDER BY pf.next_12m_units DESC
+        `, provinceParams),
+        pool.query(`
+            WITH raw AS (
+                SELECT
+                    mfd.horizon_year,
+                    mfd.feature_type,
+                    mfd.feature_value,
+                    SUM(mfd.demand_units)::decimal AS demand_units_total
+                FROM model_feature_demand mfd
+                WHERE mfd.forecast_run_id = $1
+                ${featureFilterSql}
+                GROUP BY mfd.horizon_year, mfd.feature_type, mfd.feature_value
+            ),
+            totals AS (
+                SELECT
+                    horizon_year,
+                    feature_type,
+                    SUM(demand_units_total)::decimal AS type_total_units
+                FROM raw
+                GROUP BY horizon_year, feature_type
+            )
+            SELECT
+                raw.horizon_year,
+                raw.feature_type,
+                raw.feature_value,
+                raw.demand_units_total,
+                CASE
+                    WHEN COALESCE(totals.type_total_units, 0) > 0
+                        THEN (raw.demand_units_total / totals.type_total_units) * 100
+                    ELSE 0
+                END AS demand_share_pct
+            FROM raw
+            JOIN totals
+              ON totals.horizon_year = raw.horizon_year
+             AND totals.feature_type = raw.feature_type
+            ORDER BY raw.horizon_year, raw.feature_type, raw.demand_units_total DESC
+        `, featureParams)
+    ]);
+
+    const monthlyCurve = monthlyCurveRes.rows.map(row => ({
+        period_year: Number(row.period_year),
+        period_month: Number(row.period_month),
+        predicted_units_total: Number(row.predicted_units_total || 0),
+        confidence_low_total: Number(row.confidence_low_total || 0),
+        confidence_high_total: Number(row.confidence_high_total || 0)
+    }));
+
+    const topProvinceRows = provinceRes.rows.map(row => ({
+        province_id: Number(row.province_id),
+        province_name: row.province_name,
+        region_name: row.region_name,
+        has_support: Boolean(row.has_support),
+        next_12m_units: Number(row.next_12m_units || 0),
+        total_horizon_units: Number(row.total_horizon_units || 0),
+        avg_monthly_units: Number(row.avg_monthly_units || 0),
+        recent_12m_units: Number(row.recent_12m_units || 0),
+        growth_pct: row.growth_pct == null ? null : Number(row.growth_pct)
+    }));
+
+    const featureOutlookRows = featureDemandRes.rows.map(row => ({
+        horizon_year: Number(row.horizon_year),
+        feature_type: row.feature_type,
+        feature_label: featureTypeLabels[row.feature_type] || row.feature_type,
+        feature_value: row.feature_value,
+        demand_units_total: Number(row.demand_units_total || 0),
+        demand_share_pct: Number(row.demand_share_pct || 0)
+    }));
+
+    const horizonYears = Array.from(new Set(featureOutlookRows.map(row => row.horizon_year))).sort((a, b) => a - b);
+    const nextYear = horizonYears[0] || null;
+    const longTermYear = horizonYears[horizonYears.length - 1] || null;
+
+    const featureShift = Object.keys(featureTypeLabels).map(featureType => {
+        const nextRows = featureOutlookRows.filter(row => row.feature_type === featureType && row.horizon_year === nextYear);
+        const longRows = featureOutlookRows.filter(row => row.feature_type === featureType && row.horizon_year === longTermYear);
+        const dominantNext = nextRows[0] || null;
+        const dominantLong = longRows[0] || null;
+        const valueUniverse = Array.from(new Set([
+            ...nextRows.map(row => row.feature_value),
+            ...longRows.map(row => row.feature_value)
+        ]));
+
+        const strongestGainer = valueUniverse.map(featureValue => {
+            const nextItem = nextRows.find(row => row.feature_value === featureValue);
+            const longItem = longRows.find(row => row.feature_value === featureValue);
+            const nextShare = Number(nextItem?.demand_share_pct || 0);
+            const longShare = Number(longItem?.demand_share_pct || 0);
+            return {
+                feature_value: featureValue,
+                next_year_share_pct: nextShare,
+                long_term_share_pct: longShare,
+                delta_share_pct: Number((longShare - nextShare).toFixed(2))
+            };
+        }).sort((a, b) => b.delta_share_pct - a.delta_share_pct)[0] || null;
+
+        return {
+            feature_type: featureType,
+            feature_label: featureTypeLabels[featureType],
+            dominant_next_year: dominantNext,
+            dominant_long_term: dominantLong,
+            strongest_gainer: strongestGainer
+        };
+    }).filter(item => item.dominant_next_year || item.dominant_long_term);
+
+    const overviewRow = summaryRes.rows[0] || {};
+    const supportDrivenUnits = topProvinceRows
+        .filter(row => row.has_support)
+        .reduce((sum, row) => sum + Number(row.next_12m_units || 0), 0);
+
+    return {
+        run,
+        overview: {
+            row_count: Number(overviewRow.row_count || 0),
+            province_count: Number(overviewRow.province_count || 0),
+            brand_count: Number(overviewRow.brand_count || 0),
+            next_12m_units: Number(overviewRow.next_12m_units || 0),
+            total_horizon_units: Number(overviewRow.total_horizon_units || 0),
+            avg_monthly_units: Number(overviewRow.avg_monthly_units || 0),
+            latest_period: latestPeriodIso,
+            next_12m_end: next12EndIso,
+            scenario_code: run.scenario_code,
+            forecast_horizon_months: Number(run.forecast_horizon_months || 0),
+            model_family: run.model_family,
+            reference_mode: Boolean(snapshot.reference_mode),
+            commodity_signal_ratio: Number(snapshot.commodity_signal_ratio || 0),
+            support_driven_units: Number(supportDrivenUnits.toFixed(2)),
+            support_driven_share_pct: Number(overviewRow.next_12m_units || 0) > 0
+                ? Number(((supportDrivenUnits / Number(overviewRow.next_12m_units || 0)) * 100).toFixed(2))
+                : 0
+        },
+        monthly_curve: monthlyCurve,
+        top_provinces: topProvinceRows.slice(0, 10),
+        feature_outlook: featureOutlookRows,
+        feature_shift: featureShift
+    };
+}
+
+app.get('/api/meta/future-intelligence-readiness', authMiddleware, async (req, res) => {
+    try {
+        const layerDefinitions = [
+            { key: 'intelligence_sources', label: 'Resmi kaynak katalogu', table: 'intelligence_sources', seeded: true },
+            { key: 'support_programs', label: 'Destek programlari', table: 'support_programs', seeded: true },
+            { key: 'support_application_windows', label: 'Cagri pencereleri', table: 'support_application_windows', seeded: true },
+            { key: 'support_program_coverage', label: 'Destek kapsama katmani', table: 'support_program_coverage', seeded: true },
+            { key: 'weather_data', label: 'Hava veri serisi', table: 'weather_data', seeded: false },
+            { key: 'climate_analysis', label: 'Iklim gecmis serisi', table: 'climate_analysis', seeded: false },
+            { key: 'soil_data', label: 'Toprak veri katmani', table: 'soil_data', seeded: false },
+            { key: 'crop_data', label: 'Urun deseni katmani', table: 'crop_data', seeded: false },
+            { key: 'commodity_prices', label: 'Emtia fiyat serisi', table: 'commodity_prices', seeded: false },
+            { key: 'climate_projection_scenarios', label: 'Iklim projeksiyon senaryolari', table: 'climate_projection_scenarios', seeded: false },
+            { key: 'province_risk_signals', label: 'Il risk sinyalleri', table: 'province_risk_signals', seeded: false },
+            { key: 'forecast_runs', label: 'Forecast kosulari', table: 'forecast_runs', seeded: false },
+            { key: 'forecast_feature_store', label: 'Forecast feature store', table: 'forecast_feature_store', seeded: false },
+            { key: 'forecast_outputs', label: 'Forecast ciktilari', table: 'forecast_outputs', seeded: false },
+            { key: 'model_feature_demand', label: 'Ozellik talep modeli ciktilari', table: 'model_feature_demand', seeded: false }
+        ];
+
+        const counts = await Promise.all(layerDefinitions.map(async layer => {
+            const result = await pool.query(`SELECT COUNT(*)::int AS count FROM ${layer.table}`);
+            return {
+                ...layer,
+                row_count: parseInt(result.rows[0]?.count || 0, 10)
+            };
+        }));
+
+        const latestForecastRun = await pool.query(`
+            SELECT forecast_key, model_family, scope_level, scenario_code, run_status, created_at
+            FROM forecast_runs
+            ORDER BY created_at DESC
+            LIMIT 1
+        `);
+
+        const layers = counts.map(layer => ({
+            key: layer.key,
+            label: layer.label,
+            row_count: layer.row_count,
+            status: layer.row_count > 0 ? (layer.seeded ? 'seeded' : 'ready') : 'empty',
+            note: layer.row_count > 0
+                ? (layer.seeded ? 'Cekirdek metadata ya da coverage tabakasi hazir.' : 'Gercek veri ile tahmin motorunu beslemeye hazir.')
+                : 'Bu katman henuz import veya model kosusu bekliyor.'
+        }));
+
+        res.json({
+            generated_at: new Date().toISOString(),
+            summary: {
+                total_layers: layers.length,
+                non_empty_layers: layers.filter(item => item.row_count > 0).length,
+                empty_layers: layers.filter(item => item.row_count === 0).length,
+                ready_layers: layers.filter(item => item.status === 'ready').length,
+                seeded_layers: layers.filter(item => item.status === 'seeded').length
+            },
+            latest_forecast_run: latestForecastRun.rows[0] || null,
+            layers
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Future intelligence readiness okunamadi', detail: err.message });
+    }
+});
+
+app.get('/api/meta/future-intelligence-catalog', authMiddleware, async (req, res) => {
+    try {
+        const { commodityCatalog = [] } = require('./database/future-intelligence-seed');
+
+        const [sourcesRes, programsRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    id, source_code, title, publisher, source_type, geography_scope,
+                    official_url, publication_date, notes
+                FROM intelligence_sources
+                WHERE is_active = true
+                ORDER BY
+                    CASE source_type
+                        WHEN 'support' THEN 1
+                        WHEN 'statistics' THEN 2
+                        WHEN 'census' THEN 3
+                        WHEN 'climate' THEN 4
+                        WHEN 'strategy' THEN 5
+                        ELSE 6
+                    END,
+                    title
+            `),
+            pool.query(`
+                SELECT
+                    sp.id,
+                    sp.program_code,
+                    sp.authority_name,
+                    sp.program_name,
+                    sp.program_type,
+                    sp.status,
+                    sp.support_scope,
+                    sp.support_mode,
+                    sp.currency,
+                    sp.min_grant_rate_pct,
+                    sp.max_grant_rate_pct,
+                    sp.official_url,
+                    sp.notes,
+                    src.title AS source_title,
+                    COALESCE(cov.coverage_count, 0) AS coverage_count,
+                    COALESCE(win.window_count, 0) AS window_count
+                FROM support_programs sp
+                LEFT JOIN intelligence_sources src ON sp.source_id = src.id
+                LEFT JOIN (
+                    SELECT program_id, COUNT(*)::int AS coverage_count
+                    FROM support_program_coverage
+                    GROUP BY program_id
+                ) cov ON cov.program_id = sp.id
+                LEFT JOIN (
+                    SELECT program_id, COUNT(*)::int AS window_count
+                    FROM support_application_windows
+                    GROUP BY program_id
+                ) win ON win.program_id = sp.id
+                ORDER BY sp.program_name
+            `)
+        ]);
+
+        res.json({
+            generated_at: new Date().toISOString(),
+            sources: sourcesRes.rows,
+            support_programs: programsRes.rows,
+            tracked_commodities: commodityCatalog
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Future intelligence catalog okunamadi', detail: err.message });
+    }
+});
+
+app.post('/api/admin/future-intelligence/seed-reference-data', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        await ensureReferenceMarketSignalsSeeded({ replaceExisting: Boolean(req.body?.replace_existing) });
+        const [commodityCount, climateCount] = await Promise.all([
+            pool.query(`SELECT COUNT(*)::int AS count FROM commodity_prices WHERE market_scope = 'reference-index'`),
+            pool.query(`SELECT COUNT(*)::int AS count FROM climate_projection_scenarios WHERE scenario_code IN ('reference_base', 'reference_stress')`)
+        ]);
+
+        res.json({
+            ok: true,
+            commodity_reference_rows: parseInt(commodityCount.rows[0]?.count || 0, 10),
+            climate_reference_rows: parseInt(climateCount.rows[0]?.count || 0, 10)
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Reference market data seed edilemedi', detail: err.message });
+    }
+});
+
+app.post('/api/admin/forecast/run-baseline', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await runBaselineForecast({
+            horizonMonths: req.body?.horizon_months || 24,
+            scenarioCode: req.body?.scenario_code || 'base',
+            createdByUserId: req.user.id
+        });
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: 'Baseline forecast kosulamadi', detail: err.message });
+    }
+});
+
+app.get('/api/forecast/runs', authMiddleware, requireFeature('ai_forecast'), async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                id,
+                forecast_key,
+                model_family,
+                scope_level,
+                scenario_code,
+                forecast_horizon_months,
+                run_status,
+                metrics_json,
+                feature_snapshot_json,
+                created_at
+            FROM forecast_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Forecast run listesi okunamadi', detail: err.message });
+    }
+});
+
+app.get('/api/forecast/latest', authMiddleware, requireFeature('ai_forecast'), async (req, res) => {
+    try {
+        const requestedRunId = req.query.forecast_run_id ? parseInt(req.query.forecast_run_id, 10) : null;
+        const requestedProvinceId = req.query.province_id ? parseInt(req.query.province_id, 10) : null;
+        const requestedBrandId = req.query.brand_id ? parseInt(req.query.brand_id, 10) : null;
+
+        const runRes = requestedRunId
+            ? await pool.query(`
+                SELECT *
+                FROM forecast_runs
+                WHERE id = $1
+                LIMIT 1
+            `, [requestedRunId])
+            : await pool.query(`
+                SELECT *
+                FROM forecast_runs
+                WHERE run_status = 'completed'
+                ORDER BY created_at DESC
+                LIMIT 1
+            `);
+
+        const run = runRes.rows[0];
+        if (!run) {
+            return res.json({ run: null, summary: null, outputs: [], feature_demand: [] });
+        }
+
+        const params = [run.id];
+        let filterSql = '';
+        if (requestedProvinceId) {
+            params.push(requestedProvinceId);
+            filterSql += ` AND fo.province_id = $${params.length}`;
+        }
+        if (requestedBrandId) {
+            params.push(requestedBrandId);
+            filterSql += ` AND fo.brand_id = $${params.length}`;
+        }
+
+        const [summaryRes, outputsRes, featureDemandRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    COUNT(*)::int AS row_count,
+                    SUM(predicted_units)::decimal AS predicted_units_total,
+                    AVG(predicted_units)::decimal AS avg_monthly_units
+                FROM forecast_outputs fo
+                WHERE fo.forecast_run_id = $1
+                ${filterSql}
+            `, params),
+            pool.query(`
+                SELECT
+                    fo.province_id,
+                    p.name AS province_name,
+                    fo.brand_id,
+                    b.name AS brand_name,
+                    SUM(fo.predicted_units)::decimal AS predicted_units_total,
+                    AVG(fo.predicted_units)::decimal AS avg_monthly_units
+                FROM forecast_outputs fo
+                LEFT JOIN provinces p ON p.id = fo.province_id
+                LEFT JOIN brands b ON b.id = fo.brand_id
+                WHERE fo.forecast_run_id = $1
+                ${filterSql}
+                GROUP BY fo.province_id, p.name, fo.brand_id, b.name
+                ORDER BY predicted_units_total DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT
+                    mfd.province_id,
+                    p.name AS province_name,
+                    mfd.brand_id,
+                    b.name AS brand_name,
+                    mfd.horizon_year,
+                    mfd.feature_type,
+                    mfd.feature_value,
+                    mfd.demand_share_pct,
+                    mfd.demand_units
+                FROM model_feature_demand mfd
+                LEFT JOIN provinces p ON p.id = mfd.province_id
+                LEFT JOIN brands b ON b.id = mfd.brand_id
+                WHERE mfd.forecast_run_id = $1
+                  AND COALESCE(mfd.demand_units, 0) > 0
+                ${requestedProvinceId ? ` AND mfd.province_id = ${requestedProvinceId}` : ''}
+                ${requestedBrandId ? ` AND mfd.brand_id = ${requestedBrandId}` : ''}
+                ORDER BY mfd.horizon_year, mfd.feature_type, mfd.demand_units DESC, mfd.demand_share_pct DESC
+                LIMIT 80
+            `, [run.id])
+        ]);
+
+        res.json({
+            run,
+            summary: summaryRes.rows[0] || null,
+            outputs: outputsRes.rows,
+            feature_demand: featureDemandRes.rows
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Latest forecast okunamadi', detail: err.message });
+    }
+});
+
+app.get('/api/forecast/executive', authMiddleware, requireFeature('ai_forecast'), requireAiQuota(), async (req, res) => {
+    try {
+        const payload = await getForecastExecutiveView({
+            forecastRunId: req.query.forecast_run_id,
+            provinceId: req.query.province_id,
+            brandId: req.query.brand_id
+        });
+        res.json(payload);
+    } catch (err) {
+        res.status(500).json({ error: 'Forecast executive ozeti okunamadi', detail: err.message });
+    }
+});
+
 // ============================================
 // DB INIT
 // ============================================
@@ -5654,6 +17564,15 @@ async function initDB() {
         try {
             await pool.query('ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER');
         } catch (e) { /* zaten var */ }
+        try {
+            await pool.query(`
+                ALTER TABLE model_image_gallery
+                    ADD COLUMN IF NOT EXISTS model_match_level VARCHAR(40) DEFAULT 'unknown',
+                    ADD COLUMN IF NOT EXISTS verification_status VARCHAR(40) DEFAULT 'candidate',
+                    ADD COLUMN IF NOT EXISTS review_status VARCHAR(40) DEFAULT 'candidate',
+                    ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP
+            `);
+        } catch (e) { /* galeri tablosu olmayan eski ortamlar schema ile oluşturulur */ }
         await pool.query(`
             CREATE OR REPLACE VIEW sales_view AS
             SELECT * FROM sales_data
@@ -5662,41 +17581,286 @@ async function initDB() {
         console.log('✅ sales_view (model yılı filtreli) oluşturuldu');
 
         // Temel verileri seed et (markalar, iller, planlar, admin)
-        const brandCheck = await pool.query('SELECT COUNT(*) FROM brands');
-        if (parseInt(brandCheck.rows[0].count) === 0) {
-            console.log('🌱 Temel veriler seed ediliyor...');
-            const { brands, provinces, subscriptionPlans } = require('./database/seed-data');
-            const bcryptLib = require('bcryptjs');
+        const { brands, provinces, subscriptionPlans } = require('./database/seed-data');
+        const bcryptSeedLib = require('bcryptjs');
+        const [brandCheck, provinceCheck, planCheck] = await Promise.all([
+            pool.query('SELECT COUNT(*)::int AS count FROM brands'),
+            pool.query('SELECT COUNT(*)::int AS count FROM provinces'),
+            pool.query('SELECT COUNT(*)::int AS count FROM subscription_plans')
+        ]);
 
-            for (const brand of brands) {
-                await pool.query(`INSERT INTO brands (name, slug, primary_color, secondary_color, accent_color, text_color, country_of_origin, parent_company) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
-                    [brand.name, brand.slug, brand.primary_color, brand.secondary_color, brand.accent_color, brand.text_color, brand.country_of_origin, brand.parent_company]);
+        const brandCount = parseInt(brandCheck.rows[0]?.count || 0, 10);
+        const provinceCount = parseInt(provinceCheck.rows[0]?.count || 0, 10);
+        const planCount = parseInt(planCheck.rows[0]?.count || 0, 10);
+
+        if (brandCount === 0 || provinceCount < provinces.length || planCount === 0) {
+            console.log('🌱 Temel referans verileri kontrol edilip tamamlanıyor...');
+
+            if (brandCount === 0) {
+                for (const brand of brands) {
+                    await pool.query(`INSERT INTO brands (name, slug, primary_color, secondary_color, accent_color, text_color, country_of_origin, parent_company) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+                        [brand.name, brand.slug, brand.primary_color, brand.secondary_color, brand.accent_color, brand.text_color, brand.country_of_origin, brand.parent_company]);
+                }
             }
-            for (const p of provinces) {
-                await pool.query(`INSERT INTO provinces (name, plate_code, region, latitude, longitude, population) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
-                    [p.name, p.plate_code, p.region, p.lat, p.lng, p.pop]);
+
+            if (provinceCount < provinces.length) {
+                await ensureProvincesSeeded();
             }
-            for (const plan of subscriptionPlans) {
-                await pool.query(`INSERT INTO subscription_plans (name, slug, price_monthly, price_yearly, features, max_users, has_ai_insights, has_competitor_analysis, has_weather_data, has_export) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
-                    [plan.name, plan.slug, plan.price_monthly, plan.price_yearly, plan.features, plan.max_users, plan.has_ai_insights, plan.has_competitor_analysis, plan.has_weather_data, plan.has_export]);
+
+            if (planCount === 0) {
+                for (const plan of subscriptionPlans) {
+                    await pool.query(`INSERT INTO subscription_plans (name, slug, price_monthly, price_yearly, features, max_users, has_ai_insights, has_competitor_analysis, has_weather_data, has_export) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
+                        [plan.name, plan.slug, plan.price_monthly, plan.price_yearly, plan.features, plan.max_users, plan.has_ai_insights, plan.has_competitor_analysis, plan.has_weather_data, plan.has_export]);
+                }
             }
-            const hash = await bcryptLib.hash('admin2024', 10);
-            await pool.query(`INSERT INTO users (email, password_hash, full_name, role) VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin') ON CONFLICT DO NOTHING`, [hash]);
-            console.log('✅ Temel veriler seed edildi');
+
+            // NOT: admin@traktorsektoranalizi.com / admin2024 demo hesabı kaldırıldı.
+            // Tek yönetici (superuser) yukselozdek@gmail.com — Google OAuth veya kayıt akışı üzerinden giriş yapar.
+            console.log('✅ Temel referans verileri tamamlandı (demo admin hesabı oluşturulmadı)');
         }
 
         // ============================================
-        // AGRESİF ADMİN SIFIRLAMA (KESİN admin2024)
+        // BILLING SCHEMA MIGRATION + PLAN UPSERT (her boot'ta idempotent)
+        // 3 plan: Starter / Growth / Enterprise + kapsam limit, AI sorgu sayacı,
+        // WhatsApp telefon yönetimi, makbuz/e-fatura tablosu
         // ============================================
-        const bcryptLib = require('bcryptjs');
-        const forcedHash = await bcryptLib.hash('admin2024', 10);
-        // Önce temizle sonra enjekte et (Zorunlu Reset)
-        await pool.query('DELETE FROM users WHERE email = $1', ['admin@traktorsektoranalizi.com']);
-        await pool.query(`
-            INSERT INTO users (email, password_hash, full_name, role, company_name, is_active)
-            VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin', 'Traktör Sektör Analizi', true)
-        `, [forcedHash]);
-        console.log('🔥 Admin hesabı (admin2024) bizzat elden onarıldı ve zorla aktifleştirildi');
+        try {
+            // subscription_plans yeni sütunlar
+            await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS tier_rank INT DEFAULT 1`);
+            await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS description TEXT`);
+            await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS feature_keys JSONB DEFAULT '[]'::jsonb`);
+            await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS plan_limits JSONB DEFAULT '{}'::jsonb`);
+            await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'TRY'`);
+
+            // subscriptions yeni sütunlar
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS provider VARCHAR(50)`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS provider_subscription_id VARCHAR(255)`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS provider_customer_id VARCHAR(255)`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50)`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS auto_renew BOOLEAN DEFAULT true`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS trial_end TIMESTAMP`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS first_month_promo_price DECIMAL(10,2)`);
+            await pool.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS rivals_selection JSONB DEFAULT '[]'::jsonb`);
+
+            // payments yeni sütunlar
+            await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider VARCHAR(50)`);
+            await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_payment_id VARCHAR(255)`);
+            await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS bank_reference VARCHAR(100)`);
+            await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb`);
+
+            // Aylık kullanım sayaçları (AI sorgu, export, API, WA)
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS usage_meters (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    period_start DATE NOT NULL,
+                    ai_queries_count INTEGER DEFAULT 0,
+                    ai_tokens_used BIGINT DEFAULT 0,
+                    export_rows_count INTEGER DEFAULT 0,
+                    api_request_count INTEGER DEFAULT 0,
+                    whatsapp_query_count INTEGER DEFAULT 0,
+                    anomaly_flags INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(user_id, period_start)
+                )
+            `);
+
+            // AI çağrı log'u (audit + maliyet hesaplama)
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS ai_usage_log (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    feature VARCHAR(100),
+                    model VARCHAR(50),
+                    input_tokens INTEGER DEFAULT 0,
+                    output_tokens INTEGER DEFAULT 0,
+                    cost_tl DECIMAL(8,4) DEFAULT 0,
+                    request_id VARCHAR(100),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_usage_user_date ON ai_usage_log(user_id, created_at DESC)`);
+
+            // WhatsApp telefon yönetimi (Enterprise: 3 hat)
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS whatsapp_phones (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    subscription_id INTEGER REFERENCES subscriptions(id),
+                    phone_e164 VARCHAR(20) UNIQUE NOT NULL,
+                    display_name VARCHAR(100),
+                    role_label VARCHAR(50),
+                    is_active BOOLEAN DEFAULT true,
+                    is_primary BOOLEAN DEFAULT false,
+                    activated_at TIMESTAMP DEFAULT NOW(),
+                    last_query_at TIMESTAMP,
+                    monthly_query_count INTEGER DEFAULT 0,
+                    admin_approved BOOLEAN DEFAULT false,
+                    admin_approved_at TIMESTAMP,
+                    admin_approved_by INTEGER REFERENCES users(id)
+                )
+            `);
+
+            // Makbuz/e-fatura tablosu (şirketsiz başlangıç için makbuz modu)
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS invoices (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    payment_id INTEGER REFERENCES payments(id),
+                    invoice_number VARCHAR(50) UNIQUE,
+                    invoice_type VARCHAR(20) DEFAULT 'receipt',
+                    is_legal_invoice BOOLEAN DEFAULT false,
+                    legal_invoice_pending BOOLEAN DEFAULT true,
+                    billing_company_name VARCHAR(200),
+                    billing_tax_office VARCHAR(100),
+                    billing_tax_number VARCHAR(20),
+                    billing_address TEXT,
+                    billing_city VARCHAR(100),
+                    billing_country VARCHAR(50) DEFAULT 'TR',
+                    subtotal DECIMAL(12,2),
+                    vat_rate DECIMAL(4,2) DEFAULT 20.00,
+                    vat_amount DECIMAL(12,2),
+                    total DECIMAL(12,2),
+                    einvoice_status VARCHAR(20),
+                    einvoice_uuid VARCHAR(100),
+                    einvoice_pdf_url VARCHAR(500),
+                    issued_at TIMESTAMP DEFAULT NOW(),
+                    paid_at TIMESTAMP
+                )
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_id, issued_at DESC)`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_invoices_pending ON invoices(legal_invoice_pending) WHERE legal_invoice_pending = true`);
+
+            // Kullanım anomali izleme (kopyalama riskine karşı)
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS usage_anomalies (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    anomaly_type VARCHAR(50),
+                    score DECIMAL(4,2),
+                    details JSONB DEFAULT '{}',
+                    flagged_at TIMESTAMP DEFAULT NOW(),
+                    reviewed BOOLEAN DEFAULT false,
+                    reviewed_by INTEGER REFERENCES users(id)
+                )
+            `);
+
+            // ============================================
+            // AUTH GENİŞLETME: Google OAuth, email verify, lock, superuser, firma alanları
+            // ============================================
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(100) UNIQUE`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) DEFAULT 'password'`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_token VARCHAR(100)`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_expires TIMESTAMP`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_tax_office VARCHAR(100)`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_tax_number VARCHAR(20)`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(100)`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS dealer_or_distributor VARCHAR(50)`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INT DEFAULT 0`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_superuser BOOLEAN DEFAULT false`);
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS preview_plan_slug VARCHAR(50)`);
+
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS auth_audit (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    event VARCHAR(50),
+                    ip_address VARCHAR(45),
+                    user_agent TEXT,
+                    metadata JSONB DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit(user_id, created_at DESC)`);
+
+            // Superuser: yukselozdek@gmail.com — her zaman admin + is_superuser
+            await pool.query(`
+                UPDATE users SET role = 'admin', is_superuser = true, email_verified = true
+                WHERE LOWER(email) = 'yukselozdek@gmail.com'
+            `);
+
+            // Media Watch genişletme: dil + ülke + çeviri kolonları
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS language VARCHAR(5) DEFAULT 'tr'`);
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS country_code VARCHAR(5) DEFAULT 'TR'`);
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS original_title TEXT`);
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS translated_title TEXT`);
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS translated_summary TEXT`);
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS translation_model VARCHAR(50)`);
+            await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS translated_at TIMESTAMP`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_media_watch_items_language ON media_watch_items(language)`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_media_watch_items_country ON media_watch_items(country_code)`);
+
+            // Eski plan slug'larını gizle (basic/pro/elite + temel/profesyonel/kurumsal)
+            await pool.query(`UPDATE subscription_plans SET is_active = false WHERE slug IN ('temel', 'profesyonel', 'kurumsal', 'basic', 'pro', 'elite')`);
+
+            // 3 yeni plan (Starter/Growth/Enterprise) upsert
+            for (const plan of subscriptionPlans) {
+                await pool.query(`
+                    INSERT INTO subscription_plans
+                        (name, slug, tier_rank, description, currency, price_monthly, price_yearly,
+                         features, feature_keys, plan_limits, max_users,
+                         has_ai_insights, has_competitor_analysis, has_weather_data, has_export, is_active)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,$14,$15,true)
+                    ON CONFLICT (slug) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        tier_rank = EXCLUDED.tier_rank,
+                        description = EXCLUDED.description,
+                        currency = EXCLUDED.currency,
+                        price_monthly = EXCLUDED.price_monthly,
+                        price_yearly = EXCLUDED.price_yearly,
+                        features = EXCLUDED.features,
+                        feature_keys = EXCLUDED.feature_keys,
+                        plan_limits = EXCLUDED.plan_limits,
+                        max_users = EXCLUDED.max_users,
+                        has_ai_insights = EXCLUDED.has_ai_insights,
+                        has_competitor_analysis = EXCLUDED.has_competitor_analysis,
+                        has_weather_data = EXCLUDED.has_weather_data,
+                        has_export = EXCLUDED.has_export,
+                        is_active = true
+                `, [
+                    plan.name, plan.slug, plan.tier_rank, plan.description, plan.currency,
+                    plan.price_monthly, plan.price_yearly, plan.features, plan.feature_keys, plan.plan_limits,
+                    plan.max_users, plan.has_ai_insights, plan.has_competitor_analysis, plan.has_weather_data, plan.has_export
+                ]);
+            }
+            console.log('✅ Billing şeması ve 3 plan (Starter/Growth/Enterprise) güncellendi');
+        } catch (billingMigErr) {
+            console.warn('⚠️ Billing migration uyarısı:', billingMigErr.message);
+        }
+
+        // ============================================
+        // ESKİ DEMO ADMİN HESABI TEMİZLİĞİ
+        // admin@traktorsektoranalizi.com / admin2024 kaldırıldı.
+        // Sistem yetkisi yalnızca yukselozdek@gmail.com (superuser) üzerinden verilir;
+        // diğer üyeler login.html üzerinden Google OAuth veya 4-adımlı kayıt akışıyla katılır.
+        // FK kısıtları nedeniyle silmek yerine deaktif et + şifreyi rastgele yap → giriş yapamaz.
+        // ============================================
+        try {
+            const oldAdmin = await pool.query(`SELECT id FROM users WHERE email = 'admin@traktorsektoranalizi.com'`);
+            if (oldAdmin.rows.length > 0) {
+                const oldId = oldAdmin.rows[0].id;
+                const randomHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+                await pool.query(
+                    `UPDATE users
+                       SET email = $1,
+                           password_hash = $2,
+                           is_active = false,
+                           role = 'inactive',
+                           is_superuser = false,
+                           full_name = 'Devre Dışı Demo Hesap',
+                           email_verified = false,
+                           failed_login_count = 999,
+                           locked_until = NOW() + INTERVAL '100 years'
+                     WHERE id = $3`,
+                    [`disabled_${oldId}@invalid.local`, randomHash, oldId]
+                );
+                console.log(`🧹 Eski demo admin hesabı (id=${oldId}) deaktif edildi ve giriş kilitlendi`);
+            }
+        } catch (cleanupErr) {
+            console.warn('⚠️ Demo admin temizliği uyarısı:', cleanupErr.message);
+        }
 
         // ============================================
         // MARKA İSİMLERİ NORMALİZASYONU
@@ -5725,6 +17889,13 @@ async function initDB() {
                 console.log(`🔄 Marka ismi güncellendi: ${oldName} → ${newName}`);
             }
         }
+
+        await ensureBrandPortalSeeded();
+        console.log('Brand portal profilleri hazirlandi');
+        await ensureFutureIntelligenceSeeded();
+        console.log('Future intelligence kaynak ve destek cekirdegi hazirlandi');
+        await ensureReferenceMarketSignalsSeeded();
+        console.log('Reference market ve iklim sinyal katmani hazirlandi');
 
         // ============================================
         // TEKNİK VERİ → TRACTOR_MODELS OTOMATİK SYNC
@@ -5786,6 +17957,8 @@ async function initDB() {
                         syncCount++;
                     }
                 } else {
+                    if (!hp) continue;
+
                     // Yoksa: teknik_veri'den yeni model oluştur
                     await pool.query(
                         `INSERT INTO tractor_models (brand_id, model_name, horsepower, hp_range, category,
@@ -5866,23 +18039,61 @@ app.get('*', (req, res) => {
 });
 
 // ============================================
+// MEDIA WATCH BRIDGE — opsiyonel child_process otomatik başlat
+// ============================================
+let mediaWatchBridgeProcess = null;
+function startMediaWatchBridge() {
+    const autoStart = String(process.env.MEDIA_WATCH_BRIDGE_AUTOSTART || 'false').toLowerCase() === 'true';
+    if (!autoStart) return;
+    try {
+        const { spawn } = require('child_process');
+        const bridgePath = path.join(__dirname, 'media-watch-bridge.js');
+        if (!require('fs').existsSync(bridgePath)) {
+            console.warn('⚠️  Media-watch-bridge.js bulunamadı, atlanıyor');
+            return;
+        }
+        const childEnv = {
+            ...process.env,
+            MEDIA_WATCH_BRIDGE_DIRECT: process.env.MEDIA_WATCH_BRIDGE_DIRECT || 'true',
+            MEDIA_WATCH_BRIDGE_AUTORUN: process.env.MEDIA_WATCH_BRIDGE_AUTORUN || 'true',
+            MEDIA_WATCH_APP_BASE_URL: process.env.MEDIA_WATCH_APP_BASE_URL || `http://127.0.0.1:${PORT}`
+        };
+        mediaWatchBridgeProcess = spawn('node', [bridgePath], { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+        mediaWatchBridgeProcess.stdout.on('data', d => process.stdout.write(`[mwb] ${d}`));
+        mediaWatchBridgeProcess.stderr.on('data', d => process.stderr.write(`[mwb] ${d}`));
+        mediaWatchBridgeProcess.on('exit', code => {
+            console.log(`📡 Media-watch-bridge çıktı (code=${code})`);
+            mediaWatchBridgeProcess = null;
+        });
+        console.log('📡 Media-watch-bridge child process başlatıldı (PID: ' + mediaWatchBridgeProcess.pid + ')');
+    } catch (err) {
+        console.warn('⚠️  Media-watch-bridge başlatılamadı:', err.message);
+    }
+}
+
+// ============================================
 // START SERVER
 // ============================================
 initDB().then(() => {
     app.listen(PORT, () => {
         console.log(`🚜 Traktör Sektör Analizi sunucusu ${PORT} portunda çalışıyor`);
         console.log(`📊 Dashboard: http://localhost:${PORT}`);
+        setTimeout(startMediaWatchBridge, 2000);
     });
 }).catch(err => {
     console.error('❌ initDB hatası:', err);
     // Yine de sunucuyu başlat
     app.listen(PORT, () => {
         console.log(`🚜 Sunucu başlatıldı (initDB hatalı) - port ${PORT}`);
+        setTimeout(startMediaWatchBridge, 2000);
     });
 });
 
 process.on('SIGTERM', async () => {
     console.log('Sunucu kapatılıyor...');
+    if (mediaWatchBridgeProcess && !mediaWatchBridgeProcess.killed) {
+        try { mediaWatchBridgeProcess.kill('SIGTERM'); } catch { /* noop */ }
+    }
     await pool.end();
     process.exit(0);
 });

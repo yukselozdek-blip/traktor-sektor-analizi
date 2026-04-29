@@ -31,10 +31,22 @@ services:
       JWT_SECRET: ${JWT_SECRET:-traktor-sektor-super-secret-key-2024}
       N8N_HOST: n8n
       N8N_PORT: 5678
+      N8N_MODEL_INTEL_WEBHOOK_URL: ${N8N_MODEL_INTEL_WEBHOOK_URL}
+      MEDIA_WATCH_WEBHOOK_KEY: ${MEDIA_WATCH_WEBHOOK_KEY}
+      MODEL_IMAGE_BRIDGE_URL: ${MODEL_IMAGE_BRIDGE_URL:-http://host.docker.internal:3012}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
       OPENWEATHERMAP_API_KEY: ${OPENWEATHERMAP_API_KEY}
       WHATSAPP_QUERY_API_KEY: ${WHATSAPP_QUERY_API_KEY}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      IYZICO_API_KEY: ${IYZICO_API_KEY}
+      IYZICO_SECRET_KEY: ${IYZICO_SECRET_KEY}
+      IYZICO_BASE_URL: ${IYZICO_BASE_URL}
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "3002:3000"
     depends_on:
@@ -60,15 +72,22 @@ services:
       - DB_POSTGRESDB_SCHEMA=n8n
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - GENERIC_TIMEZONE=Europe/Istanbul
       - TZ=Europe/Istanbul
       - WEBHOOK_URL=http://n8n:5678/
       - APP_BASE_URL=${APP_BASE_URL:-http://app:3000}
+      - MEDIA_WATCH_WEBHOOK_KEY=${MEDIA_WATCH_WEBHOOK_KEY}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
       - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
       - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
       - WHATSAPP_BUSINESS_ACCOUNT_ID=${WHATSAPP_BUSINESS_ACCOUNT_ID}
       - WHATSAPP_QUERY_API_KEY=${WHATSAPP_QUERY_API_KEY}
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "5680:5678"
     depends_on:

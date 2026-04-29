@@ -1,0 +1,4 @@
+interface:
+  display_name: "Traktor Proje Anayasasi"
+  short_description: "Load repo architecture and data rules first"
+  default_prompt: "Use $traktor_anayasasi with $traktor-veri-sozlugu to work on this tractor sector analysis repo without re-explaining the project context."

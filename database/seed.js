@@ -45,14 +45,10 @@ async function seed() {
         }
         console.log(`  ✅ ${subscriptionPlans.length} abonelik planı eklendi`);
 
-        // 4. Admin kullanıcısı oluştur
-        console.log('📌 Admin kullanıcısı oluşturuluyor...');
-        const adminHash = await bcrypt.hash('admin2024', 10);
-        await client.query(`
-            INSERT INTO users (email, password_hash, full_name, role)
-            VALUES ('admin@traktorsektoranalizi.com', $1, 'Sistem Yöneticisi', 'admin')
-            ON CONFLICT (email) DO NOTHING
-        `, [adminHash]);
+        // 4. (Kaldırıldı) admin@traktorsektoranalizi.com / admin2024 demo hesabı.
+        //    Tek superuser yukselozdek@gmail.com — sisteme login.html üzerinden Google OAuth
+        //    veya 4-adımlı kayıt akışıyla giriş yapar. Demo şifre seed'i artık kullanılmıyor.
+        console.log('📌 Demo admin hesabı kaldırıldı; superuser yukselozdek@gmail.com login akışı üzerinden tanımlanır.');
 
         // 5. Her marka için demo kullanıcı oluştur
         console.log('📌 Marka demo kullanıcıları oluşturuluyor...');
