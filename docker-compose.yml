@@ -5,16 +5,16 @@ services:
     image: postgres:16-alpine
     container_name: traktor-postgres
     environment:
-      POSTGRES_USER: traktor
-      POSTGRES_PASSWORD: traktor2024secure
-      POSTGRES_DB: traktorsektordb
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U traktor -d traktorsektordb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?set in .env} -d ${POSTGRES_DB:?set in .env}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,9 +26,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3002}
-      DATABASE_URL: postgresql://traktor:traktor2024secure@postgres:5432/traktorsektordb
-      JWT_SECRET: ${JWT_SECRET:-traktor-sektor-super-secret-key-2024}
+      APP_BASE_URL: ${APP_BASE_URL:?set in .env}
+      DATABASE_URL: ${DATABASE_URL:?set in .env}
+      JWT_SECRET: ${JWT_SECRET:?set in .env}
       N8N_HOST: n8n
       N8N_PORT: 5678
       N8N_MODEL_INTEL_WEBHOOK_URL: ${N8N_MODEL_INTEL_WEBHOOK_URL}
@@ -57,18 +57,18 @@ services:
     restart: unless-stopped
 
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:1.70.3
     container_name: traktor-n8n
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-n8n2024secure}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?set in .env}
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=traktorsektordb
-      - DB_POSTGRESDB_USER=traktor
-      - DB_POSTGRESDB_PASSWORD=traktor2024secure
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:?set in .env}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:?set in .env}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:?set in .env}
       - DB_POSTGRESDB_SCHEMA=n8n
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
@@ -76,7 +76,7 @@ services:
       - GENERIC_TIMEZONE=Europe/Istanbul
       - TZ=Europe/Istanbul
       - WEBHOOK_URL=http://n8n:5678/
-      - APP_BASE_URL=${APP_BASE_URL:-http://app:3000}
+      - APP_BASE_URL=${APP_BASE_URL:?set in .env}
       - MEDIA_WATCH_WEBHOOK_KEY=${MEDIA_WATCH_WEBHOOK_KEY}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
       - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
@@ -99,6 +99,7 @@ services:
     restart: unless-stopped
 
   anythingllm:
+    # TODO: Pin anythingllm to a specific version tag (currently using :latest)
     image: mintplexlabs/anythingllm:latest
     container_name: traktor-anythingllm
     environment:

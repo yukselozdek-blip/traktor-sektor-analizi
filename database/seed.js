@@ -51,9 +51,12 @@ async function seed() {
         console.log('📌 Demo admin hesabı kaldırıldı; superuser yukselozdek@gmail.com login akışı üzerinden tanımlanır.');
 
         // 5. Her marka için demo kullanıcı oluştur
+        const brandRows = await client.query('SELECT id, name, slug FROM brands ORDER BY id');
+        if (process.env.NODE_ENV === 'production') {
+            console.log('📌 Production ortamı: demo kullanıcılar oluşturulmadı.');
+        } else {
         console.log('📌 Marka demo kullanıcıları oluşturuluyor...');
         const demoHash = await bcrypt.hash('demo2024', 10);
-        const brandRows = await client.query('SELECT id, name, slug FROM brands ORDER BY id');
         for (const brand of brandRows.rows) {
             await client.query(`
                 INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name)
@@ -68,6 +71,7 @@ async function seed() {
             ]);
         }
         console.log(`  ✅ ${brandRows.rows.length} demo kullanıcı eklendi`);
+        }
 
         // 6. Örnek satış verileri oluştur (2020-2025)
         console.log('📌 Örnek satış verileri oluşturuluyor...');

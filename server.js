@@ -12,7 +12,31 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'traktor-sektor-super-secret-key-2024';
+const JWT_SECRET = (() => {
+    if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+    if (process.env.NODE_ENV === 'production') {
+        console.error('!!! GÜVENLİK UYARISI: JWT_SECRET ortam değişkeni tanımlı değil. Geçici rastgele anahtar üretildi; her yeniden başlatmada tüm oturumlar geçersiz olur. JWT_SECRET tanımlayın !!!');
+    }
+    return crypto.randomBytes(48).toString('hex');
+})();
+const SUPERUSER_EMAILS_LIST = (process.env.SUPERUSER_EMAILS || 'yukselozdek@gmail.com')
+    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+function safeEqualStr(a, b) {
+    const ba = Buffer.from(String(a == null ? '' : a));
+    const bb = Buffer.from(String(b == null ? '' : b));
+    if (ba.length !== bb.length) return false;
+    return crypto.timingSafeEqual(ba, bb);
+}
+function errMsg(err) {
+    return IS_PRODUCTION ? 'Sunucu hatası' : (err && err.message ? err.message : 'Sunucu hatası');
+}
+process.on('unhandledRejection', (reason) => {
+    console.error('unhandledRejection:', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('uncaughtException:', err && err.stack ? err.stack : err);
+});
 const APP_BASE_URL = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
 const WHATSAPP_QUERY_API_KEY = process.env.WHATSAPP_QUERY_API_KEY || '';
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
@@ -51,9 +75,25 @@ const pool = new Pool({
 
 // Middleware
 app.set('trust proxy', 1);
-app.use(cors());
+const CORS_ALLOWED_ORIGINS = new Set(
+    [...(process.env.CORS_ORIGINS || '').split(','), APP_BASE_URL]
+        .map(o => (o || '').trim().replace(/\/$/, ''))
+        .filter(Boolean)
+);
+app.use(cors({
+    origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        return cb(null, CORS_ALLOWED_ORIGINS.has(origin.replace(/\/$/, '')));
+    }
+}));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-app.use(express.json({ limit: '10mb' }));
+app.use('/api/billing/webhook/stripe', express.raw({ type: '*/*', limit: '1mb' }));
+app.use(express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+        if (req.originalUrl && req.originalUrl.startsWith('/api/public/whatsapp/webhook')) req.rawBody = buf;
+    }
+}));
 app.use(express.static(path.join(__dirname, 'public'), {
     etag: false,
     maxAge: 0,
@@ -101,23 +141,31 @@ function authMiddleware(req, res, next) {
     }
 }
 
-function adminOnly(req, res, next) {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
-    next();
+async function adminOnly(req, res, next) {
+    try {
+        if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
+        const r = await pool.query('SELECT role, is_active FROM users WHERE id = $1', [req.user.id]);
+        const u = r.rows[0];
+        if (!u || u.role !== 'admin' || u.is_active === false) {
+            return res.status(403).json({ error: 'Yetkisiz erişim' });
+        }
+        next();
+    } catch (err) {
+        return res.status(500).json({ error: 'Sunucu hatası' });
+    }
 }
 
-app.get('/api/auth/diagnostic', async (req, res) => {
+app.get('/api/auth/diagnostic', authMiddleware, adminOnly, async (req, res) => {
     try {
         const users = await pool.query('SELECT id, email, role, full_name, (password_hash IS NOT NULL) as has_password_hash FROM users');
         const schema = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'");
         res.json({
             status: '✅ Sunucu Aktif',
             database_users: users.rows,
-            database_schema: schema.rows.map(r => r.column_name),
-            superuser_email: 'yukselozdek@gmail.com'
+            database_schema: schema.rows.map(r => r.column_name)
         });
     } catch (err) {
-        res.status(500).json({ status: '❌ Hata', message: err.message });
+        res.status(500).json({ status: '❌ Hata', message: errMsg(err) });
     }
 });
 
@@ -2763,15 +2811,60 @@ Hatayı düzelt ve çalışan bir PostgreSQL SELECT sorgusu yaz.
     }
 }
 
+const SQL_ALLOWED_TABLES = new Set([
+    'sales_view', 'sales_data', 'brands', 'provinces', 'tractor_models',
+    'teknik_veri', 'tuik_veri', 'market_share'
+]);
+const SQL_DENY_PATTERN = /\b(pg_\w*|information_schema|current_setting|set_config|dblink\w*|lo_\w+|copy|users|payments?|subscriptions?|auth_audit|invoices?|usage_meters?|\w*password\w*|\w*token\w*|\w*secret\w*|\w*api_key\w*|into|pg|txid_\w*|version|current_user|session_user|current_database|inet_\w+|generate_series|unnest|lateral)\b/i;
+
 function isSafeSql(sql) {
-    const upper = sql.toUpperCase();
-    const dangerous = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'COPY'];
+    if (typeof sql !== 'string') return false;
+    let text = sql.trim();
+    if (!text) return false;
+    // Tek ifade: sadece sondaki ';' serbest
+    text = text.replace(/;\s*$/, '');
+    // Metin sabitlerini çıkar (analiz için)
+    const stripped = text.replace(/'(?:[^']|'')*'/g, ' 0 ');
+    if (stripped.includes(';')) return false;
+    if (stripped.includes('--') || stripped.includes('/*') || stripped.includes('*/')) return false;
+    if (stripped.includes('"') || stripped.includes('$') || stripped.includes('\\')) return false;
+    if (/'/.test(stripped)) return false; // kapanmamış tırnak
+
+    const upper = stripped.toUpperCase();
+    const dangerous = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'COPY', 'CALL', 'DO', 'VACUUM', 'ANALYZE', 'LOCK', 'LISTEN', 'NOTIFY', 'SET', 'RESET', 'SHOW', 'BEGIN', 'COMMIT', 'ROLLBACK'];
     for (const keyword of dangerous) {
-        // Check it's a standalone keyword, not part of a column name
-        const regex = new RegExp(`(^|\\s|;)${keyword}(\\s|$|;)`, 'i');
-        if (regex.test(upper)) return false;
+        if (new RegExp(`\\b${keyword}\\b`, 'i').test(upper)) return false;
     }
-    if (!upper.trimStart().startsWith('SELECT')) return false;
+    if (!/^\s*\(*\s*(SELECT|WITH)\b/i.test(stripped)) return false;
+    if (/\bFOR\s+(UPDATE|SHARE|NO\s+KEY)/i.test(stripped)) return false;
+    if (SQL_DENY_PATTERN.test(stripped)) return false;
+
+    // CTE adlarını topla (izinli)
+    const cteNames = new Set();
+    const cteRe = /(?:\bWITH\s+(?:RECURSIVE\s+)?|,\s*)([a-z_][a-z0-9_]*)\s+AS\s*(?:NOT\s+MATERIALIZED\s*|MATERIALIZED\s*)?\(/gi;
+    let m;
+    while ((m = cteRe.exec(stripped)) !== null) cteNames.add(m[1].toLowerCase());
+
+    // FROM içindeki fonksiyon-benzeri kullanımları (EXTRACT(... FROM ...)) analizden çıkar
+    const forTables = stripped
+        .replace(/\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi, ' ')
+        .replace(/\b(EXTRACT|SUBSTRING|TRIM|OVERLAY|POSITION)\s*\([^()]*\)/gi, ' 0 ');
+
+    const fromRe = /\b(?:FROM|JOIN)\s+([^()]*?)(?=\bWHERE\b|\bGROUP\b|\bORDER\b|\bLIMIT\b|\bHAVING\b|\bJOIN\b|\bON\b|\bUNION\b|\bINTERSECT\b|\bEXCEPT\b|\bINNER\b|\bLEFT\b|\bRIGHT\b|\bFULL\b|\bCROSS\b|\bNATURAL\b|\bWINDOW\b|\bOFFSET\b|\bFETCH\b|\)|$)/gi;
+    let found = 0;
+    while ((m = fromRe.exec(forTables)) !== null) {
+        const parts = m[1].split(',');
+        for (const part of parts) {
+            const tok = part.trim().split(/\s+/)[0];
+            if (!tok) continue;
+            found++;
+            let name = tok.toLowerCase();
+            if (name.startsWith('public.')) name = name.slice(7);
+            if (name.includes('.')) return false;
+            if (!SQL_ALLOWED_TABLES.has(name) && !cteNames.has(name)) return false;
+        }
+    }
+    // Satır içi alt sorgular için "FROM (" durumunda tablo yok sayılır; en az bir FROM yoksa da (ör. SELECT 1) sorun değil
     return true;
 }
 
@@ -2779,20 +2872,28 @@ async function executeSafeSql(sql) {
     if (!isSafeSql(sql)) {
         return { error: 'Güvenlik: Sadece SELECT sorguları çalıştırılabilir.' };
     }
+    sql = sql.trim().replace(/;\s*$/, '');
 
     // Division by zero koruması: NULLIF ile sıfıra bölmeyi önle
     sql = sql.replace(/\/\s*SUM\(([^)]+)\)/g, '/ NULLIF(SUM($1), 0)');
     sql = sql.replace(/\/\s*COUNT\(([^)]+)\)/g, '/ NULLIF(COUNT($1), 0)');
 
-    // Timeout ile çalıştır (8 saniye - karmaşık sorgular için)
+    // Salt-okunur transaction + 8 sn statement timeout, ayrı client
+    let client;
     try {
-        const result = await Promise.race([
-            pool.query(sql),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Sorgu zaman asimi (8s)')), 8000))
-        ]);
+        client = await pool.connect();
+        await client.query('BEGIN');
+        await client.query('SET TRANSACTION READ ONLY');
+        await client.query('SET LOCAL statement_timeout = 8000');
+        const result = await client.query(sql);
         return { rows: result.rows, rowCount: result.rowCount, fields: result.fields?.map(f => f.name) };
     } catch (err) {
         return { error: `SQL hatası: ${err.message}` };
+    } finally {
+        if (client) {
+            try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+            client.release();
+        }
     }
 }
 
@@ -4645,12 +4746,12 @@ app.get('/public/reports/market', async (req, res) => {
 // ============================================
 
 // Versiyon kontrolü (deploy doğrulama)
-app.get('/api/debug/version', (req, res) => {
+app.get('/api/debug/version', authMiddleware, adminOnly, (req, res) => {
     res.json({ version: 'smart-fallback-v6-13patterns', deployed: new Date().toISOString() });
 });
 
 // Groq API test endpoint'i — Groq çalışıyor mu?
-app.get('/api/debug/groq-test', async (req, res) => {
+app.get('/api/debug/groq-test', authMiddleware, adminOnly, async (req, res) => {
     const question = req.query.q || 'New Holland ile Massey Ferguson karşılaştır';
     try {
         const t0 = Date.now();
@@ -4667,7 +4768,7 @@ app.get('/api/debug/groq-test', async (req, res) => {
                 groqError: lastGroqError || 'unknown',
                 elapsed: elapsed + 'ms',
                 fallbackSql: fallbackSql ? fallbackSql.substring(0, 300) : 'NO_FALLBACK',
-                groqApiKey: MINIMAX_API_KEY ? 'SET (' + MINIMAX_API_KEY.substring(0, 8) + '...)' : 'MISSING',
+                groqApiKey: MINIMAX_API_KEY ? 'SET' : 'MISSING',
                 question
             });
         }
@@ -4686,12 +4787,12 @@ app.get('/api/debug/groq-test', async (req, res) => {
             question
         });
     } catch (err) {
-        res.json({ error: err.message, question });
+        res.json({ error: errMsg(err), question });
     }
 });
 
 // Ciro motoru test endpoint'i
-app.get('/api/debug/ciro-test', async (req, res) => {
+app.get('/api/debug/ciro-test', authMiddleware, adminOnly, async (req, res) => {
     // 15 saniye genel timeout
     const timer = setTimeout(() => {
         if (!res.headersSent) res.status(504).json({ error: 'Endpoint timeout (15s)' });
@@ -4738,17 +4839,17 @@ app.get('/api/debug/ciro-test', async (req, res) => {
         });
     } catch (err) {
         clearTimeout(timer);
-        if (!res.headersSent) res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
+        if (!res.headersSent) res.status(500).json({ error: errMsg(err) });
     }
 });
 
 app.post('/api/public/assistant/sales-query', async (req, res) => {
     try {
-        if (WHATSAPP_QUERY_API_KEY) {
-            const providedToken = req.headers['x-query-token'];
-            if (providedToken !== WHATSAPP_QUERY_API_KEY) {
-                return res.status(401).json({ error: 'Gecersiz sorgu token' });
-            }
+        if (!WHATSAPP_QUERY_API_KEY) {
+            return res.status(503).json({ error: 'Sorgu servisi yapılandırılmamış' });
+        }
+        if (!safeEqualStr(req.headers['x-query-token'] || '', WHATSAPP_QUERY_API_KEY)) {
+            return res.status(401).json({ error: 'Gecersiz sorgu token' });
         }
 
         const question = (req.body.question || '').toString().trim();
@@ -4781,7 +4882,20 @@ app.get('/api/public/whatsapp/webhook', async (req, res) => {
 });
 
 
+const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || '';
+if (!WHATSAPP_APP_SECRET) {
+    console.warn('UYARI: WHATSAPP_APP_SECRET tanımlı değil; WhatsApp webhook imzası doğrulanmıyor.');
+}
+
 app.post('/api/public/whatsapp/webhook', async (req, res) => {
+    if (WHATSAPP_APP_SECRET) {
+        const sigHeader = String(req.headers['x-hub-signature-256'] || '');
+        const expected = 'sha256=' + crypto.createHmac('sha256', WHATSAPP_APP_SECRET)
+            .update(req.rawBody || Buffer.alloc(0)).digest('hex');
+        if (!safeEqualStr(sigHeader, expected)) {
+            return res.status(401).json({ error: 'Geçersiz imza' });
+        }
+    }
     // 1. Meta'ya anında yanıt ver (HTTP 200)
     res.status(200).json({ received: true });
 
@@ -4840,7 +4954,7 @@ app.post('/api/public/whatsapp/webhook', async (req, res) => {
 // ============================================
 // AUTH ENDPOINTS — Hardened (rate limit, lock, Google OAuth, email verify)
 // ============================================
-const SUPERUSER_EMAILS = new Set(['yukselozdek@gmail.com']);
+const SUPERUSER_EMAILS = new Set(SUPERUSER_EMAILS_LIST);
 const PASSWORD_POLICY = /^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/;
 const LOGIN_LIMITER = rateLimit({
     windowMs: 5 * 60 * 1000, max: 15, standardHeaders: true, legacyHeaders: false,
@@ -4884,7 +4998,7 @@ function buildUserPayload(user) {
 function issueAuthToken(user) {
     return jwt.sign(
         { id: user.id, email: user.email, role: user.role, brand_id: user.brand_id, sup: !!user.is_superuser },
-        JWT_SECRET, { expiresIn: '30d' }
+        JWT_SECRET, { expiresIn: '7d' }
     );
 }
 
@@ -4931,7 +5045,7 @@ app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
             [user.id]
         );
         // Superuser otomatik bayrak
-        if (SUPERUSER_EMAILS.has(email) && !user.is_superuser) {
+        if (SUPERUSER_EMAILS.has(email) && user.email_verified === true && !user.is_superuser) {
             await pool.query(`UPDATE users SET is_superuser = true, role = 'admin' WHERE id = $1`, [user.id]);
             user.is_superuser = true; user.role = 'admin';
         }
@@ -4976,8 +5090,9 @@ app.post('/api/auth/signup', SIGNUP_LIMITER, async (req, res) => {
         const brandCheck = await pool.query('SELECT id, name FROM brands WHERE id = $1 AND is_active = true', [Number(brand_id)]);
         if (brandCheck.rows.length === 0) return res.status(400).json({ error: 'Geçersiz marka seçimi' });
 
-        const isSuperuser = SUPERUSER_EMAILS.has(email);
-        const role = isSuperuser ? 'admin' : 'brand_user';
+        // Superuser e-postaları şifre ile kayıtta otomatik yetki ALMAZ; normal doğrulama akışı izlenir.
+        const isSuperuser = false;
+        const role = 'brand_user';
         const verifyToken = crypto.randomBytes(24).toString('hex');
         const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
         const hash = await bcrypt.hash(password, 12);
@@ -5043,7 +5158,7 @@ async function verifyGoogleIdToken(idToken) {
     if (!r.ok) throw new Error('Google token doğrulanamadı');
     const data = await r.json();
     if (!data.email || data.email_verified !== 'true') throw new Error('Google e-posta doğrulanmamış');
-    if (GOOGLE_OAUTH_CLIENT_ID && data.aud !== GOOGLE_OAUTH_CLIENT_ID) throw new Error('Google client ID eşleşmiyor');
+    if (!GOOGLE_OAUTH_CLIENT_ID || data.aud !== GOOGLE_OAUTH_CLIENT_ID) throw new Error('Google client ID eşleşmiyor');
     return {
         email: String(data.email).toLowerCase(),
         google_id: data.sub,
@@ -5055,6 +5170,7 @@ async function verifyGoogleIdToken(idToken) {
 app.post('/api/auth/google', LOGIN_LIMITER, async (req, res) => {
     try {
         const { id_token, brand_id, plan_slug, company_name, job_title } = req.body || {};
+        if (!GOOGLE_OAUTH_CLIENT_ID) return res.status(503).json({ error: 'Google ile giriş şu anda yapılandırılmamış' });
         if (!id_token) return res.status(400).json({ error: 'id_token gerekli' });
 
         const profile = await verifyGoogleIdToken(id_token).catch(err => {
@@ -9962,7 +10078,7 @@ app.post('/api/admin/model-images/sync', authMiddleware, adminOnly, async (req, 
         }
     } catch (err) {
         console.error('Model image sync error:', err);
-        res.status(502).json({ error: 'Bridge çağrısı başarısız', detail: err.message });
+        res.status(502).json({ error: 'Bridge çağrısı başarısız', detail: errMsg(err) });
     }
 });
 
@@ -9991,7 +10107,7 @@ app.post('/api/admin/model-images/sync-missing', authMiddleware, adminOnly, asyn
         }
     } catch (err) {
         console.error('Model image bulk sync error:', err);
-        res.status(502).json({ error: 'Bridge toplu çağrısı başarısız', detail: err.message });
+        res.status(502).json({ error: 'Bridge toplu çağrısı başarısız', detail: errMsg(err) });
     }
 });
 
@@ -12144,7 +12260,20 @@ app.get('/api/insights', authMiddleware, requireFeature('ai_insights', 'ai_insig
 });
 
 // n8n webhook - AI insight kaydetme
-app.post('/api/insights', async (req, res) => {
+function insightsWriteAuth(req, res, next) {
+    const key = process.env.INSIGHTS_API_KEY || '';
+    const provided = req.headers['x-api-key'];
+    if (key && provided) {
+        if (safeEqualStr(provided, key)) return next();
+        return res.status(401).json({ error: 'Geçersiz API anahtarı' });
+    }
+    return authMiddleware(req, res, (err) => {
+        if (err) return next(err);
+        return adminOnly(req, res, next);
+    });
+}
+
+app.post('/api/insights', insightsWriteAuth, async (req, res) => {
     try {
         const { brand_id, province_id, insight_type, title, content, data_json, confidence_score } = req.body;
         const result = await pool.query(`
@@ -12278,7 +12407,7 @@ app.get('/api/media-watch/brief', authMiddleware, requireFeature('ai_brief', 'me
     }
 });
 
-app.post('/api/media-watch/brief/generate', authMiddleware, async (req, res) => {
+app.post('/api/media-watch/brief/generate', authMiddleware, requireFeature('ai_brief', 'media_watch'), requireAiQuota(), async (req, res) => {
     try {
         const brandId = resolveMediaWatchScopedBrandId(req, req.body.brand_id || req.query.brand_id);
         if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
@@ -12293,7 +12422,7 @@ app.post('/api/media-watch/brief/generate', authMiddleware, async (req, res) => 
     }
 });
 
-app.post('/api/media-watch/alerts/rebuild', authMiddleware, async (req, res) => {
+app.post('/api/media-watch/alerts/rebuild', authMiddleware, requireFeature('media_watch'), async (req, res) => {
     try {
         const brandId = resolveMediaWatchScopedBrandId(req, req.body.brand_id || req.query.brand_id);
         if (!brandId) return res.status(400).json({ error: 'brand_id gerekli' });
@@ -12490,7 +12619,7 @@ app.post('/api/media-watch/run-now', authMiddleware, requireFeature('media_watch
         res.json(json);
     } catch (err) {
         console.error('media-watch run-now error', err);
-        res.status(500).json({ error: err.message || 'Bridge çağrı hatası' });
+        res.status(500).json({ error: errMsg(err) || 'Bridge çağrı hatası' });
     }
 });
 
@@ -12541,7 +12670,7 @@ app.post('/api/media-watch/translate', authMiddleware, requireFeature('ai_brief'
         res.json({ success: true, ...parsed });
     } catch (err) {
         console.error('media-watch translate error', err);
-        res.status(500).json({ error: err.message || 'Çeviri hatası' });
+        res.status(500).json({ error: errMsg(err) || 'Çeviri hatası' });
     }
 });
 
@@ -12830,7 +12959,7 @@ app.post('/api/billing/checkout', authMiddleware, async (req, res) => {
         });
     } catch (err) {
         console.error('Checkout error:', err);
-        res.status(500).json({ error: err.message || 'Sunucu hatası' });
+        res.status(500).json({ error: errMsg(err) || 'Sunucu hatası' });
     }
 });
 
@@ -12916,10 +13045,10 @@ async function activateUserSubscription(userId, planSlug, provider, period) {
 }
 
 // Stripe webhook (raw body için ayrı parse)
-app.post('/api/billing/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/api/billing/webhook/stripe', async (req, res) => {
     try {
         const provider = billingProviders.StripeProvider;
-        const { event } = provider.verifyWebhook(req.body.toString('utf8'), req.headers);
+        const { event } = provider.verifyWebhook(Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {})), req.headers);
         const parsed = provider.parseWebhookEvent(event);
 
         if (parsed.status === 'completed' && parsed.user_id && parsed.plan_slug) {
@@ -12937,7 +13066,7 @@ app.post('/api/billing/webhook/stripe', express.raw({ type: 'application/json' }
         res.json({ received: true });
     } catch (err) {
         console.error('Stripe webhook error:', err);
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: 'Webhook doğrulanamadı' });
     }
 });
 
@@ -12958,7 +13087,7 @@ app.post('/api/billing/webhook/iyzico', express.json(), async (req, res) => {
         res.json({ received: true });
     } catch (err) {
         console.error('iyzico webhook error:', err);
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: 'Webhook doğrulanamadı' });
     }
 });
 
@@ -12974,7 +13103,7 @@ app.post('/api/billing/bank-confirm', authMiddleware, adminOnly, async (req, res
         }
         res.json({ success: true, subscription_id: subId });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: errMsg(err) });
     }
 });
 
@@ -13265,7 +13394,7 @@ app.post('/api/billing/whatsapp', authMiddleware, async (req, res) => {
         );
         res.status(201).json({ success: true, phone: ins.rows[0], note: 'Numaranız admin onayından sonra aktif olacaktır.' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: errMsg(err) });
     }
 });
 
@@ -15078,6 +15207,14 @@ const MINIMAX_MODEL = 'MiniMax-M2.7';
 const conversationMemory = new Map(); // phone → [{role, content, timestamp}]
 const MEMORY_MAX_MESSAGES = 10;
 const MEMORY_TTL_MS = 30 * 60 * 1000; // 30 dakika sonra oturum sıfırlanır
+const MEMORY_MAX_SESSIONS = 5000;
+setInterval(() => {
+    const now = Date.now();
+    for (const [phone, hist] of conversationMemory) {
+        const last = hist[hist.length - 1];
+        if (!last || now - last.timestamp > MEMORY_TTL_MS) conversationMemory.delete(phone);
+    }
+}, 5 * 60 * 1000).unref();
 
 function getConversationHistory(phoneNumber) {
     const history = conversationMemory.get(phoneNumber);
@@ -15093,6 +15230,11 @@ function getConversationHistory(phoneNumber) {
 
 function addToConversation(phoneNumber, role, content) {
     if (!conversationMemory.has(phoneNumber)) {
+        if (conversationMemory.size >= MEMORY_MAX_SESSIONS) {
+            // En eski oturumu (Map ekleme sırası) at
+            const oldest = conversationMemory.keys().next().value;
+            conversationMemory.delete(oldest);
+        }
         conversationMemory.set(phoneNumber, []);
     }
     const history = conversationMemory.get(phoneNumber);
@@ -15109,7 +15251,7 @@ function buildConversationContext(history) {
     return `\n\nÖNCEKİ KONUŞMA BAĞLAMI (son ${history.length} mesaj):\n${lines.join('\n')}\n`;
 }
 
-app.post('/api/ai/analyze', authMiddleware, async (req, res) => {
+app.post('/api/ai/analyze', authMiddleware, requireFeature('ai_insights', 'ai_insights_limited', 'model_region_analysis'), requireAiQuota(), async (req, res) => {
     try {
         if (!MINIMAX_API_KEY) return res.status(500).json({ error: 'MINIMAX_API_KEY tanımlı değil' });
 
@@ -15424,7 +15566,7 @@ ${brand2}: ${maxYear} satış: ${data2.currPartial} adet, YoY: ${data2.yoyGrowth
 
     } catch (err) {
         console.error('AI analyze error:', err);
-        res.status(500).json({ error: 'AI analiz hatası: ' + err.message });
+        res.status(500).json({ error: 'AI analiz hatası: ' + errMsg(err) });
     }
 });
 
@@ -15445,14 +15587,14 @@ app.post('/api/admin/seed-model-images', authMiddleware, async (req, res) => {
         });
     } catch (err) {
         console.error('Seed model images error:', err);
-        res.status(500).json({ error: 'Model görseli seed başarısız: ' + err.message });
+        res.status(500).json({ error: 'Model görseli seed başarısız: ' + errMsg(err) });
     }
 });
 
 // ============================================
 // SEED TRACTOR MODELS (admin)
 // ============================================
-app.post('/api/admin/seed-models', async (req, res) => {
+app.post('/api/admin/seed-models', authMiddleware, adminOnly, async (req, res) => {
     try {
         const modelCount = await pool.query('SELECT COUNT(*) FROM tractor_models');
         if (parseInt(modelCount.rows[0].count) > 0) {
@@ -15712,7 +15854,7 @@ app.post('/api/admin/seed-models', async (req, res) => {
         res.json({ message: `${insertCount} model eklendi`, count: insertCount });
     } catch (err) {
         console.error('Seed models error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: errMsg(err) });
     }
 });
 
@@ -15848,20 +15990,18 @@ app.get('/api/sales/tarmakbir-total', authMiddleware, async (req, res) => {
 // ============================================
 // MANUAL SEED ENDPOINT (admin only)
 // ============================================
-app.post('/api/admin/reseed-sales', async (req, res) => {
+app.post('/api/admin/reseed-sales', authMiddleware, adminOnly, async (req, res) => {
     try {
         await pool.query('DELETE FROM sales_data');
         console.log('🗑️ Eski satış verisi silindi, yeniden seed ediliyor...');
         // Forward to seed-sales
         res.redirect(307, '/api/admin/seed-sales');
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: errMsg(err) });
     }
 });
 
-app.post('/api/admin/trigger-import', authMiddleware, async (req, res) => {
-    // Only allow system admins
-    if (req.user.role !== 'system_admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
+app.post('/api/admin/trigger-import', authMiddleware, adminOnly, async (req, res) => {
 
     // Don't await synchronously for 2 minutes and risk HTTP timeout, run asynchronously
     const { importExcel } = require('./import-tuik.js');
@@ -15875,7 +16015,7 @@ app.post('/api/admin/trigger-import', authMiddleware, async (req, res) => {
     res.json({ message: 'Veri yükleme/aktarma işlemi arka planda başlatıldı. Yaklaşık 2-3 dakika sürebilir.' });
 });
 
-app.post('/api/admin/seed-sales', async (req, res) => {
+app.post('/api/admin/seed-sales', authMiddleware, adminOnly, async (req, res) => {
     try {
         const salesCheck = await pool.query('SELECT COUNT(*) FROM sales_data');
         if (parseInt(salesCheck.rows[0].count) > 0) {
@@ -15936,18 +16076,10 @@ app.post('/api/admin/seed-sales', async (req, res) => {
             console.log(`  ✅ ${brand.slug} seed tamamlandı`);
         }
 
-        // Demo kullanıcılar
-        const bcryptLib = require('bcryptjs');
-        const demoHash = await bcryptLib.hash('demo2024', 10);
-        for (const brand of brandRows.rows) {
-            await pool.query(`INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name) VALUES ($1,$2,$3,'brand_user',$4,$5) ON CONFLICT DO NOTHING`,
-                [`demo@${brand.slug}.com`, demoHash, `${brand.slug.toUpperCase()} Demo`, brand.id, `${brand.slug.toUpperCase()} Bayii`]);
-        }
-
-        res.json({ message: `✅ ${salesCount} satış kaydı ve ${brandRows.rows.length} demo kullanıcı oluşturuldu` });
+        res.json({ message: `✅ ${salesCount} satış kaydı oluşturuldu` });
     } catch (err) {
         console.error('Seed error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: errMsg(err) });
     }
 });
 
@@ -17310,7 +17442,7 @@ app.get('/api/meta/future-intelligence-readiness', authMiddleware, async (req, r
             layers
         });
     } catch (err) {
-        res.status(500).json({ error: 'Future intelligence readiness okunamadi', detail: err.message });
+        res.status(500).json({ error: 'Future intelligence readiness okunamadi', detail: errMsg(err) });
     }
 });
 
@@ -17377,7 +17509,7 @@ app.get('/api/meta/future-intelligence-catalog', authMiddleware, async (req, res
             tracked_commodities: commodityCatalog
         });
     } catch (err) {
-        res.status(500).json({ error: 'Future intelligence catalog okunamadi', detail: err.message });
+        res.status(500).json({ error: 'Future intelligence catalog okunamadi', detail: errMsg(err) });
     }
 });
 
@@ -17395,7 +17527,7 @@ app.post('/api/admin/future-intelligence/seed-reference-data', authMiddleware, a
             climate_reference_rows: parseInt(climateCount.rows[0]?.count || 0, 10)
         });
     } catch (err) {
-        res.status(500).json({ error: 'Reference market data seed edilemedi', detail: err.message });
+        res.status(500).json({ error: 'Reference market data seed edilemedi', detail: errMsg(err) });
     }
 });
 
@@ -17408,7 +17540,7 @@ app.post('/api/admin/forecast/run-baseline', authMiddleware, adminOnly, async (r
         });
         res.json(result);
     } catch (err) {
-        res.status(500).json({ error: 'Baseline forecast kosulamadi', detail: err.message });
+        res.status(500).json({ error: 'Baseline forecast kosulamadi', detail: errMsg(err) });
     }
 });
 
@@ -17432,7 +17564,7 @@ app.get('/api/forecast/runs', authMiddleware, requireFeature('ai_forecast'), asy
         `);
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: 'Forecast run listesi okunamadi', detail: err.message });
+        res.status(500).json({ error: 'Forecast run listesi okunamadi', detail: errMsg(err) });
     }
 });
 
@@ -17530,7 +17662,7 @@ app.get('/api/forecast/latest', authMiddleware, requireFeature('ai_forecast'), a
             feature_demand: featureDemandRes.rows
         });
     } catch (err) {
-        res.status(500).json({ error: 'Latest forecast okunamadi', detail: err.message });
+        res.status(500).json({ error: 'Latest forecast okunamadi', detail: errMsg(err) });
     }
 });
 
@@ -17543,7 +17675,7 @@ app.get('/api/forecast/executive', authMiddleware, requireFeature('ai_forecast')
         });
         res.json(payload);
     } catch (err) {
-        res.status(500).json({ error: 'Forecast executive ozeti okunamadi', detail: err.message });
+        res.status(500).json({ error: 'Forecast executive ozeti okunamadi', detail: errMsg(err) });
     }
 });
 
@@ -17777,9 +17909,9 @@ async function initDB() {
 
             // Superuser: yukselozdek@gmail.com — her zaman admin + is_superuser
             await pool.query(`
-                UPDATE users SET role = 'admin', is_superuser = true, email_verified = true
-                WHERE LOWER(email) = 'yukselozdek@gmail.com'
-            `);
+                UPDATE users SET role = 'admin', is_superuser = true
+                WHERE LOWER(email) = ANY($1::text[]) AND email_verified = true
+            `, [SUPERUSER_EMAILS_LIST]);
 
             // Media Watch genişletme: dil + ülke + çeviri kolonları
             await pool.query(`ALTER TABLE media_watch_items ADD COLUMN IF NOT EXISTS language VARCHAR(5) DEFAULT 'tr'`);
@@ -18035,6 +18167,8 @@ app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
         res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    } else {
+        res.status(404).json({ error: 'Bulunamadı' });
     }
 });
 

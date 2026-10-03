@@ -969,7 +969,7 @@
 
         function renderBrands(list) {
             const grid = document.getElementById('brandGrid');
-            grid.innerHTML = list.map(b => `<div class="brand-mini-card" data-brand-id="${b.id}" onclick="selectBrand(${b.id}, '${(b.name || '').replace(/'/g, "\\'")}')">${escapeHtml(b.name || '')}</div>`).join('') || '<p style="color: var(--muted); font-size: 12px;">Marka bulunamadı.</p>';
+            grid.innerHTML = list.map(b => `<div class="brand-mini-card" data-brand-id="${Number(b.id)}" onclick="selectBrand(${Number(b.id)})">${escapeHtml(b.name || '')}</div>`).join('') || '<p style="color: var(--muted); font-size: 12px;">Marka bulunamadı.</p>';
         }
 
         function filterBrands(query) {

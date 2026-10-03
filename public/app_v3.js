@@ -20,21 +20,31 @@ let regionalIndexState = { province_id: '', metrics: [], sales_cache: [] };
 let mediaWatchState = { brand_id: '', channel: '', type: '', sentiment: '', search: '', limit: 80, window_days: 14 };
 let modelIntelState = { brand_id: '', q: '', source_url: '', selected_model: null, active_request: null, active_data: null, gallery_index: 0, gallery_syncing: false };
 
-// Simple markdown to HTML
+// Simple markdown to HTML (input is HTML-escaped first; only generated tags remain)
+const MD_ALLOWED_TAGS = ['h1', 'h2', 'h3', 'h4', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'a'];
 function mdToHtml(md) {
     if (!md) return '';
-    return md
+    const html = escapeHtml(md)
         .replace(/^### (.+)$/gm, '<h4 class="ai-h4">$1</h4>')
         .replace(/^## (.+)$/gm, '<h3 class="ai-h3">$1</h3>')
         .replace(/^# (.+)$/gm, '<h2 class="ai-h2">$1</h2>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)<>"]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(/^- (.+)$/gm, '<li>$1</li>')
         .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
         .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
         .replace(/\n\n/g, '</p><p>')
         .replace(/\n/g, '<br>')
         .replace(/^/, '<p>').replace(/$/, '</p>');
+    if (typeof window !== 'undefined' && window.DOMPurify && typeof window.DOMPurify.sanitize === 'function') {
+        return window.DOMPurify.sanitize(html, {
+            ALLOWED_TAGS: MD_ALLOWED_TAGS,
+            ALLOWED_ATTR: ['class', 'href', 'target', 'rel'],
+            ALLOWED_URI_REGEXP: /^https?:/i
+        });
+    }
+    return html;
 }
 
 function escapeHtml(value) {
@@ -45,6 +55,19 @@ function escapeHtml(value) {
         '"': '&quot;',
         "'": '&#39;'
     }[ch]));
+}
+
+// JS string literal safe for use inside a double-quoted inline HTML attribute (e.g. onclick)
+function jsArg(value) {
+    return escapeHtml(JSON.stringify(String(value ?? '')));
+}
+
+// Escaped URL for href/src attributes; allows http(s), data:image and scheme-less (relative) URLs; blocks javascript: etc. ('#')
+function safeHref(value) {
+    const url = String(value ?? '').trim();
+    const compact = url.replace(/[\u0000-\u0020]/g, '');
+    if (/^[a-z][a-z0-9+.-]*:/i.test(compact) && !/^(https?:|data:image\/)/i.test(compact)) return '#';
+    return escapeHtml(url);
 }
 
 const TURKISH_COPY_REPLACEMENTS = [
@@ -519,7 +542,7 @@ async function requestAiAnalysis(type, context, panelId) {
                 <div class="ai-result-body">${mdToHtml(res.analysis)}</div>
             </div>`;
     } catch (err) {
-        panel.innerHTML = `<div class="ai-error"><i class="fas fa-exclamation-triangle"></i> AI analiz hatası: ${err.message}</div>`;
+        panel.innerHTML = `<div class="ai-error"><i class="fas fa-exclamation-triangle"></i> AI analiz hatası: ${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -619,7 +642,7 @@ function applyBrandTheme(brand) {
     }
 
     if (logoEl && theme.logo_url) {
-        logoEl.innerHTML = `<img src="${theme.logo_url}" alt="${theme.name}">`;
+        logoEl.innerHTML = `<img src="${safeHref(theme.logo_url)}" alt="${escapeHtml(theme.name)}">`;
     }
 }
 
@@ -1103,13 +1126,13 @@ async function loadHistoricalPage() {
                 <div class="stat-card">
                     <div class="stat-icon" style="background:rgba(59,130,246,0.15);color:${brandColor}"><i class="fas fa-tractor"></i></div>
                     <div class="stat-value">${formatNumber(partials[1]?.brand_sales || 0)}</div>
-                    <div class="stat-label">${partials[1]?.label || max_year} ${brandName}</div>
+                    <div class="stat-label">${partials[1]?.label || max_year} ${escapeHtml(brandName)}</div>
                     <div class="stat-change">${fmtDiff(pct_diff_brand)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon" style="background:rgba(34,197,94,0.15);color:#22c55e"><i class="fas fa-percentage"></i></div>
                     <div class="stat-value">%${partials[1]?.brand_share_pct || 0}</div>
-                    <div class="stat-label">${brandName} PAZAR PAYI</div>
+                    <div class="stat-label">${escapeHtml(brandName)} PAZAR PAYI</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-exchange-alt"></i></div>
@@ -1139,8 +1162,8 @@ async function loadHistoricalPage() {
                             <tr>
                                 <th style="position:sticky;left:0;background:var(--bg-card);z-index:1"></th>
                                 ${fullYears.map(d => `<th style="text-align:center">${d.year}</th>`).join('')}
-                                <th style="text-align:center;border-left:2px solid var(--brand-primary)">${partials[0]?.label || ''}</th>
-                                <th style="text-align:center">${partials[1]?.label || ''}</th>
+                                <th style="text-align:center;border-left:2px solid var(--brand-primary)">${escapeHtml(partials[0]?.label || '')}</th>
+                                <th style="text-align:center">${escapeHtml(partials[1]?.label || '')}</th>
                                 <th style="text-align:center;font-weight:700;color:var(--brand-accent)">% FARK</th>
                             </tr>
                         </thead>
@@ -1153,14 +1176,14 @@ async function loadHistoricalPage() {
                                 <td style="text-align:right">${fmtDiff(pct_diff_market)}</td>
                             </tr>
                             <tr style="background:rgba(59,130,246,0.05)">
-                                <td style="position:sticky;left:0;background:rgba(30,41,59,0.95);font-weight:700;color:${brandColor};white-space:nowrap">${brandName}</td>
+                                <td style="position:sticky;left:0;background:rgba(30,41,59,0.95);font-weight:700;color:${brandColor};white-space:nowrap">${escapeHtml(brandName)}</td>
                                 ${fullYears.map(d => `<td style="text-align:right">${formatNumber(d.brand_sales)}</td>`).join('')}
                                 <td style="text-align:right;border-left:2px solid var(--brand-primary);font-weight:600">${formatNumber(partials[0]?.brand_sales)}</td>
                                 <td style="text-align:right;font-weight:600">${formatNumber(partials[1]?.brand_sales)}</td>
                                 <td style="text-align:right">${fmtDiff(pct_diff_brand)}</td>
                             </tr>
                             <tr>
-                                <td style="position:sticky;left:0;background:var(--bg-card);font-weight:700;white-space:nowrap">${brandName} Pazar Payı</td>
+                                <td style="position:sticky;left:0;background:var(--bg-card);font-weight:700;white-space:nowrap">${escapeHtml(brandName)} Pazar Payı</td>
                                 ${fullYears.map(d => `<td style="text-align:right">%${d.brand_share_pct}</td>`).join('')}
                                 <td style="text-align:right;border-left:2px solid var(--brand-primary);font-weight:600">%${partials[0]?.brand_share_pct || 0}</td>
                                 <td style="text-align:right;font-weight:600">%${partials[1]?.brand_share_pct || 0}</td>
@@ -1322,7 +1345,7 @@ async function loadBrandSummaryPage() {
             const rank = idx + 1;
             // Adet row
             let adetRow = `<td class="bs-rank" rowspan="2">${rank}</td>`;
-            adetRow += `<td class="bs-brand" rowspan="2">${brand.name}</td>`;
+            adetRow += `<td class="bs-brand" rowspan="2">${escapeHtml(brand.name)}</td>`;
             adetRow += '<td class="bs-type">Adet</td>';
             years.forEach(y => {
                 adetRow += `<td>${(brand.yearly[y] || 0).toLocaleString('tr-TR')}</td>`;
@@ -1442,14 +1465,14 @@ async function loadBrandEcosystemPage() {
         ].filter(Boolean);
 
         const distributorRows = distributors.slice(0, 12).map(distributor => {
-            const memberTags = distributor.brands.slice(0, 4).map(brand => `<span class="be-chip">${brand.name}</span>`).join('');
+            const memberTags = distributor.brands.slice(0, 4).map(brand => `<span class="be-chip">${escapeHtml(brand.name)}</span>`).join('');
             const hiddenCount = distributor.brands.length - Math.min(distributor.brands.length, 4);
             const extraTag = hiddenCount > 0 ? `<span class="be-chip be-chip-muted">+${hiddenCount}</span>` : '';
             return `
                 <tr>
                     <td class="be-rank">${distributor.rank}</td>
                     <td>
-                        <div class="be-entity">${distributor.name}</div>
+                        <div class="be-entity">${escapeHtml(distributor.name)}</div>
                         <div class="be-meta">${distributor.type === 'multi-brand' ? 'Çok markalı kanal' : 'Tek markalı kanal'}</div>
                     </td>
                     <td>
@@ -1469,8 +1492,8 @@ async function loadBrandEcosystemPage() {
             <tr>
                 <td class="be-rank">${brand.rank}</td>
                 <td>
-                    <div class="be-entity">${brand.name}</div>
-                    <div class="be-meta">${brand.distributor_name}</div>
+                    <div class="be-entity">${escapeHtml(brand.name)}</div>
+                    <div class="be-meta">${escapeHtml(brand.distributor_name)}</div>
                 </td>
                 <td>${formatNumber(brand.prev_partial)}</td>
                 <td class="be-strong">${formatNumber(brand.curr_partial)}</td>
@@ -1483,7 +1506,7 @@ async function loadBrandEcosystemPage() {
         const pulseCards = distributors.slice(0, 4).map(distributor => `
             <div class="be-mini-card">
                 <div class="be-mini-kicker">Kanal ${distributor.rank}</div>
-                <div class="be-mini-title">${distributor.name}</div>
+                <div class="be-mini-title">${escapeHtml(distributor.name)}</div>
                 <div class="be-mini-metric">${formatNumber(distributor.curr_partial)} adet</div>
                 <div class="be-mini-foot ${yoyClass(distributor.yoy_pct)}">${pctText(distributor.share_pct)} pay · ${yoyText(distributor.yoy_pct)}</div>
             </div>
@@ -1513,7 +1536,7 @@ async function loadBrandEcosystemPage() {
                     </article>
                     <article class="be-kpi-card">
                         <span class="be-kpi-label">Lider distribütör</span>
-                        <strong class="be-kpi-value be-kpi-text">${topDistributor?.name || '-'}</strong>
+                        <strong class="be-kpi-value be-kpi-text">${escapeHtml(topDistributor?.name || '-')}</strong>
                         <span class="be-kpi-note">${pctText(topDistributor?.share_pct)} pay · ${formatNumber(topDistributor?.curr_partial || 0)} adet</span>
                     </article>
                     <article class="be-kpi-card">
@@ -1545,8 +1568,8 @@ async function loadBrandEcosystemPage() {
                                 <div class="be-story-item">
                                     <div class="be-story-icon"><i class="${item.icon}"></i></div>
                                     <div>
-                                        <div class="be-story-title">${item.title}</div>
-                                        <div class="be-story-text">${item.text}</div>
+                                        <div class="be-story-title">${escapeHtml(item.title)}</div>
+                                        <div class="be-story-text">${escapeHtml(item.text)}</div>
                                     </div>
                                 </div>
                             `).join('')}
@@ -1629,7 +1652,7 @@ async function loadBrandEcosystemPage() {
                         ${fastestBrand ? `
                             <div class="be-callout">
                                 <div class="be-callout-title">En hızlı marka</div>
-                                <div class="be-callout-body">${fastestBrand.name} · ${fastestBrand.distributor_name} içinde ${pctText(fastestBrand.distributor_share_pct)} ağırlık ile ${yoyText(fastestBrand.yoy_pct)} ivme yakalıyor.</div>
+                                <div class="be-callout-body">${escapeHtml(fastestBrand.name)} · ${escapeHtml(fastestBrand.distributor_name)} içinde ${pctText(fastestBrand.distributor_share_pct)} ağırlık ile ${yoyText(fastestBrand.yoy_pct)} ivme yakalıyor.</div>
                             </div>
                         ` : ''}
                     </div>
@@ -1804,7 +1827,7 @@ async function loadHpCommandCenterPage() {
         const periodLabel = `${monthNames[(data.max_month || 1) - 1]} ${data.max_year} / ilk ${data.max_month} ay`;
         const topSegmentCards = rankedSegments.slice(0, 6);
         const brandOptions = (data.brand_options || [])
-            .map(item => `<option value="${item.id}" ${item.id === data.selected_brand_id ? 'selected' : ''}>${item.name} (${formatNumber(item.total)})</option>`)
+            .map(item => `<option value="${item.id}" ${item.id === data.selected_brand_id ? 'selected' : ''}>${escapeHtml(item.name)} (${formatNumber(item.total)})</option>`)
             .join('');
 
         const insightItems = [
@@ -1836,9 +1859,9 @@ async function loadHpCommandCenterPage() {
                 <td class="hpx-strong">${formatNumber(segment.curr_partial)}</td>
                 <td>${fmtPct(segment.share_pct)}</td>
                 <td class="${segment.yoy_pct !== null && segment.yoy_pct < 0 ? 'tm-delta-neg' : 'tm-delta-pos'}">${fmtSignedPct(segment.yoy_pct)}</td>
-                <td>${segment.top_brand ? `${segment.top_brand.brand} <span class="hpx-inline-sub">${formatNumber(segment.top_brand.sales)}</span>` : '-'}</td>
-                <td>${segment.top_province ? `${segment.top_province.province} <span class="hpx-inline-sub">${formatNumber(segment.top_province.sales)}</span>` : '-'}</td>
-                <td>${segment.top_model ? `${segment.top_model.model} <span class="hpx-inline-sub">${formatNumber(segment.top_model.sales)}</span>` : '-'}</td>
+                <td>${segment.top_brand ? `${escapeHtml(segment.top_brand.brand)} <span class="hpx-inline-sub">${formatNumber(segment.top_brand.sales)}</span>` : '-'}</td>
+                <td>${segment.top_province ? `${escapeHtml(segment.top_province.province)} <span class="hpx-inline-sub">${formatNumber(segment.top_province.sales)}</span>` : '-'}</td>
+                <td>${segment.top_model ? `${escapeHtml(segment.top_model.model)} <span class="hpx-inline-sub">${formatNumber(segment.top_model.sales)}</span>` : '-'}</td>
                 <td>${fmtPct(segment.category_split?.tarla_share_pct)} / ${fmtPct(segment.category_split?.bahce_share_pct)}</td>
             </tr>
         `).join('');
@@ -1854,7 +1877,7 @@ async function loadHpCommandCenterPage() {
             </tr>
         `).join('');
 
-        const matrixHeader = matrix.brands.map(brand => `<th>${brand.name}</th>`).join('');
+        const matrixHeader = matrix.brands.map(brand => `<th>${escapeHtml(brand.name)}</th>`).join('');
         const matrixRows = (matrix.segments || []).filter(segment => segment.total > 0).map(segment => `
             <tr>
                 <td class="hpx-hp">${segment.hp_range}</td>
@@ -1889,8 +1912,8 @@ async function loadHpCommandCenterPage() {
                                     <strong>${formatNumber(row.total)}</strong>
                                 </div>
                                 <div class="hpx-stack-meta">
-                                    <span>Top il: ${row.top_provinces?.[0] ? `${row.top_provinces[0].province} (${formatNumber(row.top_provinces[0].sales)})` : '-'}</span>
-                                    <span>Top model: ${row.top_models?.[0] ? `${row.top_models[0].model} (${formatNumber(row.top_models[0].sales)})` : '-'}</span>
+                                    <span>Top il: ${row.top_provinces?.[0] ? `${escapeHtml(row.top_provinces[0].province)} (${formatNumber(row.top_provinces[0].sales)})` : '-'}</span>
+                                    <span>Top model: ${row.top_models?.[0] ? `${escapeHtml(row.top_models[0].model)} (${formatNumber(row.top_models[0].sales)})` : '-'}</span>
                                 </div>
                             </div>
                         `).join('')}
@@ -1907,9 +1930,9 @@ async function loadHpCommandCenterPage() {
                 </div>
                 <div class="hpx-seg-value">${formatNumber(segment.curr_partial)}</div>
                 <div class="hpx-seg-share">${fmtPct(segment.share_pct)} pazar payi</div>
-                <div class="hpx-seg-meta">Marka: ${segment.top_brand ? `${segment.top_brand.brand} (${formatNumber(segment.top_brand.sales)})` : '-'}</div>
-                <div class="hpx-seg-meta">İl: ${segment.top_province ? `${segment.top_province.province} (${formatNumber(segment.top_province.sales)})` : '-'}</div>
-                <div class="hpx-seg-meta">Model: ${segment.top_model ? `${segment.top_model.model} (${formatNumber(segment.top_model.sales)})` : '-'}</div>
+                <div class="hpx-seg-meta">Marka: ${segment.top_brand ? `${escapeHtml(segment.top_brand.brand)} (${formatNumber(segment.top_brand.sales)})` : '-'}</div>
+                <div class="hpx-seg-meta">İl: ${segment.top_province ? `${escapeHtml(segment.top_province.province)} (${formatNumber(segment.top_province.sales)})` : '-'}</div>
+                <div class="hpx-seg-meta">Model: ${segment.top_model ? `${escapeHtml(segment.top_model.model)} (${formatNumber(segment.top_model.sales)})` : '-'}</div>
             </div>
         `).join('');
 
@@ -1945,7 +1968,7 @@ async function loadHpCommandCenterPage() {
                     </article>
                     <article class="hpx-kpi-card">
                         <span class="hpx-kpi-label">Seçili marka</span>
-                        <strong class="hpx-kpi-value hpx-kpi-text">${spotlight.brand_name || '-'}</strong>
+                        <strong class="hpx-kpi-value hpx-kpi-text">${escapeHtml(spotlight.brand_name || '-')}</strong>
                         <span class="hpx-kpi-note">${formatNumber(spotlight.current_total || 0)} adet · ${fmtPct(spotlight.market_share_pct)} pay</span>
                     </article>
                     <article class="hpx-kpi-card">
@@ -1977,8 +2000,8 @@ async function loadHpCommandCenterPage() {
                                 <div class="hpx-story-item">
                                     <div class="hpx-story-icon"><i class="${item.icon}"></i></div>
                                     <div>
-                                        <div class="hpx-story-title">${item.title}</div>
-                                        <div class="hpx-story-text">${item.text}</div>
+                                        <div class="hpx-story-title">${escapeHtml(item.title)}</div>
+                                        <div class="hpx-story-text">${escapeHtml(item.text)}</div>
                                     </div>
                                 </div>
                             `).join('')}
@@ -1999,7 +2022,7 @@ async function loadHpCommandCenterPage() {
                     <div class="chart-card hpx-panel hpx-span-6">
                         <div class="hpx-panel-head">
                             <div>
-                                <h3>${spotlight.brand_name || 'Marka'} spotlight</h3>
+                                <h3>${escapeHtml(spotlight.brand_name || 'Marka')} spotlight</h3>
                                 <p>Segment bazinda adet ve pazar payi izi</p>
                             </div>
                         </div>
@@ -2048,7 +2071,7 @@ async function loadHpCommandCenterPage() {
                     <div class="chart-card hpx-panel hpx-span-6">
                         <div class="hpx-panel-head">
                             <div>
-                                <h3>${spotlight.brand_name || 'Marka'} derinligi</h3>
+                                <h3>${escapeHtml(spotlight.brand_name || 'Marka')} derinligi</h3>
                                 <p>Segment icindeki agirlik, pay ve ivme</p>
                             </div>
                         </div>
@@ -2257,7 +2280,7 @@ async function loadHpTopPage() {
             seg.brands.forEach((b, i) => {
                 rows += `
                     <tr>
-                        <td class="ht-brand">${b.brand}</td>
+                        <td class="ht-brand">${escapeHtml(b.brand)}</td>
                         <td class="ht-sales">${b.sales.toLocaleString('tr-TR')}</td>
                         <td class="ht-share">${b.share}%</td>
                     </tr>`;
@@ -2316,7 +2339,7 @@ async function loadHpTopModelPage() {
                 let rows = '';
                 seg.items.forEach(item => {
                     rows += `<tr>
-                        <td class="ht-brand">${item.brand}</td>
+                        <td class="ht-brand">${escapeHtml(item.brand)}</td>
                         <td class="ht-sales">${item.sales.toLocaleString('tr-TR')}</td>
                         <td class="ht-share">${item.share}%</td>
                     </tr>`;
@@ -2465,7 +2488,7 @@ async function loadBrandHpPage() {
 
         let brandOpts = '';
         if (brands) brands.forEach(b => {
-            brandOpts += `<option value="${b.id}" ${String(b.id) === String(brandId || '') ? 'selected' : ''}>${b.name}</option>`;
+            brandOpts += `<option value="${b.id}" ${String(b.id) === String(brandId || '') ? 'selected' : ''}>${escapeHtml(b.name)}</option>`;
         });
 
         const totalMarket = segments[0]; // Toplam Pazar
@@ -2601,7 +2624,7 @@ async function loadHpBrandMatrixPage() {
                 const hasAnySales = Object.values(brand.yearly).some(v => v > 0) || brand.prev_partial > 0 || brand.curr_partial > 0;
                 if (!hasAnySales) return;
 
-                let row = `<td class="hbm-brand-label">${brand.name}</td>`;
+                let row = `<td class="hbm-brand-label">${escapeHtml(brand.name)}</td>`;
                 years.forEach(y => { row += cell(brand.yearly[y] || 0, segTotal.yearly[y] || 0); });
                 for (let m = 1; m <= max_month; m++) { row += cell(brand.months[m] || 0, segTotal.months[m] || 0); }
                 row += cell(brand.prev_partial, segTotal.prev_partial);
@@ -2952,7 +2975,7 @@ async function legacyLoadProvTopBrandPage() {
             let rows = '';
             prov.brands.forEach(b => {
                 rows += `<tr>
-                    <td class="ht-brand">${b.brand}</td>
+                    <td class="ht-brand">${escapeHtml(b.brand)}</td>
                     <td class="ht-sales">${b.sales.toLocaleString('tr-TR')}</td>
                     <td class="ht-share">${b.share}%</td>
                 </tr>`;
@@ -2961,7 +2984,7 @@ async function legacyLoadProvTopBrandPage() {
             cards += `
                 <div class="ht-card">
                     <div class="ht-card-header" style="background:rgba(34,197,94,0.15);">
-                        <span class="ht-hp-label" style="color:#4ade80;">${prov.province}</span>
+                        <span class="ht-hp-label" style="color:#4ade80;">${escapeHtml(prov.province)}</span>
                     </div>
                     <table class="ht-table">
                         <thead><tr><th>Marka</th><th>Adet</th><th>%</th></tr></thead>
@@ -3053,7 +3076,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
         const quickProvinceChips = provinces.slice(0, 8).map(item => `
             <button
                 class="ptx-quick-chip ${item.province_id === selectedProvince.province_id ? 'is-active' : ''}"
-                onclick="loadProvTopBrandPage('${item.province_id}', '')">
+                onclick="loadProvTopBrandPage(${jsArg(item.province_id)}, '')">
                 <strong>${safe(item.province_name)}</strong>
                 <span>${fmtNum(item.total_sales)} adet</span>
             </button>
@@ -3153,7 +3176,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
             <tr ${item.brand_id === selectedBrand.brand_id ? 'class="is-selected"' : ''}>
                 <td><strong>#${item.rank}</strong></td>
                 <td>
-                    <button class="ptx-link-btn" onclick="loadProvTopBrandPage('${selectedProvince.province_id}', '${item.brand_id}')">
+                    <button class="ptx-link-btn" onclick="loadProvTopBrandPage(${jsArg(selectedProvince.province_id)}, ${jsArg(item.brand_id)})">
                         ${safe(item.brand_name)}
                     </button>
                     <span>${safe(item.top_model_name || '-')}</span>
@@ -3459,7 +3482,7 @@ async function loadHpTopIlCatPage() {
                 let rows = '';
                 seg.items.forEach(item => {
                     rows += `<tr>
-                        <td class="ht-brand">${item.province}</td>
+                        <td class="ht-brand">${escapeHtml(item.province)}</td>
                         <td class="ht-sales">${item.sales.toLocaleString('tr-TR')}</td>
                         <td class="ht-share">${item.share}%</td>
                     </tr>`;
@@ -3531,7 +3554,7 @@ async function loadHpTopIlPage() {
             seg.provinces.forEach(p => {
                 rows += `
                     <tr>
-                        <td class="ht-brand">${p.province}</td>
+                        <td class="ht-brand">${escapeHtml(p.province)}</td>
                         <td class="ht-sales">${p.sales.toLocaleString('tr-TR')}</td>
                         <td class="ht-share">${p.share}%</td>
                     </tr>`;
@@ -3577,7 +3600,7 @@ let mapFullGeoJson = null;
 
 async function loadMapFullPage() {
     const selectedBrandId = getSelectedBrandId({ fallbackToFirst: true, allowBlankForAdmin: true });
-    const brandOpts = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${b.name}</option>`).join('');
+    const brandOpts = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
 
     document.getElementById('pageContent').innerHTML = `
         <div class="mf-container">
@@ -3747,7 +3770,7 @@ async function renderMapFullGeoJSON(salesData) {
                 layer.bindTooltip(`
                     <div style="font-size:13px;min-width:200px">
                         <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
-                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <span style="color:#94a3b8">${escapeHtml(prov?.region || '')}</span>
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>Ä°l ToplamÄ±:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
@@ -3762,7 +3785,7 @@ async function renderMapFullGeoJSON(salesData) {
                 const cleanTooltipHtml = `
                     <div style="font-size:13px;min-width:200px">
                         <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
-                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <span style="color:#94a3b8">${escapeHtml(prov?.region || '')}</span>
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>\u0130l Toplam\u0131:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
@@ -4095,7 +4118,7 @@ async function loadTotalMarketPage() {
         // Brand selector options
         let brandOptions = '<option value="">-- Marka Seçin --</option>';
         (brands || []).forEach(b => {
-            brandOptions += `<option value="${b.id}" ${b.id === tmSelectedBrandId ? 'selected' : ''}>${b.name}</option>`;
+            brandOptions += `<option value="${b.id}" ${b.id === tmSelectedBrandId ? 'selected' : ''}>${escapeHtml(b.name)}</option>`;
         });
 
         // ---- TOPLAM PAZAR TABLOSU ----
@@ -4124,7 +4147,7 @@ async function loadTotalMarketPage() {
             let bPrevCells = `<td class="tm-year-label">${prevYear}</td>`;
             let bCurrCells = `<td class="tm-year-label">${currYear}</td>`;
             let bDeltaCells = '<td class="tm-year-label">Δ%</td>';
-            let bSharePrevCells = `<td class="tm-year-label">${brandName} Pazar Payı</td>`;
+            let bSharePrevCells = `<td class="tm-year-label">${escapeHtml(brandName)} Pazar Payı</td>`;
 
             data.months.forEach(m => {
                 bHeaderCells += `<th>${monthNames[m.month - 1]}</th>`;
@@ -4146,7 +4169,7 @@ async function loadTotalMarketPage() {
 
             brandTableHtml = `
                 <div class="chart-card" style="padding:24px; margin-bottom:24px;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;">${brandName} Aylık Karşılaştırma (${prevYear} - ${currYear})</h3>
+                    <h3 style="color:var(--text-primary);margin:0 0 16px;">${escapeHtml(brandName)} Aylık Karşılaştırma (${prevYear} - ${currYear})</h3>
                     <div style="position:relative;height:350px;"><canvas id="brandMarketChart"></canvas></div>
                 </div>
                 <div class="chart-card tm-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
@@ -4314,155 +4337,6 @@ async function loadTotalMarketPage() {
 // ============================================
 // DASHBOARD PAGE
 // ============================================
-async function loadDashboard() {
-    try {
-        const [dashboard, marketShare, summary] = await Promise.all([
-            API.getDashboard(selectedYear),
-            API.getMarketShare(selectedYear),
-            API.getSalesSummary(selectedYear)
-        ]);
-
-        const brandId = currentUser?.brand_id;
-        const brandData = brandId ? summary?.find(s => s.slug === currentUser?.brand?.slug) : null;
-
-        const content = document.getElementById('pageContent');
-        content.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(59,130,246,0.15);color:#3b82f6"><i class="fas fa-chart-line"></i></div>
-                    <div class="stat-value">${formatNumber(dashboard.total_market_sales)}</div>
-                    <div class="stat-label">Toplam Pazar Satışı (${selectedYear})</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(34,197,94,0.15);color:#22c55e"><i class="fas fa-tractor"></i></div>
-                    <div class="stat-value">${formatNumber(dashboard.brand_sales)}</div>
-                    <div class="stat-label">${brandId ? 'Marka Satışı' : 'Toplam Satış'}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-map-marker-alt"></i></div>
-                    <div class="stat-value">${dashboard.active_provinces}</div>
-                    <div class="stat-label">Aktif İl</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(168,85,247,0.15);color:#a855f7"><i class="fas fa-percentage"></i></div>
-                    <div class="stat-value">${dashboard.market_share != null ? '%' + dashboard.market_share : '-'}</div>
-                    <div class="stat-label">Pazar Payı</div>
-                </div>
-            </div>
-
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>Aylık Satış Trendi</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="monthlyChart"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>Pazar Payı Dağılımı</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="marketShareChart"></canvas></div></div>
-                </div>
-            </div>
-
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>En Çok Satan İller (Top 10)</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="topProvincesChart"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>Marka Sıralaması</h3></div>
-                    <div class="card-body">
-                        <table class="data-table">
-                            <thead><tr><th>#</th><th>Marka</th><th>Satış</th><th>Pazar Payı</th></tr></thead>
-                            <tbody id="brandRankingTable"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Monthly Trend Chart
-        const months = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
-        const trendData = dashboard.monthly_trend || [];
-        charts.monthly = new Chart(document.getElementById('monthlyChart'), {
-            type: 'line',
-            data: {
-                labels: months,
-                datasets: [{
-                    label: 'Satış',
-                    data: months.map((_, i) => {
-                        const m = trendData.find(t => t.month === i + 1);
-                        return m ? parseInt(m.total) : 0;
-                    }),
-                    borderColor: getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim(),
-                    backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim() + '20',
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 4,
-                    pointHoverRadius: 7,
-                    borderWidth: 2
-                }]
-            },
-            options: chartOptions('Adet')
-        });
-
-        // Market Share Pie Chart
-        const topBrands = (marketShare || []).slice(0, 10);
-        charts.marketShare = new Chart(document.getElementById('marketShareChart'), {
-            type: 'doughnut',
-            data: {
-                labels: topBrands.map(b => b.brand_name),
-                datasets: [{
-                    data: topBrands.map(b => parseFloat(b.market_share_pct || 0)),
-                    backgroundColor: topBrands.map(b => b.primary_color),
-                    borderWidth: 0,
-                    hoverOffset: 8
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: 'right', labels: { color: '#94a3b8', padding: 12, font: { size: 11 } } },
-                    tooltip: { callbacks: { label: ctx => `${ctx.label}: %${ctx.parsed}` } }
-                }
-            }
-        });
-
-        // Top Provinces Chart
-        const topProv = dashboard.top_provinces || [];
-        charts.topProvinces = new Chart(document.getElementById('topProvincesChart'), {
-            type: 'bar',
-            data: {
-                labels: topProv.map(p => p.name),
-                datasets: [{
-                    label: 'Satış',
-                    data: topProv.map(p => parseInt(p.total)),
-                    backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim() + '80',
-                    borderColor: getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim(),
-                    borderWidth: 1,
-                    borderRadius: 6
-                }]
-            },
-            options: { ...chartOptions('Adet'), indexAxis: 'y' }
-        });
-
-        // Brand Ranking Table
-        const tbody = document.getElementById('brandRankingTable');
-        (summary || []).forEach((b, i) => {
-            const isMyBrand = b.slug === currentUser?.brand?.slug;
-            tbody.innerHTML += `
-                <tr style="${isMyBrand ? 'background:rgba(59,130,246,0.1)' : ''}">
-                    <td><div class="rank" style="background:${b.primary_color}20;color:${b.primary_color}">${i + 1}</div></td>
-                    <td style="font-weight:${isMyBrand ? '700' : '400'}">${b.brand_name}</td>
-                    <td>${formatNumber(b.total_sales)}</td>
-                    <td>${b.province_count} il</td>
-                </tr>
-            `;
-        });
-
-    } catch (err) {
-        showError(err);
-    }
-}
-
 let dashboardFiltersCollapsed = false;
 let dashboardState = null;
 
@@ -5538,7 +5412,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
             <span>${item.date ? new Date(item.date).toLocaleDateString('tr-TR') : 'Resmi kaynak'}</span>
             <h4>${dashboardSafe(item.title || '-')}</h4>
             <p>${dashboardSafe(item.summary || '')}</p>
-            ${item.url ? `<a href="${item.url}" target="_blank" rel="noreferrer">Habere git</a>` : ''}
+            ${item.url ? `<a href="${safeHref(item.url)}" target="_blank" rel="noreferrer">Habere git</a>` : ''}
         </article>
     `).join('');
 
@@ -5551,7 +5425,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
     `).join('');
 
     const sourceRowHtml = sourceLinks.map(item => `
-        <a class="bh-source-link" href="${item.url}" target="_blank" rel="noreferrer">${dashboardSafe(item.label || item.url || 'Kaynak')}</a>
+        <a class="bh-source-link" href="${safeHref(item.url)}" target="_blank" rel="noreferrer">${dashboardSafe(item.label || item.url || 'Kaynak')}</a>
     `).join('');
 
     const contactCards = [
@@ -5574,9 +5448,9 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
             <h4>${dashboardSafe(item.label || '-')}</h4>
             <p>${dashboardSafe(item.title || '')}</p>
             <div class="bh-contact-stack">
-                ${item.phone ? `<a href="tel:${item.phone}">${dashboardSafe(item.phone)}</a>` : ''}
-                ${item.email ? `<a href="mailto:${item.email}">${dashboardSafe(item.email)}</a>` : ''}
-                ${item.url ? `<a href="${item.url}" target="_blank" rel="noreferrer">Bağlantı</a>` : ''}
+                ${item.phone ? `<a href="tel:${escapeHtml(item.phone)}">${dashboardSafe(item.phone)}</a>` : ''}
+                ${item.email ? `<a href="mailto:${escapeHtml(item.email)}">${dashboardSafe(item.email)}</a>` : ''}
+                ${item.url ? `<a href="${safeHref(item.url)}" target="_blank" rel="noreferrer">Bağlantı</a>` : ''}
             </div>
         </article>
     `).join('');
@@ -5978,9 +5852,9 @@ async function loadBrandHubPage() {
                     <h4>${dashboardSafe(contact.label || '-')}</h4>
                     <p>${dashboardSafe(contact.title || '')}</p>
                     <div class="bh-contact-stack">
-                        ${contact.phone ? `<a href="tel:${contact.phone}">${dashboardSafe(contact.phone)}</a>` : ''}
-                        ${contact.email ? `<a href="mailto:${contact.email}">${dashboardSafe(contact.email)}</a>` : ''}
-                        ${contact.url ? `<a href="${contact.url}" target="_blank" rel="noreferrer">Bağlantı</a>` : ''}
+                        ${contact.phone ? `<a href="tel:${escapeHtml(contact.phone)}">${dashboardSafe(contact.phone)}</a>` : ''}
+                        ${contact.email ? `<a href="mailto:${escapeHtml(contact.email)}">${dashboardSafe(contact.email)}</a>` : ''}
+                        ${contact.url ? `<a href="${safeHref(contact.url)}" target="_blank" rel="noreferrer">Bağlantı</a>` : ''}
                     </div>
                 </article>
             `).join('')
@@ -5988,7 +5862,7 @@ async function loadBrandHubPage() {
 
         const socialLinks = (profile.social_links || []).length > 0
             ? profile.social_links.map(item => `
-                <a class="bh-social-link" href="${item.url}" target="_blank" rel="noreferrer">
+                <a class="bh-social-link" href="${safeHref(item.url)}" target="_blank" rel="noreferrer">
                     <span>${dashboardSafe(item.platform || 'Bağlantı')}</span>
                     <strong>${dashboardSafe(item.handle || item.url || '-')}</strong>
                 </a>
@@ -5997,7 +5871,7 @@ async function loadBrandHubPage() {
 
         const sourceLinks = (profile.source_notes || []).length > 0
             ? profile.source_notes.map(item => `
-                <a class="bh-source-link" href="${item.url}" target="_blank" rel="noreferrer">${dashboardSafe(item.label || item.url || 'Kaynak')}</a>
+                <a class="bh-source-link" href="${safeHref(item.url)}" target="_blank" rel="noreferrer">${dashboardSafe(item.label || item.url || 'Kaynak')}</a>
             `).join('')
             : '';
 
@@ -6464,139 +6338,6 @@ function getTurkeyMapSelectedText(selectId, fallback = '') {
     return select?.selectedOptions?.[0]?.textContent?.trim() || fallback;
 }
 
-function buildTurkeyMapFilterSummary() {
-    const isAllLabel = (label) => {
-        const normalized = String(label || '').toLocaleLowerCase('tr-TR').trim();
-        return normalized.startsWith('tüm ') || normalized.startsWith('tum ');
-    };
-    const summaryItems = [];
-    const brandLabel = getTurkeyMapSelectedText('mapBrandFilter', 'T\u00fcm Markalar');
-    const yearLabel = getTurkeyMapSelectedText('mapYearFilter', 'Tüm Yıllar');
-    const regionLabel = getTurkeyMapSelectedText('mapRegionFilter', 'T\u00fcm B\u00f6lgeler');
-    const cabinLabel = getTurkeyMapSelectedText('mapCabinFilter', '');
-    const driveLabel = getTurkeyMapSelectedText('mapDriveFilter', '');
-    const gearLabel = getTurkeyMapSelectedText('mapGearFilter', '');
-    const hpLabel = getTurkeyMapSelectedText('mapHpFilter', '');
-
-    if (brandLabel) summaryItems.push(brandLabel);
-    if (yearLabel) summaryItems.push(yearLabel);
-    if (regionLabel && !isAllLabel(regionLabel)) summaryItems.push(regionLabel);
-    if (cabinLabel && !isAllLabel(cabinLabel)) summaryItems.push(cabinLabel);
-    if (driveLabel && !isAllLabel(driveLabel)) summaryItems.push(driveLabel);
-    if (gearLabel && !isAllLabel(gearLabel)) summaryItems.push(`\u015eanz\u0131man ${gearLabel}`);
-    if (hpLabel && !isAllLabel(hpLabel)) summaryItems.push(hpLabel);
-
-    return summaryItems.join(' • ') || 'T\u00fcm pazar g\u00f6r\u00fcn\u00fcm\u00fc';
-}
-
-function fitTurkeyMapBounds() {
-    if (leafletMap && geoJsonLayer?.getBounds) {
-        leafletMap.fitBounds(geoJsonLayer.getBounds(), { padding: turkeyMapFocusMode ? [32, 32] : [20, 20] });
-        return;
-    }
-    if (leafletMap) leafletMap.setView([39.0, 35.5], turkeyMapFocusMode ? 6.25 : 6);
-}
-
-function scheduleTurkeyMapResize(refit = false) {
-    if (turkeyMapResizeTimer) clearTimeout(turkeyMapResizeTimer);
-    turkeyMapResizeTimer = setTimeout(() => {
-        if (!leafletMap) return;
-        leafletMap.invalidateSize();
-        if (refit) fitTurkeyMapBounds();
-    }, 260);
-}
-
-function syncTurkeyMapWorkspaceUi() {
-    const workspace = document.getElementById('turkeyMapWorkspace');
-    const filterPanel = document.getElementById('turkeyMapFilterPanel');
-    const summaryEl = document.getElementById('turkeyMapFilterSummary');
-    if (!workspace || !filterPanel) return;
-
-    document.body.classList.toggle('map-focus-mode', turkeyMapFocusMode && currentPage === 'map');
-    workspace.classList.toggle('is-focus', turkeyMapFocusMode);
-    filterPanel.classList.toggle('is-collapsed', turkeyMapFiltersCollapsed);
-
-    if (summaryEl) summaryEl.textContent = buildTurkeyMapFilterSummary();
-
-    document.querySelectorAll('[data-turkey-map-collapse]').forEach(btn => {
-        btn.innerHTML = turkeyMapFiltersCollapsed
-            ? '<i class="fas fa-chevron-down"></i><span>Filtreleri Ac</span>'
-            : '<i class="fas fa-chevron-up"></i><span>Filtreleri Gizle</span>';
-        btn.title = turkeyMapFiltersCollapsed ? 'Filtre panelini ac' : 'Filtre panelini gizle';
-    });
-
-    document.querySelectorAll('[data-turkey-map-focus]').forEach(btn => {
-        btn.innerHTML = turkeyMapFocusMode
-            ? '<i class="fas fa-compress"></i><span>Odaktan Cik</span>'
-            : '<i class="fas fa-expand"></i><span>Tam Ekran</span>';
-        btn.title = turkeyMapFocusMode ? 'Harita odagindan cik' : 'Haritayi tam ekrana al';
-    });
-}
-
-function toggleTurkeyMapFilters(force) {
-    turkeyMapFiltersCollapsed = typeof force === 'boolean' ? force : !turkeyMapFiltersCollapsed;
-    syncTurkeyMapWorkspaceUi();
-    scheduleTurkeyMapResize(true);
-}
-
-async function toggleTurkeyMapFocusMode(options = {}) {
-    if (currentPage !== 'map') return;
-    const workspace = document.getElementById('turkeyMapWorkspace');
-    if (!workspace) return;
-
-    const shouldEnable = typeof options.force === 'boolean' ? options.force : !turkeyMapFocusMode;
-    turkeyMapFocusMode = shouldEnable;
-
-    if (shouldEnable) {
-        turkeyMapFiltersCollapsed = true;
-        document.getElementById('sidebar')?.classList.remove('open');
-    }
-
-    syncTurkeyMapWorkspaceUi();
-    scheduleTurkeyMapResize(true);
-
-    if (shouldEnable && options.requestFullscreen !== false && workspace.requestFullscreen && document.fullscreenElement !== workspace) {
-        try {
-            await workspace.requestFullscreen();
-        } catch (err) {
-            console.warn('Turkey map fullscreen request failed:', err);
-        }
-        return;
-    }
-
-    if (!shouldEnable && document.fullscreenElement === workspace && document.exitFullscreen) {
-        try {
-            await document.exitFullscreen();
-        } catch (err) {
-            console.warn('Turkey map fullscreen exit failed:', err);
-        }
-    }
-}
-
-function handleTurkeyMapDoubleClick(event) {
-    if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-    }
-    toggleTurkeyMapFocusMode({ requestFullscreen: true });
-}
-
-function teardownTurkeyMapWorkspace() {
-    if (turkeyMapResizeTimer) {
-        clearTimeout(turkeyMapResizeTimer);
-        turkeyMapResizeTimer = null;
-    }
-
-    turkeyMapFocusMode = false;
-    turkeyMapFiltersCollapsed = false;
-    document.body.classList.remove('map-focus-mode');
-
-    const workspace = document.getElementById('turkeyMapWorkspace');
-    if (workspace && document.fullscreenElement === workspace && document.exitFullscreen) {
-        document.exitFullscreen().catch(() => {});
-    }
-}
-
 document.addEventListener('fullscreenchange', () => {
     const workspace = document.getElementById('turkeyMapWorkspace');
     if (!workspace || currentPage !== 'map') return;
@@ -6626,393 +6367,6 @@ document.addEventListener('keydown', event => {
         scheduleTurkeyMapResize(true);
     }
 });
-
-async function loadMapPage() {
-    try {
-        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || String(currentUser?.brand_id || '');
-        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
-        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
-        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
-        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
-        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
-        mapAvailableYears = (await API.getTuikYears())
-            .map(year => parseInt(year, 10))
-            .filter(Number.isFinite)
-            .filter((year, index, arr) => arr.indexOf(year) === index)
-            .sort((a, b) => a - b);
-        const currentYearValue = document.getElementById('mapYearFilter')?.value;
-        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
-        const defaultYear = (!currentYearValue || currentYearValue === 'all')
-            ? 'all'
-            : (mapAvailableYears.includes(parseInt(currentYearValue, 10)) ? currentYearValue : 'all');
-        const yearOptions = [
-            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>T\u00fcm Y\u0131llar</option>`,
-            ...((mapAvailableYears || []).length
-                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
-                : [`<option value="${defaultYear}" selected>${defaultYear}</option>`])
-        ].join('');
-
-        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
-        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
-        const content = document.getElementById('pageContent');
-
-        content.innerHTML = `
-            <div class="filter-bar">
-                <select id="mapBrandFilter" onchange="updateMap()">
-                    <option value="">Tüm Markalar</option>
-                    ${brandOptions}
-                </select>
-                <select id="mapYearFilter" onchange="updateMap()">
-                    ${yearOptions}
-                </select>
-                <select id="mapCabinFilter" onchange="updateMap()">
-                    <option value="">Tüm Kabin</option>
-                    ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
-                </select>
-                <select id="mapDriveFilter" onchange="updateMap()">
-                    <option value="">Tüm Çekiş</option>
-                    ${selectedOption(currentDriveValue, currentDriveValue)}
-                </select>
-                <select id="mapGearFilter" onchange="updateMap()">
-                    <option value="">Tüm Şanzıman</option>
-                    ${selectedOption(currentGearValue, currentGearValue)}
-                </select>
-                <select id="mapHpFilter" onchange="updateMap()">
-                    <option value="">Tüm HP</option>
-                    ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
-                </select>
-                <select id="mapRegionFilter" onchange="updateMap()">
-                    <option value="">Tüm Bölgeler</option>
-                    <option value="Marmara">Marmara</option>
-                    <option value="Ege">Ege</option>
-                    <option value="Akdeniz">Akdeniz</option>
-                    <option value="İç Anadolu">İç Anadolu</option>
-                    <option value="Karadeniz">Karadeniz</option>
-                    <option value="Doğu Anadolu">Doğu Anadolu</option>
-                    <option value="Güneydoğu Anadolu">Güneydoğu Anadolu</option>
-                </select>
-            </div>
-
-            <div class="card" style="height: calc(100vh - 160px); display: flex; flex-direction: column;">
-                <div class="card-header" style="flex-shrink: 0;"><h3><i class="fas fa-map-marked-alt"></i> Türkiye Satış Haritası</h3></div>
-                <div class="card-body" style="flex-grow: 1; padding: 0;">
-                    <div class="turkey-map-container" style="height: 100%; border-radius: 0;">
-                        <div id="turkeyMap"></div>
-                    </div>
-                    <div style="display:flex;justify-content:center;gap:24px;margin-top:16px;margin-bottom:16px;font-size:12px;color:var(--text-muted)">
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#1e40af;margin-right:4px"></span>Yüksek</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#3b82f6;margin-right:4px"></span>Orta-Yüksek</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#60a5fa;margin-right:4px"></span>Orta</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#93c5fd;margin-right:4px"></span>Düşük</span>
-                        <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#1e293b;margin-right:4px"></span>Satış Yok</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tablolar Tam Ekran map için gizlendi, sadece harita var. (İsteğe göre eklenebilir) -->
-        `;
-
-        if (currentRegionValue) {
-            const regionFilter = document.getElementById('mapRegionFilter');
-            if (regionFilter) regionFilter.value = currentRegionValue;
-        }
-
-        await updateMap();
-
-    } catch (err) {
-        showError(err);
-    }
-}
-
-async function loadMapPage() {
-    try {
-        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || String(currentUser?.brand_id || '');
-        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
-        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
-        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
-        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
-        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
-        mapAvailableYears = (await API.getTuikYears())
-            .map(year => parseInt(year, 10))
-            .filter(Number.isFinite)
-            .filter((year, index, arr) => arr.indexOf(year) === index)
-            .sort((a, b) => a - b);
-        const currentYearValue = document.getElementById('mapYearFilter')?.value;
-        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
-        const defaultYear = currentYearValue === 'all'
-            ? 'all'
-            : ((currentYearValue && mapAvailableYears.includes(parseInt(currentYearValue, 10)))
-                ? currentYearValue
-                : fallbackYear);
-        const yearOptions = [
-            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>Tüm Yıllar</option>`,
-            ...(mapAvailableYears || []).length
-                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
-                : [`<option value="${fallbackYear}" ${defaultYear === fallbackYear ? 'selected' : ''}>${fallbackYear}</option>`]
-        ].join('');
-
-        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
-        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
-        const content = document.getElementById('pageContent');
-
-        content.innerHTML = `
-            <div id="turkeyMapWorkspace" class="turkey-map-workspace">
-                <section id="turkeyMapFilterPanel" class="tmx-filter-panel">
-                    <div class="tmx-filter-header">
-                        <div class="tmx-filter-copy">
-                            <span class="tmx-kicker">Harita Kontrolleri</span>
-                            <div class="tmx-filter-title-row">
-                                <h3>Filtreler</h3>
-                                <span id="turkeyMapFilterSummary" class="tmx-filter-summary"></span>
-                            </div>
-                        </div>
-                        <div class="tmx-filter-actions">
-                            <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                            <button type="button" class="tmx-btn tmx-btn-primary" data-turkey-map-focus onclick="toggleTurkeyMapFocusMode({ requestFullscreen: true })"></button>
-                        </div>
-                    </div>
-                    <div class="tmx-filter-body">
-                        <div class="tmx-filter-grid">
-                            <select id="mapBrandFilter" onchange="updateMap()">
-                                <option value="">TÃ¼m Markalar</option>
-                                ${brandOptions}
-                            </select>
-                            <select id="mapYearFilter" onchange="updateMap()">
-                                ${yearOptions}
-                            </select>
-                            <select id="mapCabinFilter" onchange="updateMap()">
-                                <option value="">TÃ¼m Kabin</option>
-                                ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
-                            </select>
-                            <select id="mapDriveFilter" onchange="updateMap()">
-                                <option value="">TÃ¼m Ã‡ekiÅŸ</option>
-                                ${selectedOption(currentDriveValue, currentDriveValue)}
-                            </select>
-                            <select id="mapGearFilter" onchange="updateMap()">
-                                <option value="">TÃ¼m ÅanzÄ±man</option>
-                                ${selectedOption(currentGearValue, currentGearValue)}
-                            </select>
-                            <select id="mapHpFilter" onchange="updateMap()">
-                                <option value="">TÃ¼m HP</option>
-                                ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
-                            </select>
-                            <select id="mapRegionFilter" onchange="updateMap()">
-                                <option value="">TÃ¼m BÃ¶lgeler</option>
-                                <option value="Marmara">Marmara</option>
-                                <option value="Ege">Ege</option>
-                                <option value="Akdeniz">Akdeniz</option>
-                                <option value="Ä°Ã§ Anadolu">Ä°Ã§ Anadolu</option>
-                                <option value="Karadeniz">Karadeniz</option>
-                                <option value="DoÄŸu Anadolu">DoÄŸu Anadolu</option>
-                                <option value="GÃ¼neydoÄŸu Anadolu">GÃ¼neydoÄŸu Anadolu</option>
-                            </select>
-                        </div>
-                        <div class="tmx-filter-hint">
-                            <i class="fas fa-expand"></i>
-                            <span>Haritaya cift tiklayarak veya tam ekran butonuyla büyük ekrana gecebilirsiniz.</span>
-                        </div>
-                    </div>
-                </section>
-
-                <div class="card tmx-map-card">
-                    <div class="card-header tmx-map-card-header">
-                        <div class="tmx-map-heading">
-                            <h3><i class="fas fa-map-marked-alt"></i> TÃ¼rkiye SatÄ±ÅŸ HaritasÄ±</h3>
-                            <span class="tmx-map-subtitle">Buyuk ekran kullaniminda filtreler katlanir, sol panel otomatik gizlenir.</span>
-                        </div>
-                        <div class="tmx-map-header-actions">
-                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
-                                <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
-                            </button>
-                            <button type="button" class="tmx-btn tmx-btn-ghost" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                            <button type="button" class="tmx-btn tmx-btn-primary" data-turkey-map-focus onclick="toggleTurkeyMapFocusMode({ requestFullscreen: true })"></button>
-                        </div>
-                    </div>
-                    <div class="card-body tmx-map-body">
-                        <div class="tmx-map-stage" ondblclick="handleTurkeyMapDoubleClick(event)">
-                            <div class="turkey-map-container tmx-map-container">
-                                <div id="turkeyMap"></div>
-                            </div>
-                            <div class="tmx-floating-actions">
-                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFilters()" title="Filtreleri ac veya gizle">
-                                    <i class="fas fa-sliders-h"></i>
-                                </button>
-                                <button type="button" class="tmx-fab" onclick="fitTurkeyMapBounds()" title="Haritayi sigdir">
-                                    <i class="fas fa-crosshairs"></i>
-                                </button>
-                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFocusMode({ force: false })" title="Odaktan cik">
-                                    <i class="fas fa-compress"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="tmx-legend">
-                            <span><i style="background:#1e40af"></i>YÃ¼ksek</span>
-                            <span><i style="background:#3b82f6"></i>Orta-YÃ¼ksek</span>
-                            <span><i style="background:#60a5fa"></i>Orta</span>
-                            <span><i style="background:#93c5fd"></i>DÃ¼ÅŸÃ¼k</span>
-                            <span><i style="background:#1e293b"></i>SatÄ±ÅŸ Yok</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        if (currentRegionValue) {
-            const regionFilter = document.getElementById('mapRegionFilter');
-            if (regionFilter) regionFilter.value = currentRegionValue;
-        }
-
-        syncTurkeyMapWorkspaceUi();
-        await updateMap();
-
-    } catch (err) {
-        showError(err);
-    }
-}
-
-async function loadMapPage() {
-    try {
-        const currentBrandValue = document.getElementById('mapBrandFilter')?.value || String(currentUser?.brand_id || '');
-        const currentRegionValue = document.getElementById('mapRegionFilter')?.value || '';
-        const currentCabinValue = document.getElementById('mapCabinFilter')?.value || '';
-        const currentDriveValue = document.getElementById('mapDriveFilter')?.value || '';
-        const currentGearValue = document.getElementById('mapGearFilter')?.value || '';
-        const currentHpValue = document.getElementById('mapHpFilter')?.value || '';
-        mapAvailableYears = (await API.getTuikYears())
-            .map(year => parseInt(year, 10))
-            .filter(Number.isFinite)
-            .filter((year, index, arr) => arr.indexOf(year) === index)
-            .sort((a, b) => a - b);
-
-        const currentYearValue = document.getElementById('mapYearFilter')?.value;
-        const fallbackYear = String(mapAvailableYears?.[mapAvailableYears.length - 1] || selectedYear || new Date().getFullYear());
-        const defaultYear = currentYearValue === 'all'
-            ? 'all'
-            : ((currentYearValue && mapAvailableYears.includes(parseInt(currentYearValue, 10)))
-                ? currentYearValue
-                : fallbackYear);
-        const yearOptions = [
-            `<option value="all" ${defaultYear === 'all' ? 'selected' : ''}>Tüm Yıllar</option>`,
-            ...(mapAvailableYears || []).length
-                ? mapAvailableYears.map(year => `<option value="${year}" ${String(year) === defaultYear ? 'selected' : ''}>${year}</option>`)
-                : [`<option value="${fallbackYear}" ${defaultYear === fallbackYear ? 'selected' : ''}>${fallbackYear}</option>`]
-        ].join('');
-
-        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
-        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
-        const content = document.getElementById('pageContent');
-
-        content.innerHTML = `
-            <div id="turkeyMapWorkspace" class="turkey-map-workspace">
-                <section id="turkeyMapFilterPanel" class="tmx-filter-panel">
-                    <div class="tmx-filter-header">
-                        <div class="tmx-filter-copy">
-                            <span class="tmx-kicker">Harita Kontrolleri</span>
-                            <div class="tmx-filter-title-row">
-                                <h3>Filtreler</h3>
-                                <span id="turkeyMapFilterSummary" class="tmx-filter-summary"></span>
-                            </div>
-                        </div>
-                        <div class="tmx-filter-actions">
-                            <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                            <button type="button" class="tmx-btn tmx-btn-primary" data-turkey-map-focus onclick="toggleTurkeyMapFocusMode({ requestFullscreen: true })"></button>
-                        </div>
-                    </div>
-                    <div class="tmx-filter-body">
-                        <div class="tmx-filter-grid">
-                            <select id="mapBrandFilter" onchange="updateMap()">
-                                <option value="">T\u00fcm Markalar</option>
-                                ${brandOptions}
-                            </select>
-                            <select id="mapYearFilter" onchange="updateMap()">
-                                ${yearOptions}
-                            </select>
-                            <select id="mapCabinFilter" onchange="updateMap()">
-                                <option value="">T\u00fcm Kabin</option>
-                                ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
-                            </select>
-                            <select id="mapDriveFilter" onchange="updateMap()">
-                                <option value="">T\u00fcm \u00c7eki\u015f</option>
-                                ${selectedOption(currentDriveValue, currentDriveValue)}
-                            </select>
-                            <select id="mapGearFilter" onchange="updateMap()">
-                                <option value="">T\u00fcm \u015eanz\u0131man</option>
-                                ${selectedOption(currentGearValue, currentGearValue)}
-                            </select>
-                            <select id="mapHpFilter" onchange="updateMap()">
-                                <option value="">T\u00fcm HP</option>
-                                ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
-                            </select>
-                            <select id="mapRegionFilter" onchange="updateMap()">
-                                <option value="">T\u00fcm B\u00f6lgeler</option>
-                                <option value="Marmara">Marmara</option>
-                                <option value="Ege">Ege</option>
-                                <option value="Akdeniz">Akdeniz</option>
-                                <option value="\u0130\u00e7 Anadolu">\u0130\u00e7 Anadolu</option>
-                                <option value="Karadeniz">Karadeniz</option>
-                                <option value="Do\u011fu Anadolu">Do\u011fu Anadolu</option>
-                                <option value="G\u00fcneydo\u011fu Anadolu">G\u00fcneydo\u011fu Anadolu</option>
-                            </select>
-                        </div>
-                        <div class="tmx-filter-hint">
-                            <i class="fas fa-expand"></i>
-                            <span>Haritaya cift tiklayarak veya tam ekran butonuyla büyük ekrana gecebilirsiniz.</span>
-                        </div>
-                    </div>
-                </section>
-
-                <div class="card tmx-map-card">
-                    <div class="card-header tmx-map-card-header">
-                        <div class="tmx-map-heading">
-                            <h3><i class="fas fa-map-marked-alt"></i> T\u00fcrkiye Sat\u0131\u015f Haritas\u0131</h3>
-                            <span class="tmx-map-subtitle">Buyuk ekran kullaniminda filtreler katlanir, sol panel otomatik gizlenir.</span>
-                        </div>
-                        <div class="tmx-map-header-actions">
-                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
-                                <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-body tmx-map-body">
-                        <div class="tmx-map-stage" ondblclick="handleTurkeyMapDoubleClick(event)">
-                            <div class="turkey-map-container tmx-map-container">
-                                <div id="turkeyMap"></div>
-                            </div>
-                            <div class="tmx-floating-actions">
-                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFilters()" title="Filtreleri ac veya gizle">
-                                    <i class="fas fa-sliders-h"></i>
-                                </button>
-                                <button type="button" class="tmx-fab" onclick="fitTurkeyMapBounds()" title="Haritayi sigdir">
-                                    <i class="fas fa-crosshairs"></i>
-                                </button>
-                                <button type="button" class="tmx-fab" onclick="toggleTurkeyMapFocusMode({ force: false })" title="Odaktan cik">
-                                    <i class="fas fa-compress"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="tmx-legend">
-                            <span><i style="background:#1e40af"></i>Y\u00fcksek</span>
-                            <span><i style="background:#3b82f6"></i>Orta-Y\u00fcksek</span>
-                            <span><i style="background:#60a5fa"></i>Orta</span>
-                            <span><i style="background:#93c5fd"></i>D\u00fc\u015f\u00fck</span>
-                            <span><i style="background:#1e293b"></i>Sat\u0131\u015f Yok</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        if (currentRegionValue) {
-            const regionFilter = document.getElementById('mapRegionFilter');
-            if (regionFilter) regionFilter.value = currentRegionValue;
-        }
-
-        syncTurkeyMapWorkspaceUi();
-        await updateMap();
-    } catch (err) {
-        showError(err);
-    }
-}
 
 function setMapPageChromeHidden(enabled) {
     document.body.classList.toggle('map-page-immersive', !!enabled);
@@ -7183,8 +6537,8 @@ async function loadMapPage() {
                 : [`<option value="${fallbackYear}" ${defaultYear === fallbackYear ? 'selected' : ''}>${fallbackYear}</option>`]
         ].join('');
 
-        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${b.name}</option>`).join('');
-        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
+        const brandOptions = allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(currentBrandValue) ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
+        const selectedOption = (value, label) => value ? `<option value="${escapeHtml(value)}" selected>${escapeHtml(label)}</option>` : '';
         const content = document.getElementById('pageContent');
 
         content.innerHTML = `
@@ -7399,7 +6753,7 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                 layer.bindTooltip(`
                     <div style="font-size:13px;min-width:180px">
                         <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
-                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <span style="color:#94a3b8">${escapeHtml(prov?.region || '')}</span>
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
@@ -7415,7 +6769,7 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                 const cleanTooltipHtml = `
                     <div style="font-size:13px;min-width:180px">
                         <strong style="font-size:14px">${dbName}</strong> ${prov ? `(${prov.plate_code})` : ''}<br>
-                        <span style="color:#94a3b8">${prov?.region || ''}</span>
+                        <span style="color:#94a3b8">${escapeHtml(prov?.region || '')}</span>
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
@@ -7504,7 +6858,7 @@ function drawCircleMarkers(salesData) {
             weight: 1,
             fillOpacity: 0.8
         }).addTo(leafletMap)
-          .bindTooltip(`<strong>${prov.name}</strong> (${prov.plate_code})<br>Satış: ${formatNumber(sales)}`);
+          .bindTooltip(`<strong>${escapeHtml(prov.name)}</strong> (${prov.plate_code})<br>Satış: ${formatNumber(sales)}`);
     });
 }
 
@@ -7521,8 +6875,8 @@ function renderProvinceTable(salesData) {
     tbody.innerHTML = sorted.slice(0, 30).map((p, i) => `
         <tr>
             <td>${i + 1}</td>
-            <td style="font-weight:600">${p.name}</td>
-            <td>${p.region}</td>
+            <td style="font-weight:600">${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.region)}</td>
             <td>${formatNumber(p.total)}</td>
         </tr>
     `).join('');
@@ -7606,7 +6960,7 @@ async function loadSalesPage() {
                 </select>
                 <select id="salesBrandFilter">
                     <option value="">Tüm Markalar</option>
-                    ${allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${b.name}</option>`).join('')}
+                    ${allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}
                 </select>
                 <button class="btn-filter" onclick="updateSalesCharts()"><i class="fas fa-filter"></i> Filtrele</button>
             </div>
@@ -7797,7 +7151,7 @@ async function loadCompetitorsPage() {
             tbody.innerHTML += `
                 <tr style="${isMyBrand ? 'background:rgba(59,130,246,0.08);font-weight:600' : ''}">
                     <td><div class="rank" style="background:${b.primary_color}20;color:${b.primary_color}">${i + 1}</div></td>
-                    <td><span style="color:${b.primary_color}">${isMyBrand ? '★ ' : ''}${b.brand_name}</span></td>
+                    <td><span style="color:${b.primary_color}">${isMyBrand ? '★ ' : ''}${escapeHtml(b.brand_name)}</span></td>
                     <td>${formatNumber(b.brand_sales)}</td>
                     <td>%${b.market_share_pct}</td>
                     <td>${isMyBrand ? '<span style="color:var(--brand-primary)">Sizin Markanız</span>' : ''}</td>
@@ -8043,8 +7397,8 @@ async function loadModelsPage() {
                         <span>${m.price_usd ? fmtPrice(m.price_usd) : '-'}</span>
                     </div>
                     <div class="mcx-alt-actions">
-                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('left', '${m.brand_id}', '${m.model_id}')">⟵ Sol'a koy</button>
-                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('right', '${m.brand_id}', '${m.model_id}')">Sağ'a koy ⟶</button>
+                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('left', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">⟵ Sol'a koy</button>
+                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('right', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">Sağ'a koy ⟶</button>
                     </div>
                 </article>
             `;
@@ -8272,10 +7626,10 @@ async function searchModels() {
             <tbody>
                 ${models.map(m => `
                     <tr class="mi-hover-row" ${modelIntelAttrs(m.brand_name, m.model_name, '', m.brand_id, m.model_code || m.tuik_model_adi || '')} data-model-intel-hover="true">
-                        <td style="color:${allBrands.find(b => b.id === m.brand_id)?.primary_color || '#fff'};font-weight:600">${m.brand_name}</td>
-                        <td>${m.model_name}</td>
+                        <td style="color:${allBrands.find(b => b.id === m.brand_id)?.primary_color || '#fff'};font-weight:600">${escapeHtml(m.brand_name)}</td>
+                        <td>${escapeHtml(m.model_name)}</td>
                         <td>${m.horsepower} HP</td>
-                        <td>${translateLabel(m.category)}</td>
+                        <td>${escapeHtml(translateLabel(m.category))}</td>
                         <td>${translateLabel(m.cabin_type)}</td>
                         <td>${m.drive_type}</td>
                         <td>${m.gear_config || '-'}</td>
@@ -9087,7 +8441,7 @@ const ModelImagesAdmin = {
                             <td class="mig-num-danger">${fmtNum(r.missing_models)}</td>
                             <td>
                                 <div class="mig-bar"><div class="mig-bar-fill" style="width:${Math.min(100, r.coverage_pct)}%"></div></div>
-                                <span class="mig-pct">${r.coverage_pct.toFixed(1)}%</span>
+                                <span class="mig-pct">${Number(r.coverage_pct || 0).toFixed(1)}%</span>
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-ghost" data-action="brand-sync" data-brand="${escapeHtml(r.brand_name)}">
@@ -9356,202 +8710,9 @@ async function loadModelImagesAdminPage() {
 // ============================================
 // PROVINCE PAGE
 // ============================================
-async function loadProvincePage() {
-    const content = document.getElementById('pageContent');
-    content.innerHTML = `
-        <div class="filter-bar">
-            <select id="provinceSelect" onchange="loadProvinceDetail()">
-                <option value="">İl Seçin</option>
-                ${allProvinces.map(p => `<option value="${p.id}">${p.name} (${p.plate_code})</option>`).join('')}
-            </select>
-        </div>
-        <div id="provinceDetailContent">
-            <div class="empty-state">
-                <i class="fas fa-city"></i>
-                <h3>Analiz etmek istediğiniz ili seçin</h3>
-                <p>Toprak yapısı, ekin bilgisi ve traktör önerileri görüntülenecek</p>
-            </div>
-        </div>
-    `;
-}
-
-async function loadProvinceDetail() {
-    const provId = document.getElementById('provinceSelect')?.value;
-    if (!provId) return;
-
-    const prov = allProvinces.find(p => p.id === parseInt(provId));
-    const [soil, crops, provinceSales] = await Promise.all([
-        API.getSoil(provId),
-        API.getCrops(provId, selectedYear),
-        API.getSalesByProvince(selectedYear, currentUser?.brand_id)
-    ]);
-
-    const provSales = (provinceSales || []).filter(s => s.plate_code === prov?.plate_code);
-    const totalSales = provSales.reduce((sum, s) => sum + parseInt(s.total_sales), 0);
-
-    const detailEl = document.getElementById('provinceDetailContent');
-    detailEl.innerHTML = `
-        <div class="province-detail">
-            <div class="detail-item">
-                <div class="detail-label">Bölge</div>
-                <div class="detail-value">${prov?.region || '-'}</div>
-            </div>
-            <div class="detail-item">
-                <div class="detail-label">Nüfus</div>
-                <div class="detail-value">${formatNumber(prov?.population)}</div>
-            </div>
-            <div class="detail-item">
-                <div class="detail-label">Toplam Satış (${selectedYear})</div>
-                <div class="detail-value">${formatNumber(totalSales)} adet</div>
-            </div>
-            <div class="detail-item">
-                <div class="detail-label">İklim Bölgesi</div>
-                <div class="detail-value">${prov?.climate_zone || '-'}</div>
-            </div>
-            <div class="detail-item">
-                <div class="detail-label">Yıllık Yağış</div>
-                <div class="detail-value">${prov?.annual_rainfall_mm ? prov.annual_rainfall_mm + ' mm' : '-'}</div>
-            </div>
-            <div class="detail-item">
-                <div class="detail-label">Yükseklik</div>
-                <div class="detail-value">${prov?.elevation_m ? prov.elevation_m + ' m' : '-'}</div>
-            </div>
-        </div>
-
-        <div class="grid-2">
-            <div class="card">
-                <div class="card-header"><h3><i class="fas fa-mountain"></i> Toprak Yapısı</h3></div>
-                <div class="card-body">
-                    ${(soil || []).length > 0 ? soil.map(s => `
-                        <div style="padding:12px;background:rgba(255,255,255,0.03);border-radius:8px;margin-bottom:8px;border:1px solid var(--border-color)">
-                            <div style="font-weight:600;margin-bottom:6px">${s.soil_type}</div>
-                            <div style="font-size:12px;color:var(--text-muted)">
-                                ${s.soil_texture ? `Doku: ${s.soil_texture}` : ''}
-                                ${s.ph_level ? ` | pH: ${s.ph_level}` : ''}
-                                ${s.organic_matter_pct ? ` | Organik Madde: %${s.organic_matter_pct}` : ''}
-                            </div>
-                            ${s.recommended_hp_range ? `<div style="font-size:12px;margin-top:6px;color:var(--brand-accent)">Önerilen HP: ${s.recommended_hp_range}</div>` : ''}
-                            ${s.recommended_tractor_type ? `<div style="font-size:12px;color:var(--success)">Önerilen Tip: ${translateLabel(s.recommended_tractor_type)}</div>` : ''}
-                        </div>
-                    `).join('') : '<div class="empty-state"><p>Toprak verisi bulunamadı</p></div>'}
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header"><h3><i class="fas fa-seedling"></i> Yetiştirilen Ekinler</h3></div>
-                <div class="card-body">
-                    ${(crops || []).length > 0 ? `
-                        <table class="data-table">
-                            <thead><tr><th>Ekin</th><th>Alan (ha)</th><th>Üretim (ton)</th><th>HP İhtiyacı</th></tr></thead>
-                            <tbody>
-                                ${crops.map(c => `
-                                    <tr>
-                                        <td style="font-weight:600">${c.crop_name}</td>
-                                        <td>${formatNumber(c.cultivation_area_hectare)}</td>
-                                        <td>${formatNumber(c.annual_production_tons)}</td>
-                                        <td>${c.requires_hp_min || '-'} - ${c.requires_hp_max || '-'} HP</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    ` : '<div class="empty-state"><p>Ekin verisi bulunamadı</p></div>'}
-                </div>
-            </div>
-        </div>
-    `;
-}
-
 // ============================================
 // WEATHER PAGE
 // ============================================
-async function loadWeatherPage() {
-    const content = document.getElementById('pageContent');
-    content.innerHTML = `
-        <div class="filter-bar">
-            <select id="weatherProvinceSelect" onchange="loadWeatherDetail()">
-                <option value="">İl Seçin</option>
-                ${allProvinces.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-            </select>
-        </div>
-        <div id="weatherContent">
-            <div class="empty-state">
-                <i class="fas fa-cloud-sun"></i>
-                <h3>Hava durumu görmek için il seçin</h3>
-                <p>7 günlük tahmin ve 10 yıllık iklim analizi görüntülenecek</p>
-            </div>
-        </div>
-    `;
-}
-
-async function loadWeatherDetail() {
-    const provId = document.getElementById('weatherProvinceSelect')?.value;
-    if (!provId) return;
-
-    const prov = allProvinces.find(p => p.id === parseInt(provId));
-    const [weather, forecast, climate] = await Promise.all([
-        API.getWeather(provId),
-        API.getWeatherForecast(provId),
-        API.getClimate(provId)
-    ]);
-
-    const wContent = document.getElementById('weatherContent');
-    wContent.innerHTML = `
-        <h3 style="margin-bottom:16px">${prov?.name} - Hava Durumu & İklim Analizi</h3>
-
-        <div class="card">
-            <div class="card-header"><h3><i class="fas fa-cloud-sun"></i> Önümüzdeki 7 Gün Tahmini</h3></div>
-            <div class="card-body">
-                ${(forecast || []).length > 0 ? `
-                    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px">
-                        ${forecast.map(f => `
-                            <div style="text-align:center;padding:16px 8px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid var(--border-color)">
-                                <div style="font-size:11px;color:var(--text-muted)">${new Date(f.date).toLocaleDateString('tr-TR', { weekday: 'short' })}</div>
-                                <div style="font-size:24px;margin:8px 0">${getWeatherIcon(f.weather_condition)}</div>
-                                <div style="font-size:16px;font-weight:700">${f.temp_max}°</div>
-                                <div style="font-size:12px;color:var(--text-muted)">${f.temp_min}°</div>
-                                ${f.rainfall_mm ? `<div style="font-size:11px;color:#06b6d4;margin-top:4px">${f.rainfall_mm}mm</div>` : ''}
-                            </div>
-                        `).join('')}
-                    </div>
-                ` : '<div class="empty-state"><p>Hava tahmini verisi bulunamadı. n8n workflow tetiklendiğinde veriler dolacaktır.</p></div>'}
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header"><h3><i class="fas fa-chart-area"></i> 10 Yıllık İklim Analizi</h3></div>
-            <div class="card-body">
-                ${(climate || []).length > 0 ? `
-                    <div class="chart-container large"><canvas id="climateChart"></canvas></div>
-                ` : '<div class="empty-state"><p>İklim analizi verisi bulunamadı. n8n AI ajanı tetiklendiğinde veriler dolacaktır.</p></div>'}
-            </div>
-        </div>
-    `;
-
-    if ((climate || []).length > 0) {
-        const years = [...new Set(climate.map(c => c.year))].sort();
-        const months = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
-
-        charts.climate = new Chart(document.getElementById('climateChart'), {
-            type: 'line',
-            data: {
-                labels: months,
-                datasets: years.slice(-5).map((year, i) => ({
-                    label: year.toString(),
-                    data: months.map((_, m) => {
-                        const d = climate.find(c => c.year === year && c.month === m + 1);
-                        return d ? parseFloat(d.avg_temp) : null;
-                    }),
-                    borderColor: `hsl(${i * 60}, 70%, 50%)`,
-                    tension: 0.3,
-                    pointRadius: 2,
-                    borderWidth: 2,
-                    fill: false
-                }))
-            },
-            options: chartOptions('°C')
-        });
-    }
-}
-
 function getWeatherIcon(condition) {
     const icons = { sunny: '☀️', clear: '☀️', cloudy: '☁️', rain: '🌧️', snow: '❄️', storm: '⛈️', fog: '🌫️' };
     return icons[condition?.toLowerCase()] || '🌤️';
@@ -9560,72 +8721,6 @@ function getWeatherIcon(condition) {
 // ============================================
 // AI INSIGHTS PAGE
 // ============================================
-async function loadAIInsightsPageLegacy() {
-    try {
-        const insights = await API.getInsights(currentUser?.brand_id);
-        const content = document.getElementById('pageContent');
-
-        content.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(96,165,250,0.15);color:#60a5fa"><i class="fas fa-robot"></i></div>
-                    <div class="stat-value">${(insights || []).length}</div>
-                    <div class="stat-label">Toplam AI Öngörü</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(34,197,94,0.15);color:#22c55e"><i class="fas fa-bullseye"></i></div>
-                    <div class="stat-value">${(insights || []).filter(i => i.insight_type === 'recommendation').length}</div>
-                    <div class="stat-label">Öneri</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-exclamation-triangle"></i></div>
-                    <div class="stat-value">${(insights || []).filter(i => i.insight_type === 'warning').length}</div>
-                    <div class="stat-label">Uyarı</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon" style="background:rgba(168,85,247,0.15);color:#a855f7"><i class="fas fa-lightbulb"></i></div>
-                    <div class="stat-value">${(insights || []).filter(i => i.insight_type === 'opportunity').length}</div>
-                    <div class="stat-label">Fırsat</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h3><i class="fas fa-robot"></i> AI Öngörüleri</h3>
-                    <span style="font-size:12px;color:var(--text-muted)">n8n AI Ajanları tarafından oluşturuluyor</span>
-                </div>
-                <div class="card-body">
-                    ${(insights || []).length > 0 ? insights.map(i => `
-                        <div class="insight-card">
-                            <div class="insight-type">${translateInsightType(i.insight_type)} ${i.confidence_score ? `| Güven: %${Math.round(i.confidence_score * 100)}` : ''}</div>
-                            <div class="insight-title">${i.title}</div>
-                            <div class="insight-content">${i.content}</div>
-                            <div class="insight-meta">
-                                ${i.brand_name ? `<span><i class="fas fa-tag"></i> ${i.brand_name}</span>` : ''}
-                                ${i.province_name ? `<span><i class="fas fa-map-marker-alt"></i> ${i.province_name}</span>` : ''}
-                                <span><i class="fas fa-clock"></i> ${new Date(i.created_at).toLocaleDateString('tr-TR')}</span>
-                            </div>
-                        </div>
-                    `).join('') : `
-                        <div class="empty-state">
-                            <i class="fas fa-robot"></i>
-                            <h3>Henüz AI öngörüsü yok</h3>
-                            <p>n8n AI ajanları çalıştırıldığında burada toprak analizi, ekin önerileri, satış tahminleri ve rakip analizleri görüntülenecek</p>
-                        </div>
-                    `}
-                </div>
-            </div>
-        `;
-    } catch (err) {
-        showError(err);
-    }
-}
-
-function translateInsightTypeLegacy(type) {
-    const map = { recommendation: '💡 Öneri', warning: '⚠️ Uyarı', opportunity: '🎯 Fırsat', analysis: '📊 Analiz', forecast: '🔮 Tahmin' };
-    return map[type] || type;
-}
-
 // ============================================
 // SUBSCRIPTION PAGE
 // ============================================
@@ -10699,7 +9794,7 @@ async function loadAIInsightsPage() {
         // Sayfa-içi sekme şeridi: 4 odaklı katman
         const activeTab = AIX_TABS.find(t => t.key === aiInsightsState.tab) ? aiInsightsState.tab : 'briefing';
         const tabStripHtml = AIX_TABS.map(t => `
-            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" onclick="onAiInsightsTabChange('${t.key}')">
+            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" onclick="onAiInsightsTabChange(${jsArg(t.key)})">
                 <i class="fas ${t.icon}"></i>
                 <span>${dashboardSafe(t.label)}</span>
             </button>
@@ -11683,932 +10778,6 @@ function buildMediaWatchHeroSummary(brand, overview, brief) {
     return `${brand?.name || 'Marka'} için ${overview.mentions_total || 0} medya kaydı, ${overview.complaint_count || 0} şikayet, ${overview.launch_count || 0} lansman ve ${overview.regulation_count || 0} resmî karar sinyali ${risk.label.toLocaleLowerCase('tr-TR')} modunda toplandı.`;
 }
 
-async function loadMediaWatchPageLegacy() {
-    try {
-        if (!allBrands || allBrands.length === 0) {
-            allBrands = await API.getBrands();
-        }
-
-        const state = ensureMediaWatchState();
-        const brandId = String(state.brand_id || getMediaWatchBrandId() || '');
-        if (!brandId) throw new Error('Marka secimi bulunamadi');
-
-        const selectedBrand = findBrandById(brandId) || allBrands.find(item => String(item.id) === brandId) || currentUser?.brand || null;
-        if (selectedBrand) {
-            setActiveBrandContext(selectedBrand, { persist: currentUser?.role === 'admin' });
-        }
-
-        const [overviewPayload, briefPayload, alertPayload, itemPayload, notificationPayload] = await Promise.all([
-            mediaWatchWithTimeout(API.getMediaWatchOverview(brandId), 'Medya Takip omurgasi'),
-            mediaWatchWithTimeout(API.getMediaWatchBrief(brandId), 'Medya Takip brifi').catch(() => null),
-            mediaWatchWithTimeout(API.getMediaWatchAlerts({
-                brand_id: brandId,
-                limit: 8
-            }), 'Medya Takip alarmlari').catch(() => []),
-            mediaWatchWithTimeout(API.getMediaWatchItems({
-                brand_id: brandId,
-                channel: state.channel,
-                type: state.type,
-                sentiment: state.sentiment,
-                search: state.search,
-                limit: state.limit
-            }), 'Medya Takip kayitlari').catch(() => []),
-            mediaWatchWithTimeout(API.getNotifications(), 'Medya Takip bildirimleri').catch(() => [])
-        ]);
-
-        const overview = overviewPayload?.overview || {};
-        const allItems = Array.isArray(overviewPayload?.items) ? overviewPayload.items : [];
-        const items = Array.isArray(itemPayload) && itemPayload.length
-            ? itemPayload
-            : (!state.channel && !state.type && !state.sentiment && !state.search ? allItems.slice(0, state.limit) : []);
-        const workflows = Array.isArray(overviewPayload?.workflows) ? overviewPayload.workflows : [];
-        const runs = Array.isArray(overviewPayload?.runs) ? overviewPayload.runs : [];
-        const latestBrief = briefPayload || overviewPayload?.latest_brief || null;
-        const alerts = Array.isArray(alertPayload) && alertPayload.length
-            ? alertPayload
-            : (Array.isArray(overviewPayload?.alerts) ? overviewPayload.alerts : []);
-        const briefSections = mediaWatchParseObject(latestBrief?.sections_json);
-        const briefSourceMix = mediaWatchParseObject(latestBrief?.source_mix_json);
-        const riskMeta = getMediaWatchRiskMeta(latestBrief?.risk_level || 'watch');
-        const theme = getBrandThemeProfile(overviewPayload?.brand || selectedBrand || activeBrandContext || {});
-        const hasCollectedData = Number(overview.mentions_total || 0) > 0;
-        const hasActiveFilter = Boolean(state.search || state.channel || state.type || state.sentiment);
-        const mediaNotifications = (Array.isArray(notificationPayload) ? notificationPayload : [])
-            .filter(item => item && item.type === 'media_watch_alert')
-            .filter(item => !item.brand_id || String(item.brand_id) === String(brandId))
-            .slice(0, 8);
-
-        const complaintItems = items.filter(item => item.item_type === 'complaint' || item.channel_type === 'complaint');
-        const launchItems = items.filter(item => ['launch', 'review', 'campaign'].includes(item.item_type));
-        const officialItems = items.filter(item => item.item_type === 'regulation' || ['official', 'report'].includes(item.channel_type));
-        const criticalItems = items.filter(item => Number(item.severity_score || 0) >= 0.75);
-        const filteredTopicMix = buildMediaWatchCountRows(items.flatMap(item => mediaWatchParseArray(item.topics_json).map(topic => ({ topic }))), item => item.topic, 8);
-        const filteredProductMix = buildMediaWatchCountRows(items, item => item.product_name || item.model_name, 6);
-        const filteredComplaintMix = buildMediaWatchCountRows(complaintItems, item => item.complaint_area || item.issue_type || item.product_name || item.model_name, 6);
-        const channelMix = (overview.channel_mix || []).length ? overview.channel_mix : buildMediaWatchCountRows(allItems, item => item.channel_type, 6);
-        const sourceMix = (overview.source_mix || []).length ? overview.source_mix : buildMediaWatchCountRows(allItems, item => item.source_name || item.source_domain, 6);
-        const productMix = (overview.product_mix || []).length ? overview.product_mix : filteredProductMix;
-        const complaintMix = (overview.complaint_mix || []).length ? overview.complaint_mix : filteredComplaintMix;
-        const topicMix = (overview.topic_mix || []).length ? overview.topic_mix : filteredTopicMix;
-        const alertMix = (overview.alert_mix || []).length ? overview.alert_mix : buildMediaWatchCountRows(alerts, item => item.alert_type, 6);
-
-        const heroSummary = buildMediaWatchHeroSummary(selectedBrand, overview, latestBrief);
-        const filterHelperText = !hasCollectedData
-            ? 'Arama butonu çalışıyor; ancak bu alan internette canlı tarama yapmaz. Sadece sisteme alınmış medya kayıtlarını filtreler. Şu an veri tabanında medya kaydı yok, önce n8n ingest akışı veri toplamalıdır.'
-            : hasActiveFilter
-                ? `Filtreler ${formatNumber(items.length || 0)} kaydı gösteriyor. Arama sadece toplanmış kayıtlar üzerinde çalışır.`
-                : 'Arama alanı sisteme alınmış medya kayıtlarını başlık, özet ve içerik metnine göre filtreler.';
-
-        const emptyDataMessage = !hasCollectedData
-            ? 'Sistemde henüz medya kaydı yok. Arama alanı yalnızca toplanmış kayıtlarda çalışır; ilk sonuç için n8n veri akışı gereklidir.'
-            : hasActiveFilter
-                ? 'Seçili filtre veya arama metnine uyan kayıt bulunamadı.'
-                : 'Bu katman için gösterilecek kayıt bulunamadı.';
-
-        const stageHtml = buildBrandStageHtml(theme, {
-            title: `${theme.name || selectedBrand?.name || 'Marka'} medya takip komuta merkezi`,
-            summary: localizeMediaWatchDisplayText(heroSummary),
-            compareCopy: `${overview.active_source_count || 0} aktif kaynak · ${overview.open_alert_count || 0} açık alarm · ${formatMediaWatchRelative(overview.last_published_at)} son yayın`
-        });
-
-        const channelOptions = [
-            { value: '', label: 'Tüm kanallar' },
-            { value: 'social', label: 'Sosyal medya' },
-            { value: 'news', label: 'Tarım haberi' },
-            { value: 'forum', label: 'Forum' },
-            { value: 'complaint', label: 'Şikayet' },
-            { value: 'official', label: 'Resmî karar' },
-            { value: 'video', label: 'Video' },
-            { value: 'report', label: 'Sektör raporu' }
-        ].map(item => `<option value="${item.value}" ${item.value === state.channel ? 'selected' : ''}>${item.label}</option>`).join('');
-
-        const typeOptions = [
-            { value: '', label: 'Tüm sinyaller' },
-            { value: 'launch', label: 'Lansman / yeni ürün' },
-            { value: 'complaint', label: 'Şikayet / arıza' },
-            { value: 'regulation', label: 'Karar / destek' },
-            { value: 'review', label: 'İnceleme / yorum' },
-            { value: 'campaign', label: 'Kampanya' },
-            { value: 'service', label: 'Servis / yedek parça' },
-            { value: 'discussion', label: 'Tartışma' },
-            { value: 'news', label: 'Gündem' }
-        ].map(item => `<option value="${item.value}" ${item.value === state.type ? 'selected' : ''}>${item.label}</option>`).join('');
-
-        const sentimentOptions = [
-            { value: '', label: 'Tüm duygu durumları' },
-            { value: 'negative', label: 'Negatif' },
-            { value: 'mixed', label: 'Karışık' },
-            { value: 'neutral', label: 'Nötr' },
-            { value: 'positive', label: 'Pozitif' }
-        ].map(item => `<option value="${item.value}" ${item.value === state.sentiment ? 'selected' : ''}>${item.label}</option>`).join('');
-
-        const brandOptions = (currentUser?.role === 'admin'
-            ? allBrands
-            : [findBrandById(currentUser?.brand_id) || currentUser?.brand].filter(Boolean)
-        ).map(item => `<option value="${item.id}" ${String(item.id) === brandId ? 'selected' : ''}>${dashboardSafe(item.name)}</option>`).join('');
-
-        const chipRows = [
-            { label: 'Risk seviyesi', value: riskMeta.label },
-            { label: 'Son yayın', value: formatMediaWatchDate(overview.last_published_at) },
-            { label: 'Son koşu', value: runs[0]?.started_at ? formatMediaWatchRelative(runs[0].started_at) : 'Koşu bekleniyor' },
-            { label: 'AI modeli', value: latestBrief?.ai_model || 'rule-based' },
-            { label: 'Filtrelenen kayıt', value: `${formatNumber(items.length || 0)}` },
-            { label: 'Aktif kaynak', value: `${formatNumber(overview.active_source_count || 0)}` }
-        ];
-
-        const kpiCards = [
-            {
-                label: '24 saat görünürlük',
-                value: `${formatNumber(overview.mentions_24h || 0)}`,
-                note: 'Geçen 24 saatte toplanan marka kaydı',
-                tone: 'is-analysis'
-            },
-            {
-                label: 'Toplam medya izi',
-                value: `${formatNumber(overview.mentions_total || 0)}`,
-                note: `${formatNumber(overview.active_source_count || 0)} kaynakta dağılım`,
-                tone: 'is-neutral'
-            },
-            {
-                label: 'Açık alarm',
-                value: `${formatNumber(overview.open_alert_count || 0)}`,
-                note: `${formatNumber(overview.critical_alert_count || 0)} kritik · ${formatNumber(overview.warning_alert_count || 0)} yakın izleme`,
-                tone: (overview.critical_alert_count || 0) > 0 ? 'is-negative' : (overview.warning_alert_count || 0) > 0 ? 'is-warning' : 'is-positive'
-            },
-            {
-                label: 'Şikayet / arıza',
-                value: `${formatNumber(overview.complaint_count || 0)}`,
-                note: mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1),
-                tone: (overview.complaint_count || 0) >= 8 ? 'is-warning' : 'is-analysis'
-            },
-            {
-                label: 'Lansman / inceleme',
-                value: `${formatNumber(overview.launch_count || 0)}`,
-                note: 'Yeni ürün, inceleme ve kampanya akışı',
-                tone: 'is-opportunity'
-            },
-            {
-                label: 'Resmî karar / destek',
-                value: `${formatNumber(overview.regulation_count || 0)}`,
-                note: 'Bakanlık ve mevzuat sinyalleri',
-                tone: 'is-official'
-            },
-            {
-                label: 'Kritik kayıt',
-                value: `${formatNumber(overview.critical_count || 0)}`,
-                note: 'Yüksek etki skoru taşıyan başlıklar',
-                tone: (overview.critical_count || 0) > 0 ? 'is-negative' : 'is-positive'
-            },
-            {
-                label: 'Canlı feed',
-                value: items[0]?.source_name || items[0]?.source_domain || '-',
-                note: items[0]?.published_at ? formatMediaWatchDate(items[0].published_at, true) : 'Kayıt bekleniyor',
-                tone: 'is-analysis'
-            },
-            {
-                label: 'n8n koşu sağlığı',
-                value: runs[0] ? getMediaWatchRunMeta(runs[0].status).label : 'Kurulum bekliyor',
-                note: runs[0]?.item_count ? `${formatNumber(runs[0].item_count)} kayıt` : 'Akış bağlantısı kontrol edilmeli',
-                tone: runs[0] ? getMediaWatchRunMeta(runs[0].status).tone : 'is-warning'
-            }
-        ];
-
-        const barListHtml = (rows, total) => rows.length > 0
-            ? rows.map(item => `
-                <div class="mtw-bar-row">
-                    <div class="mtw-bar-copy">
-                        <strong>${dashboardSafe(item.label || '-')}</strong>
-                        <small>${formatNumber(item.count || 0)} kayıt</small>
-                    </div>
-                    <div class="mtw-bar-track">
-                        <div class="mtw-bar-fill" style="width:${Math.max(8, Math.min(100, Math.round(((item.count || 0) / Math.max(1, total || 1)) * 100)))}%"></div>
-                    </div>
-                </div>
-            `).join('')
-            : '<div class="mtw-empty">Henüz sinyal kaydı bulunmuyor.</div>';
-
-        const executiveSummaryHtml = latestBrief?.executive_summary_md
-            ? mediaWatchMarkdownToHtml(latestBrief.executive_summary_md)
-            : '<div class="mtw-empty">Bu marka için henüz yönetici brifi üretilmedi. n8n akışı kayıt toplamaya başladığında AI brifini üretebilirsiniz.</div>';
-
-        const sectionCards = [
-            { key: 'board_brief_md', title: 'Üst yönetim', icon: 'fa-building-columns' },
-            { key: 'marketing_md', title: 'Pazarlama', icon: 'fa-bullhorn' },
-            { key: 'arge_md', title: 'Ar-Ge', icon: 'fa-gears' },
-            { key: 'aftersales_md', title: 'Satış sonrası', icon: 'fa-headset' },
-            { key: 'issue_solutions_md', title: 'Arıza çözümleri', icon: 'fa-screwdriver-wrench' },
-            { key: 'monitoring_gaps_md', title: 'İzleme açıkları', icon: 'fa-satellite-dish' }
-        ].map(section => `
-            <article class="mtw-section-card">
-                <div class="mtw-section-head">
-                    <span><i class="fas ${section.icon}"></i>${section.title}</span>
-                </div>
-                <div class="mtw-section-body">
-                    ${briefSections[section.key] ? mediaWatchMarkdownToHtml(briefSections[section.key]) : '<div class="mtw-empty">Bu katman için AI notu henüz oluşmadı.</div>'}
-                </div>
-            </article>
-        `).join('');
-
-        const topAlert = alerts[0] || null;
-        const latestItem = items[0] || allItems[0] || null;
-        const latestItemTypeMeta = latestItem ? getMediaWatchTypeMeta(latestItem.item_type) : getMediaWatchTypeMeta('news');
-        const topComplaintLabel = complaintMix[0]?.label || complaintItems[0]?.complaint_area || complaintItems[0]?.issue_type || 'Belirgin sikayet ekseni yok';
-        const topSourceLabel = sourceMix[0]?.label || latestItem?.source_name || latestItem?.source_domain || 'Kaynak bekleniyor';
-        const topTopicLabel = topicMix[0]?.label || 'Belirgin konu yok';
-        const latestSignalText = overview.last_published_at ? formatMediaWatchRelative(overview.last_published_at) : 'Guncel yayin bekleniyor';
-        const latestSignalNote = latestItem
-            ? `${latestItem.source_name || latestItem.source_domain || '-'} · ${latestItemTypeMeta.label}`
-            : 'Yeni medya kaydi bekleniyor';
-
-        const heroChipRows = [
-            { label: 'Risk seviyesi', value: riskMeta.label },
-            { label: 'Son yayin', value: formatMediaWatchDate(overview.last_published_at) },
-            { label: 'Son kosu', value: runs[0]?.started_at ? formatMediaWatchRelative(runs[0].started_at) : 'Kosu bekleniyor' },
-            { label: 'Aktif kaynak', value: `${formatNumber(overview.active_source_count || 0)}` }
-        ];
-
-        const focusCards = [
-            {
-                label: 'Acik alarm',
-                value: `${formatNumber(overview.open_alert_count || 0)}`,
-                note: `${formatNumber(overview.critical_alert_count || 0)} kritik · ${formatNumber(overview.warning_alert_count || 0)} yakin izleme`,
-                tone: (overview.critical_alert_count || 0) > 0 ? 'is-negative' : (overview.warning_alert_count || 0) > 0 ? 'is-warning' : 'is-positive'
-            },
-            {
-                label: '24 saat hareket',
-                value: `${formatNumber(overview.mentions_24h || 0)}`,
-                note: overview.last_published_at ? `${formatMediaWatchRelative(overview.last_published_at)} son yayin` : 'Son 24 saatte yeni yayin yok',
-                tone: (overview.mentions_24h || 0) > 0 ? 'is-analysis' : 'is-neutral'
-            },
-            {
-                label: 'Sikayet baskisi',
-                value: `${formatNumber(overview.complaint_count || 0)}`,
-                note: `${mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1)} · ${topComplaintLabel}`,
-                tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-positive'
-            },
-            {
-                label: 'Aktif kaynak',
-                value: `${formatNumber(overview.active_source_count || 0)}`,
-                note: `${topSourceLabel} en yogun kaynak`,
-                tone: 'is-analysis'
-            }
-        ];
-
-        const decisionSectionCards = [
-            { key: 'board_brief_md', title: 'Ust yonetim', icon: 'fa-building-columns' },
-            { key: 'marketing_md', title: 'Pazarlama', icon: 'fa-bullhorn' },
-            { key: 'arge_md', title: 'Ar-Ge', icon: 'fa-gears' },
-            { key: 'aftersales_md', title: 'Satis sonrasi', icon: 'fa-headset' }
-        ].map(section => `
-            <article class="mtw-section-card">
-                <div class="mtw-section-head">
-                    <span><i class="fas ${section.icon}"></i>${mediaWatchSafe(section.title)}</span>
-                </div>
-                <div class="mtw-section-body">
-                    ${briefSections[section.key] ? mediaWatchMarkdownToHtml(briefSections[section.key]) : '<div class="mtw-empty">Bu katman icin AI notu henuz olusmadi.</div>'}
-                </div>
-            </article>
-        `).join('');
-
-        const priorityCardsHtml = [
-            {
-                label: 'Risk fotografi',
-                value: riskMeta.label,
-                note: topAlert
-                    ? `${getMediaWatchAlertTypeMeta(topAlert.alert_type).label}: ${String(topAlert.title || topAlert.summary || '').slice(0, 120)}`
-                    : 'Su an acik kritik alarm baskisi yok.',
-                tone: topAlert ? getMediaWatchRiskMeta(topAlert.alert_level).tone : riskMeta.tone
-            },
-            {
-                label: 'En yogun geri bildirim',
-                value: topComplaintLabel,
-                note: `${formatNumber(overview.complaint_count || 0)} sikayet kaydi · ${mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1)} pay`,
-                tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-positive'
-            },
-            {
-                label: 'Son guncel sinyal',
-                value: latestSignalText,
-                note: latestSignalNote,
-                tone: latestItem ? 'is-analysis' : 'is-neutral'
-            },
-            {
-                label: 'Markaya etki eden konu',
-                value: topTopicLabel,
-                note: `${formatNumber(overview.mentions_total || 0)} toplam kayit icinde en cok tekrar eden eksen`,
-                tone: 'is-neutral'
-            }
-        ].map(item => `
-            <article class="mtw-story-card mtw-priority-item ${item.tone}">
-                <div class="mtw-priority-head">
-                    <span class="mtw-badge ${item.tone}">${mediaWatchSafe(item.label)}</span>
-                    <strong>${mediaWatchSafe(item.value)}</strong>
-                </div>
-                <p>${mediaWatchSafe(item.note)}</p>
-            </article>
-        `).join('');
-
-        const quickAccessCardsHtml = [
-            {
-                label: 'Acik alarmlar',
-                value: `${formatNumber(overview.open_alert_count || 0)}`,
-                note: topAlert
-                    ? `${getMediaWatchAlertTypeMeta(topAlert.alert_type).label}: ${String(topAlert.title || '').slice(0, 110)}`
-                    : 'Alarm listesinde acil baslik yok.',
-                cta: 'Alarm listesine git',
-                action: `jumpMediaWatchSection('mediaWatchAlertsSection')`,
-                tone: (overview.critical_alert_count || 0) > 0 ? 'is-negative' : 'is-warning'
-            },
-            {
-                label: 'Sikayet / ariza',
-                value: `${formatNumber(overview.complaint_count || 0)}`,
-                note: `${topComplaintLabel} · ${mediaWatchPercent(overview.complaint_count || 0, overview.mentions_total || 0, 1)}`,
-                cta: 'Sikayet radarini ac',
-                action: `jumpMediaWatchSection('mediaWatchComplaintSection')`,
-                tone: (overview.complaint_count || 0) > 0 ? 'is-warning' : 'is-neutral'
-            },
-            {
-                label: 'Resmi karar / destek',
-                value: `${formatNumber(overview.regulation_count || 0)}`,
-                note: officialItems[0] ? String(officialItems[0].title || '').slice(0, 110) : 'Su an resmi karar sinyali yok.',
-                cta: 'Resmi kayitlari ac',
-                action: `jumpMediaWatchSection('mediaWatchOfficialSection')`,
-                tone: (overview.regulation_count || 0) > 0 ? 'is-official' : 'is-neutral'
-            },
-            {
-                label: 'Lansman / inceleme',
-                value: `${formatNumber(launchItems.length || 0)}`,
-                note: launchItems[0] ? String(launchItems[0].title || '').slice(0, 110) : 'Su an yeni urun veya inceleme sinyali yok.',
-                cta: 'Urun gundemini ac',
-                action: `jumpMediaWatchSection('mediaWatchLaunchSection')`,
-                tone: (launchItems.length || 0) > 0 ? 'is-opportunity' : 'is-neutral'
-            }
-        ].map(item => `
-            <article class="mtw-story-card mtw-quick-card ${item.tone}">
-                <div class="mtw-quick-top">
-                    <span>${mediaWatchSafe(item.label)}</span>
-                    <strong>${mediaWatchSafe(item.value)}</strong>
-                </div>
-                <p>${mediaWatchSafe(item.note)}</p>
-                <button type="button" class="btn-filter" onclick="${item.action}">${mediaWatchSafe(item.cta)}</button>
-            </article>
-        `).join('');
-
-        const filterPresetButtonsHtml = [
-            { label: 'Tum kayitlar', preset: 'all' },
-            { label: 'Sadece sikayet', preset: 'complaint' },
-            { label: 'Resmi kararlar', preset: 'official' },
-            { label: 'Lansmanlar', preset: 'launch' },
-            { label: 'Negatif duygu', preset: 'negative' },
-            { label: 'Sosyal medya', preset: 'social' },
-            { label: 'Forum', preset: 'forum' },
-            { label: 'Video', preset: 'video' }
-        ].map(item => `
-            <button type="button" class="btn-filter" onclick="applyMediaWatchPreset('${item.preset}', 'mediaWatchFeedSection')">${mediaWatchSafe(item.label)}</button>
-        `).join('');
-
-        const opsBriefCardsHtml = [
-            { key: 'issue_solutions_md', title: 'Ariza cozumu notu', icon: 'fa-screwdriver-wrench' },
-            { key: 'monitoring_gaps_md', title: 'Izleme aciklari', icon: 'fa-satellite-dish' }
-        ].map(section => `
-            <article class="mtw-section-card">
-                <div class="mtw-section-head">
-                    <span><i class="fas ${section.icon}"></i>${mediaWatchSafe(section.title)}</span>
-                </div>
-                <div class="mtw-section-body">
-                    ${briefSections[section.key] ? mediaWatchMarkdownToHtml(briefSections[section.key]) : '<div class="mtw-empty">Bu operasyon notu icin AI cikti henuz olusmadi.</div>'}
-                </div>
-            </article>
-        `).join('');
-
-        const complaintTableHtml = complaintItems.length > 0
-            ? complaintItems.slice(0, 8).map(item => {
-                const sentimentMeta = getMediaWatchSentimentMeta(item.sentiment_label);
-                return `
-                    <tr>
-                        <td>
-                            <strong>${mediaWatchSafe(item.title || item.issue_type || 'Şikayet kaydı')}</strong>
-                            <small>${mediaWatchSafe(item.complaint_area || item.issue_type || item.product_name || item.model_name || 'Genel eksen')}</small>
-                        </td>
-                        <td>${mediaWatchSafe(item.product_name || item.model_name || '-')}</td>
-                        <td>${mediaWatchSafe(item.platform_name || item.source_domain || item.channel_type || '-')}</td>
-                        <td><span class="mtw-badge ${sentimentMeta.tone}">${sentimentMeta.label}</span></td>
-                        <td>${item.severity_score != null ? `${Math.round(Number(item.severity_score || 0) * 100)}/100` : '-'}</td>
-                    </tr>
-                `;
-            }).join('')
-            : `<tr><td colspan="5" class="mtw-table-empty">${mediaWatchSafe(!hasCollectedData ? 'Şikayet veya arıza kaydı henüz toplanmadı.' : 'Filtreye uygun şikayet veya arıza kaydı bulunamadı.')}</td></tr>`;
-
-        const launchCardsHtml = launchItems.length > 0
-            ? launchItems.slice(0, 6).map(item => {
-                const typeMeta = getMediaWatchTypeMeta(item.item_type);
-                return `
-                    <article class="mtw-story-card ${typeMeta.tone}">
-                        <div class="mtw-story-head">
-                            <span class="mtw-badge ${typeMeta.tone}">${typeMeta.label}</span>
-                            <small>${formatMediaWatchDate(item.published_at)}</small>
-                        </div>
-                        <h4>${mediaWatchSafe(item.title || 'Lansman kaydı')}</h4>
-                        <p>${mediaWatchSafe(item.summary || item.ai_summary || item.content_text || 'Özet bekleniyor.').slice(0, 220)}</p>
-                        <div class="mtw-story-meta">
-                            <span>${mediaWatchSafe(item.product_name || item.model_name || item.source_name || '-')}</span>
-                            <span>${mediaWatchSafe(item.platform_name || item.source_domain || '-')}</span>
-                        </div>
-                        <a class="mtw-link" href="${dashboardSafe(item.source_url)}" target="_blank" rel="noreferrer">Kaynağı aç</a>
-                    </article>
-                `;
-            }).join('')
-            : `<div class="mtw-empty">${mediaWatchSafe(!hasCollectedData ? 'Yeni ürün, inceleme veya kampanya kaydı henüz toplanmadı.' : 'Yeni ürün, inceleme veya kampanya kaydı bulunamadı.')}</div>`;
-
-        const officialCardsHtml = officialItems.length > 0
-            ? officialItems.slice(0, 6).map(item => `
-                <article class="mtw-story-card is-official">
-                    <div class="mtw-story-head">
-                        <span class="mtw-badge is-official">${getMediaWatchChannelMeta(item.channel_type).label}</span>
-                        <small>${formatMediaWatchDate(item.published_at)}</small>
-                    </div>
-                    <h4>${mediaWatchSafe(item.title || 'Resmî gündem')}</h4>
-                    <p>${mediaWatchSafe(item.summary || item.ai_summary || item.content_text || 'Özet bekleniyor.').slice(0, 220)}</p>
-                    <div class="mtw-story-meta">
-                        <span>${mediaWatchSafe(item.source_name || item.source_domain || '-')}</span>
-                        <span>${mediaWatchSafe(item.country_code || 'TR')}</span>
-                    </div>
-                    <a class="mtw-link" href="${dashboardSafe(item.source_url)}" target="_blank" rel="noreferrer">Detayı aç</a>
-                </article>
-            `).join('')
-            : `<div class="mtw-empty">${mediaWatchSafe(!hasCollectedData ? 'Resmî karar, destek veya sektör raporu kaydı henüz toplanmadı.' : 'Resmî karar, destek veya sektör raporu kaydı bulunamadı.')}</div>`;
-
-        const alertCardsHtml = alerts.length > 0
-            ? alerts.slice(0, 6).map(item => {
-                const levelMeta = getMediaWatchRiskMeta(item.alert_level);
-                const typeMeta = getMediaWatchAlertTypeMeta(item.alert_type);
-                return `
-                    <article class="mtw-story-card ${levelMeta.tone}">
-                        <div class="mtw-story-head">
-                            <span class="mtw-badge ${levelMeta.tone}">${levelMeta.label}</span>
-                            <small>${formatMediaWatchDate(item.last_seen_at || item.updated_at, true)}</small>
-                        </div>
-                        <h4>${mediaWatchSafe(item.title || 'Medya alarmı')}</h4>
-                        <p>${mediaWatchSafe(item.summary || 'Alarm özeti hazırlanıyor.').slice(0, 240)}</p>
-                        <div class="mtw-story-meta">
-                            <span>${mediaWatchSafe(typeMeta.label)}</span>
-                            <span>${mediaWatchSafe(item.action_owner || 'Üst yönetim')}</span>
-                        </div>
-                        <div class="mtw-alert-meta">
-                            <span>${formatNumber(item.item_count || 0)} kayıt</span>
-                            <span>${formatNumber(item.source_count || 0)} kaynak</span>
-                            <span>${Math.round(Number(item.average_severity || 0) * 100)}/100 etki</span>
-                        </div>
-                    </article>
-                `;
-            }).join('')
-            : '<div class="mtw-empty">Açık alarm kaydı yok. Alarm katmanı ingest geldikçe otomatik güncellenir.</div>';
-
-        const feedHtml = items.length > 0
-            ? items.slice(0, 14).map(item => {
-                const channelMeta = getMediaWatchChannelMeta(item.channel_type);
-                const typeMeta = getMediaWatchTypeMeta(item.item_type);
-                const sentimentMeta = getMediaWatchSentimentMeta(item.sentiment_label);
-                const engagementLabel = formatMediaWatchEngagement(item.engagement_json);
-                const tagRows = [
-                    ...(mediaWatchParseArray(item.tags_json).slice(0, 3)),
-                    ...(mediaWatchParseArray(item.topics_json).slice(0, 2))
-                ].slice(0, 4);
-
-                return `
-                    <article class="mtw-feed-card">
-                        <div class="mtw-feed-head">
-                            <div class="mtw-feed-badges">
-                                <span class="mtw-badge ${channelMeta.tone}">${channelMeta.label}</span>
-                                <span class="mtw-badge ${typeMeta.tone}">${typeMeta.label}</span>
-                                <span class="mtw-badge ${sentimentMeta.tone}">${sentimentMeta.label}</span>
-                            </div>
-                            <small>${formatMediaWatchDate(item.published_at, true)}</small>
-                        </div>
-                        <h4>${mediaWatchSafe(item.title || '-')}</h4>
-                        <p>${mediaWatchSafe(item.ai_summary || item.summary || item.content_text || 'Özet bekleniyor.').slice(0, 320)}</p>
-                        <div class="mtw-feed-meta">
-                            <span>${mediaWatchSafe(item.source_name || item.source_domain || '-')}</span>
-                            ${item.product_name || item.model_name ? `<span>${mediaWatchSafe(item.product_name || item.model_name)}</span>` : ''}
-                            ${item.complaint_area || item.issue_type ? `<span>${mediaWatchSafe(item.complaint_area || item.issue_type)}</span>` : ''}
-                            ${engagementLabel ? `<span>${mediaWatchSafe(engagementLabel)}</span>` : ''}
-                        </div>
-                        ${tagRows.length ? `<div class="mtw-tag-row">${tagRows.map(tag => `<span class="mtw-tag">${mediaWatchSafe(tag)}</span>`).join('')}</div>` : ''}
-                        <div class="mtw-feed-actions">
-                            <span>${formatMediaWatchRelative(item.published_at || item.created_at)}</span>
-                            <a class="mtw-link" href="${dashboardSafe(item.source_url)}" target="_blank" rel="noreferrer">Kaynağı aç</a>
-                        </div>
-                    </article>
-                `;
-            }).join('')
-            : `<div class="mtw-empty">${mediaWatchSafe(emptyDataMessage)}</div>`;
-
-        const solutionCardsHtml = complaintItems.length > 0
-            ? complaintItems.slice(0, 6).map(item => `
-                <article class="mtw-solution-card">
-                    <div class="mtw-story-head">
-                        <span class="mtw-badge is-warning">${mediaWatchSafe(item.complaint_area || item.issue_type || 'Saha geri bildirimi')}</span>
-                        <small>${mediaWatchSafe(item.product_name || item.model_name || 'Marka geneli')}</small>
-                    </div>
-                    <h4>${mediaWatchSafe(item.title || 'Servis çözüm kartı')}</h4>
-                    <p>${mediaWatchSafe(buildMediaWatchSolutionCopy(item))}</p>
-                </article>
-            `).join('')
-            : `<div class="mtw-empty">${mediaWatchSafe(!hasCollectedData ? 'Çözüm kartı üretecek servis veya arıza verisi henüz toplanmadı.' : 'Çözüm kartı oluşturacak servis veya arıza kaydı bulunamadı.')}</div>`;
-
-        const workflowCards = workflows.length > 0 ? workflows : [
-            { title: 'Tarım haber ağı', description: 'RSS, haber siteleri ve tarım gündemi kaynakları', schedule: 'Saatlik', status: 'recommended' },
-            { title: 'Sosyal medya mention', description: 'X, Instagram, Facebook, YouTube ve video yorum akışı', schedule: '15 dakikada bir', status: 'recommended' },
-            { title: 'Forum + şikayet takibi', description: 'Forum başlıkları, şikayet platformları ve servis geri bildirimleri', schedule: '30 dakikada bir', status: 'recommended' },
-            { title: 'Resmî karar monitörü', description: 'Bakanlık kararları, destek programları, tebliğ ve raporlar', schedule: 'Günlük', status: 'recommended' }
-        ];
-
-        const workflowHtml = workflowCards.map(item => {
-            const runMeta = getMediaWatchRunMeta(item.status || 'recommended');
-            return `
-                <article class="mtw-workflow-card">
-                    <div class="mtw-story-head">
-                        <span class="mtw-badge ${runMeta.tone}">${runMeta.label}</span>
-                        <small>${mediaWatchSafe(item.schedule || 'Plan yok')}</small>
-                    </div>
-                    <h4>${mediaWatchSafe(item.title || 'n8n akışı')}</h4>
-                    <p>${mediaWatchSafe(item.description || 'Açıklama bulunamadı.')}</p>
-                    <div class="mtw-feed-meta">
-                        ${item.n8n_workflow_id ? `<span>Workflow #${dashboardSafe(item.n8n_workflow_id)}</span>` : '<span>Hazır blueprint</span>'}
-                        ${item.last_run ? `<span>${formatMediaWatchDate(item.last_run, true)}</span>` : '<span>İlk koşu bekleniyor</span>'}
-                    </div>
-                </article>
-            `;
-        }).join('');
-
-        const runRowsHtml = runs.length > 0
-            ? runs.slice(0, 8).map(item => {
-                const runMeta = getMediaWatchRunMeta(item.status);
-                return `
-                    <div class="mtw-run-row">
-                        <div>
-                            <strong>${dashboardSafe(item.workflow_code || item.run_key || 'media-watch')}</strong>
-                            <small>${formatMediaWatchDate(item.started_at, true)}</small>
-                        </div>
-                        <div>
-                            <span class="mtw-badge ${runMeta.tone}">${runMeta.label}</span>
-                            <small>${item.item_count ? `${formatNumber(item.item_count)} kayıt` : 'Kayıt yok'}</small>
-                        </div>
-                    </div>
-                `;
-            }).join('')
-            : '<div class="mtw-empty">Henüz kayıtlı n8n koşusu bulunmuyor.</div>';
-
-        const unreadNotificationCount = mediaNotifications.filter(item => !item.is_read).length;
-        const notificationCardsHtml = mediaNotifications.length > 0
-            ? mediaNotifications.map(item => {
-                const data = mediaWatchParseObject(item.data_json);
-                const notificationLevel = data.alert_level || ((item.title || '').includes('Kritik') ? 'critical' : 'warning');
-                const levelMeta = getMediaWatchRiskMeta(notificationLevel);
-                return `
-                    <article class="mtw-story-card ${item.is_read ? 'is-neutral' : levelMeta.tone}">
-                        <div class="mtw-story-head">
-                            <span class="mtw-badge ${item.is_read ? 'is-neutral' : levelMeta.tone}">${item.is_read ? 'Okundu' : 'Yeni bildirim'}</span>
-                            <small>${formatMediaWatchDate(item.created_at, true)}</small>
-                        </div>
-                        <h4>${mediaWatchSafe(item.title || 'Medya alarm bildirimi')}</h4>
-                        <p>${mediaWatchSafe(item.body || 'Bildirim detayı hazırlanıyor.').slice(0, 260)}</p>
-                        <div class="mtw-story-meta">
-                            <span>${mediaWatchSafe(data.action_owner || 'Aksiyon sahibi bekleniyor')}</span>
-                            <span>${data.item_count ? `${formatNumber(data.item_count)} kayıt` : 'Kayıt sayısı yok'}</span>
-                        </div>
-                        ${item.is_read ? '' : `<button type="button" class="btn-filter" onclick="markMediaWatchNotificationRead(${Number(item.id)})">Okundu olarak işaretle</button>`}
-                    </article>
-                `;
-            }).join('')
-            : '<div class="mtw-empty">Bu marka için medya alarm bildirimi bulunmuyor.</div>';
-
-        const content = document.getElementById('pageContent');
-        content.innerHTML = `
-            <div class="mtw-shell">
-                <section class="mtw-hero">
-                    <div class="mtw-hero-shell">
-                        <div class="mtw-copy">
-                            <div class="mtw-overline">Brand Media Intelligence</div>
-                            <h2>${dashboardSafe(selectedBrand?.name || 'Marka')} medya takip merkezi</h2>
-                            <p>${mediaWatchSafe(heroSummary)}</p>
-
-                            <div class="mtw-control-grid">
-                                <label class="mtw-field">
-                                    <span>Marka</span>
-                                    <select id="mediaWatchBrandSelect" onchange="onMediaWatchBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
-                                        ${brandOptions}
-                                    </select>
-                                </label>
-                                <label class="mtw-field">
-                                    <span>Brif penceresi</span>
-                                    <select id="mediaWatchWindowSelect" onchange="onMediaWatchWindowChange()">
-                                        <option value="7" ${Number(state.window_days) === 7 ? 'selected' : ''}>Son 7 gün</option>
-                                        <option value="14" ${Number(state.window_days) === 14 ? 'selected' : ''}>Son 14 gün</option>
-                                        <option value="30" ${Number(state.window_days) === 30 ? 'selected' : ''}>Son 30 gün</option>
-                                    </select>
-                                </label>
-                                <label class="mtw-field">
-                                    <span>Kanal</span>
-                                    <select id="mediaWatchChannelSelect" onchange="onMediaWatchFilterChange()">
-                                        ${channelOptions}
-                                    </select>
-                                </label>
-                                <label class="mtw-field">
-                                    <span>Sinyal tipi</span>
-                                    <select id="mediaWatchTypeSelect" onchange="onMediaWatchFilterChange()">
-                                        ${typeOptions}
-                                    </select>
-                                </label>
-                                <label class="mtw-field">
-                                    <span>Duygu durumu</span>
-                                    <select id="mediaWatchSentimentSelect" onchange="onMediaWatchFilterChange()">
-                                        ${sentimentOptions}
-                                    </select>
-                                </label>
-                                <label class="mtw-field mtw-field-search">
-                                    <span>Kayıt içi filtre</span>
-                                    <div class="mtw-search-row">
-                                        <input id="mediaWatchSearchInput" type="text" value="${dashboardSafe(state.search)}" placeholder="ürün, model, şikayet, haber..." onkeydown="onMediaWatchSearchKeydown(event)">
-                                        <button type="button" class="btn-filter" onclick="onMediaWatchFilterChange()"><i class="fas fa-search"></i>Filtrele</button>
-                                    </div>
-                                    <small class="mtw-field-help">${mediaWatchSafe(filterHelperText)}</small>
-                                </label>
-                            </div>
-
-                            <div class="mtw-action-row">
-                                <button type="button" class="btn-filter" id="mediaWatchCollectBtn" onclick="runMediaWatchCollection()">
-                                    <i class="fas fa-satellite-dish"></i><span>Kaynak taramasını başlat</span>
-                                </button>
-                                <button type="button" class="btn-filter" id="mediaWatchBriefBtn" onclick="refreshMediaWatchBrief()">
-                                    <i class="fas fa-brain"></i><span>AI üst yönetim brifi üret</span>
-                                </button>
-                                <button type="button" class="btn-filter" id="mediaWatchAlertBtn" onclick="rebuildMediaWatchAlerts()" style="background:rgba(239,68,68,0.1);color:#fecaca;">
-                                    <i class="fas fa-bell"></i><span>Alarm katmanını yenile</span>
-                                </button>
-                                <button type="button" class="btn-filter" onclick="clearMediaWatchFilters()" style="background:rgba(255,255,255,0.08);color:var(--text-primary);">
-                                    <i class="fas fa-rotate-left"></i><span>Filtreleri temizle</span>
-                                </button>
-                                <span class="mtw-status-text" id="mediaWatchStatus">n8n, webhook ve AI brif katmanı aynı merkezde çalışıyor.</span>
-                            </div>
-
-                            ${!hasCollectedData ? `
-                                <div class="mtw-setup-note">
-                                    <strong>Şu an veri yok</strong>
-                                    <p>Bu ekrandaki arama ve filtreler, yalnızca <code>media_watch_items</code> tablosuna düşen kayıtlarda çalışır. Şu anda toplam medya kaydı <b>0</b>. Canlı sonuç görmek için n8n tarafında kaynak toplayıcıların ve <code>/api/media-watch/ingest</code> akışının çalışması gerekiyor.</p>
-                                </div>
-                            ` : ''}
-
-                            <div class="mtw-chip-row">
-                                ${heroChipRows.map(item => `
-                                    <div class="mtw-chip">
-                                        <strong>${mediaWatchSafe(item.value || '-')}</strong>
-                                        <small>${mediaWatchSafe(item.label)}</small>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                        ${stageHtml}
-                    </div>
-                </section>
-
-                <section class="mtw-kpi-grid">
-                    ${kpiCards.map(item => `
-                        <article class="mtw-kpi ${dashboardSafe(item.tone)}">
-                            <span>${mediaWatchSafe(item.label)}</span>
-                            <strong>${mediaWatchSafe(item.value)}</strong>
-                            <small>${mediaWatchSafe(item.note)}</small>
-                        </article>
-                        `).join('')}
-                </section>
-
-                <section class="mtw-grid mtw-grid-main">
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Alarm komuta katmanı</h3>
-                                <p>Kritik şikayet, forum yoğunluğu, resmî etki ve lansman fırsatlarını tek listede önceliklendirir.</p>
-                            </div>
-                            <span class="mtw-badge ${(overview.critical_alert_count || 0) > 0 ? 'is-negative' : (overview.warning_alert_count || 0) > 0 ? 'is-warning' : 'is-positive'}">${formatNumber(overview.open_alert_count || 0)} açık alarm</span>
-                        </div>
-                        <div class="mtw-alert-grid">${alertCardsHtml}</div>
-                    </article>
-
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Sinyal paketleri</h3>
-                                <p>Pack-1 haber, resmî karar ve video; Pack-2 ise şikayet, forum ve sosyal web izlerini n8n akışına iter.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-side-stack">
-                            <div class="mtw-subpanel">
-                                <h4>Alarm karması</h4>
-                                <div class="mtw-tag-row">
-                                    ${alertMix.map(item => {
-                                        const meta = getMediaWatchAlertTypeMeta(item.label);
-                                        return `<span class="mtw-tag">${mediaWatchSafe(meta.label)} · ${formatNumber(item.count)}</span>`;
-                                    }).join('') || '<span class="mtw-tag">Alarm etiketi bekleniyor</span>'}
-                                </div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>Kaynak paketleri</h4>
-                                <div class="mtw-tag-row">
-                                    <span class="mtw-tag">Pack-1 · haber · resmî karar · video</span>
-                                    <span class="mtw-tag">Pack-2 · şikayet · forum · sosyal web</span>
-                                    <span class="mtw-tag">Pack-3 · resmî sosyal hesap · marka web</span>
-                                    <span class="mtw-tag">n8n · ingest · brief · alarm</span>
-                                </div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>Operasyon notu</h4>
-                                <p>Kaynak taramasını başlat butonu host bridge üzerinden pack-1, pack-2 ve pack-3 akışını birlikte tetikler. Ingest tamamlanınca alarm katmanı, bildirimler ve AI brifi aynı oturumda yenilenebilir.</p>
-                            </div>
-                        </div>
-                    </article>
-                </section>
-
-                <section class="mtw-grid mtw-grid-main">
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Yönetici brifi</h3>
-                                <p>Genel durum, üst yönetim, pazarlama, Ar-Ge ve satış sonrası için tek merkez karar notu.</p>
-                            </div>
-                            <span class="mtw-badge ${riskMeta.tone}">${riskMeta.label}</span>
-                        </div>
-                        <div class="mtw-brief-body">${executiveSummaryHtml}</div>
-                        <div class="mtw-section-grid">${sectionCards}</div>
-                    </article>
-
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>İzleme omurgası</h3>
-                                <p>Kanal karışımı, konu yoğunluğu ve n8n toplama akışının sağlık panosu.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-side-stack">
-                            <div class="mtw-subpanel">
-                                <h4>Kanal dağılımı</h4>
-                                <div class="mtw-bar-list">${barListHtml(channelMix, overview.mentions_total || 1)}</div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>Konu ve ürün radarı</h4>
-                                <div class="mtw-tag-row">
-                                    ${(topicMix.slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Konu etiketi bekleniyor</span>'}
-                                </div>
-                                <div class="mtw-tag-row">
-                                    ${(productMix.slice(0, 6)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Ürün / model yoğunluğu yok</span>'}
-                                </div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>n8n koşuları</h4>
-                                <div class="mtw-run-list">${runRowsHtml}</div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>Webhook sözleşmesi</h4>
-                                <p><code>/api/media-watch/ingest</code> üzerinden normalize edilmiş tüm marka kayıtları bu merkeze akar. Header: <code>x-media-watch-key</code>.</p>
-                            </div>
-                        </div>
-                    </article>
-                </section>
-
-                <section class="mtw-grid mtw-grid-main">
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Bildirim ve aksiyon kuyruğu</h3>
-                                <p>Açık medya alarm bildirimlerini, aksiyon sahibini ve okunma durumunu aynı katmanda toplar.</p>
-                            </div>
-                            <span class="mtw-badge ${unreadNotificationCount > 0 ? 'is-warning' : 'is-positive'}">${formatNumber(unreadNotificationCount)} okunmamış</span>
-                        </div>
-                        <div class="mtw-story-list">${notificationCardsHtml}</div>
-                    </article>
-
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Brif kaynak karışımı</h3>
-                                <p>Üst yönetime giden brifin hangi kanal, ürün ve sorun kümeleriyle beslendiğini özetler.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-side-stack">
-                            <div class="mtw-subpanel">
-                                <h4>Kanal karması</h4>
-                                <div class="mtw-tag-row">
-                                    ${(mediaWatchParseArray(briefSourceMix.channels).slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Brif kanal etiketi bekleniyor</span>'}
-                                </div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>Ürün / model kümesi</h4>
-                                <div class="mtw-tag-row">
-                                    ${(mediaWatchParseArray(briefSourceMix.products).slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Brif ürün etiketi bekleniyor</span>'}
-                                </div>
-                            </div>
-                            <div class="mtw-subpanel">
-                                <h4>Sorun ekseni</h4>
-                                <div class="mtw-tag-row">
-                                    ${(mediaWatchParseArray(briefSourceMix.issues).slice(0, 8)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Sorun etiketi bekleniyor</span>'}
-                                </div>
-                            </div>
-                        </div>
-                    </article>
-                </section>
-
-                <section class="mtw-grid mtw-grid-triple">
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Şikayet radarı</h3>
-                                <p>Arıza, servis ve forum kaynaklı geri bildirimleri filtrelenmiş görünümde okur.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-tag-row">
-                            ${(complaintMix.slice(0, 6)).map(item => `<span class="mtw-tag">${mediaWatchSafe(item.label)} · ${formatNumber(item.count)}</span>`).join('') || '<span class="mtw-tag">Şikayet ekseni yok</span>'}
-                        </div>
-                        <div class="mtw-table-wrap">
-                            <table class="mtw-table">
-                                <thead>
-                                    <tr>
-                                        <th>Konu</th>
-                                        <th>Ürün/model</th>
-                                        <th>Kanal</th>
-                                        <th>Duygu</th>
-                                        <th>Etki</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${complaintTableHtml}</tbody>
-                            </table>
-                        </div>
-                    </article>
-
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Yeni ürün ve pazar sesi</h3>
-                                <p>Lansman, inceleme, influencer yorumları ve kampanya akışlarını birleştirir.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-story-list">${launchCardsHtml}</div>
-                    </article>
-
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Resmî kararlar ve sektör raporları</h3>
-                                <p>Bakanlık, destek, mevzuat ve resmî açıklamaları markaya bağlı olarak ayıklar.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-story-list">${officialCardsHtml}</div>
-                    </article>
-                </section>
-
-                <section class="mtw-grid mtw-grid-main">
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Canlı gündem akışı</h3>
-                                <p>Tarım haberi, sosyal medya, forum ve şikayet kanallarından gelen tüm filtrelenmiş kayıtlar.</p>
-                            </div>
-                            <span class="mtw-badge is-analysis">${formatNumber(items.length || 0)} kayıt</span>
-                        </div>
-                        <div class="mtw-feed-list">${feedHtml}</div>
-                    </article>
-
-                    <article class="mtw-panel">
-                        <div class="mtw-panel-head">
-                            <div>
-                                <h3>Servis ve çözüm kartları</h3>
-                                <p>Arıza ve şikayet dilini satış sonrası aksiyona çeviren operasyon özetleri.</p>
-                            </div>
-                        </div>
-                        <div class="mtw-solution-grid">${solutionCardsHtml}</div>
-                        <div class="mtw-subpanel" style="margin-top:18px;">
-                            <h4>Kaynak dağılımı</h4>
-                            <div class="mtw-bar-list">${barListHtml(sourceMix, overview.mentions_total || 1)}</div>
-                        </div>
-                    </article>
-                </section>
-
-                <section class="mtw-panel">
-                    <div class="mtw-panel-head">
-                        <div>
-                            <h3>n8n bağlantı katmanı</h3>
-                            <p>Sürekli izleme, webhook ingest ve otomatik executive brief üretimi için önerilen akış omurgası.</p>
-                        </div>
-                    </div>
-                    <div class="mtw-workflow-grid">${workflowHtml}</div>
-                </section>
-            </div>
-        `;
-    } catch (err) {
-        if (/Medya Takip .*yanit vermedi/i.test(String(err.message || ''))) {
-            err = new Error('Medya Takip servisi yanıt vermedi. Lokal app backend güncel değilse container rebuild/restart gerekebilir.');
-        }
-        showError(err);
-    }
-}
-
 // ============================================
 // MARKA MEDYA RADARI (yeni tasarım)
 // Sürekli akış, kategori chip'leri, rakip karşılaştırma, ülke kapsamı, otomatik yenileme
@@ -12810,7 +10979,7 @@ async function loadMediaWatchPage(silent = false) {
             <article class="mwx-kpi ${k.tone}">
                 <span>${dashboardSafe(k.label)}</span>
                 <strong>${dashboardSafe(k.value)}</strong>
-                <small>${k.note}</small>
+                <small>${escapeHtml(k.note)}</small>
             </article>
         `).join('');
 
@@ -12819,7 +10988,7 @@ async function loadMediaWatchPage(silent = false) {
             const count = counts[cat.key] || 0;
             const active = state.category === cat.key;
             return `
-                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" onclick="onMwxCategoryClick('${cat.key}')" style="--cat-color:${cat.color}">
+                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" onclick="onMwxCategoryClick(${jsArg(cat.key)})" style="--cat-color:${cat.color}">
                     <i class="fas ${cat.icon}"></i>
                     <span>${dashboardSafe(cat.label)}</span>
                     <em>${formatNumber(count)}</em>
@@ -13175,7 +11344,7 @@ async function loadSubscriptionPage() {
             const isCurrent = subscription?.plan_slug === plan.slug && (subscription?.status === 'active' || subscription?.status === 'trialing');
             const isSelected = subscriptionState.selectedPlan === plan.slug;
             return `
-                <article class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan('${plan.slug}')">
+                <article class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan(${jsArg(plan.slug)})">
                     ${plan.tier_rank === 2 ? '<div class="sub-plan-badge">EN POPÜLER</div>' : ''}
                     ${isCurrent ? '<div class="sub-plan-current">MEVCUT PLAN</div>' : ''}
                     <div class="sub-plan-tier">Tier ${plan.tier_rank || 1}</div>
@@ -13199,7 +11368,7 @@ async function loadSubscriptionPage() {
         const providerHtml = safeProviders.map(p => {
             const isSelected = subscriptionState.selectedProvider === p.code;
             return `
-                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" onclick="subSelectProvider('${p.code}')">
+                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" onclick="subSelectProvider(${jsArg(p.code)})">
                     <i class="fas ${p.icon || 'fa-credit-card'}"></i>
                     <div>
                         <strong>${subEscape(p.name)}</strong>
@@ -13491,11 +11660,11 @@ async function loadSettingsPage() {
                 <div class="card-body">
                     <div style="margin-bottom:16px">
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Ad Soyad</label>
-                        <div style="font-size:15px;font-weight:600">${currentUser?.full_name || '-'}</div>
+                        <div style="font-size:15px;font-weight:600">${escapeHtml(currentUser?.full_name || '-')}</div>
                     </div>
                     <div style="margin-bottom:16px">
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">E-posta</label>
-                        <div style="font-size:15px">${currentUser?.email || '-'}</div>
+                        <div style="font-size:15px">${escapeHtml(currentUser?.email || '-')}</div>
                     </div>
                     <div style="margin-bottom:16px">
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Rol</label>
@@ -13503,7 +11672,7 @@ async function loadSettingsPage() {
                     </div>
                     <div style="margin-bottom:16px">
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Marka</label>
-                        <div style="font-size:15px;color:var(--brand-primary);font-weight:600">${currentUser?.brand?.name || 'Tüm Markalar (Admin)'}</div>
+                        <div style="font-size:15px;color:var(--brand-primary);font-weight:600">${escapeHtml(currentUser?.brand?.name || 'Tüm Markalar (Admin)')}</div>
                     </div>
                     <div>
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Şirket</label>
@@ -13516,14 +11685,14 @@ async function loadSettingsPage() {
                 <div class="card-body">
                     ${currentUser?.brand ? `
                         <div style="display:flex;gap:12px;margin-bottom:20px">
-                            <div style="width:60px;height:60px;border-radius:12px;background:${currentUser.brand.primary_color}"></div>
-                            <div style="width:60px;height:60px;border-radius:12px;background:${currentUser.brand.secondary_color}"></div>
-                            <div style="width:60px;height:60px;border-radius:12px;background:${currentUser.brand.accent_color}"></div>
+                            <div style="width:60px;height:60px;border-radius:12px;background:${escapeHtml(currentUser.brand.primary_color)}"></div>
+                            <div style="width:60px;height:60px;border-radius:12px;background:${escapeHtml(currentUser.brand.secondary_color)}"></div>
+                            <div style="width:60px;height:60px;border-radius:12px;background:${escapeHtml(currentUser.brand.accent_color)}"></div>
                         </div>
                         <div style="font-size:13px;color:var(--text-muted)">
-                            <p>Birincil: ${currentUser.brand.primary_color}</p>
-                            <p>İkincil: ${currentUser.brand.secondary_color}</p>
-                            <p>Vurgu: ${currentUser.brand.accent_color}</p>
+                            <p>Birincil: ${escapeHtml(currentUser.brand.primary_color)}</p>
+                            <p>İkincil: ${escapeHtml(currentUser.brand.secondary_color)}</p>
+                            <p>Vurgu: ${escapeHtml(currentUser.brand.accent_color)}</p>
                         </div>
                     ` : '<p style="color:var(--text-muted)">Admin hesaplarında marka teması uygulanmaz</p>'}
                 </div>
@@ -13580,8 +11749,8 @@ async function loadNotifications() {
         list.innerHTML = (notifs || []).length > 0
             ? notifs.map(n => `
                 <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="API.markNotificationRead(${n.id})">
-                    <div class="notif-title">${n.title}</div>
-                    <div class="notif-body">${n.body || ''}</div>
+                    <div class="notif-title">${escapeHtml(n.title)}</div>
+                    <div class="notif-body">${escapeHtml(n.body || '')}</div>
                     <div class="notif-time">${new Date(n.created_at).toLocaleString('tr-TR')}</div>
                 </div>
             `).join('')
@@ -13760,186 +11929,6 @@ function chartOptions(yLabel) {
 // ============================================
 let riMapInstance = null;
 let riGeoJsonLayer = null;
-
-async function loadRegionalIndexPageLegacy() {
-    try {
-        const data = await API.getRegionalIndex(selectedYear);
-        if (!data) return;
-        const { year, maxMonth, provinces } = data;
-
-        const metricOpts = [
-            { val: 'total', label: 'Toplam Satış' },
-            { val: 'bahceRatio', label: 'Bahçe Oranı %' },
-            { val: 'tarlaRatio', label: 'Tarla Oranı %' },
-            { val: 'avgHp', label: 'Ortalama HP' },
-            { val: 'ratio4wd', label: '4WD Oranı %' },
-            { val: 'cabinRatio', label: 'Kabinli Oranı %' },
-            { val: 'mechIndex', label: 'Mekanizasyon İndeksi' },
-            { val: 'yoyGrowth', label: 'YoY Büyüme %' }
-        ];
-        const selMetric = window._riMetric || 'total';
-        let metricSelHtml = metricOpts.map(o => `<option value="${o.val}" ${o.val === selMetric ? 'selected' : ''}>${o.label}</option>`).join('');
-
-        // Sort provinces by selected metric
-        const sorted = [...provinces].sort((a, b) => (b[selMetric] || 0) - (a[selMetric] || 0));
-
-        // Top 10 table
-        let top10Rows = '';
-        sorted.slice(0, 15).forEach((p, i) => {
-            const metricVal = p[selMetric] || 0;
-            const maxVal = sorted[0]?.[selMetric] || 1;
-            const barW = Math.max(5, (Math.abs(metricVal) / Math.abs(maxVal)) * 100);
-            const isNeg = metricVal < 0;
-            top10Rows += `<tr>
-                <td class="ri-rank">${i + 1}</td>
-                <td class="ri-prov-name">${p.name}</td>
-                <td class="ri-val">${selMetric === 'total' ? fmtNum(metricVal) : metricVal.toFixed(1) + (selMetric.includes('Ratio') || selMetric.includes('ratio') || selMetric === 'yoyGrowth' || selMetric === 'cabinRatio' ? '%' : '')}</td>
-                <td class="ri-bar-cell"><div class="ri-bar ${isNeg ? 'ri-bar-neg' : ''}" style="width:${barW}%"></div></td>
-                <td class="ri-detail">${fmtNum(p.total)}</td>
-                <td class="ri-detail">${p.bahceRatio.toFixed(0)}%/${p.tarlaRatio.toFixed(0)}%</td>
-                <td class="ri-detail">${p.avgHp} HP</td>
-                <td class="ri-detail">${p.dominantHp}</td>
-                <td class="ri-detail ${p.yoyGrowth >= 0 ? 'ri-up' : 'ri-down'}">${p.yoyGrowth >= 0 ? '+' : ''}${p.yoyGrowth}%</td>
-            </tr>`;
-        });
-
-        // Region summary
-        const regionMap = {};
-        provinces.forEach(p => {
-            if (!regionMap[p.region]) regionMap[p.region] = { total: 0, bahce: 0, tarla: 0, count: 0, hpSum: 0 };
-            regionMap[p.region].total += p.total;
-            regionMap[p.region].bahce += p.bahce;
-            regionMap[p.region].tarla += p.tarla;
-            regionMap[p.region].count++;
-            regionMap[p.region].hpSum += p.avgHp;
-        });
-        let regionRows = '';
-        Object.entries(regionMap).sort((a, b) => b[1].total - a[1].total).forEach(([name, d]) => {
-            const bahcePct = d.total > 0 ? (d.bahce / d.total * 100).toFixed(1) : '0';
-            regionRows += `<tr>
-                <td class="ri-region-name">${name}</td>
-                <td>${fmtNum(d.total)}</td>
-                <td>${bahcePct}%</td>
-                <td>${Math.round(d.hpSum / d.count)} HP</td>
-                <td>${d.count} İl</td>
-            </tr>`;
-        });
-
-        document.getElementById('pageContent').innerHTML = `
-        <div class="ri-container">
-            <div class="ri-top-controls">
-                <div class="ri-metric-sel">
-                    <label>Isı Haritası Metriği:</label>
-                    <select onchange="window._riMetric=this.value;loadRegionalIndexPage()">${metricSelHtml}</select>
-                </div>
-                <div class="ri-stat-cards">
-                    <div class="ri-stat"><span class="ri-stat-val">${fmtNum(provinces.reduce((s,p)=>s+p.total,0))}</span><span class="ri-stat-lbl">${year} Toplam Satış</span></div>
-                    <div class="ri-stat"><span class="ri-stat-val">${provinces.filter(p=>p.total>0).length}</span><span class="ri-stat-lbl">Aktif İl</span></div>
-                    <div class="ri-stat"><span class="ri-stat-val">${Math.round(provinces.reduce((s,p)=>s+p.avgHp,0)/provinces.filter(p=>p.total>0).length)} HP</span><span class="ri-stat-lbl">Ort. HP</span></div>
-                    <div class="ri-stat"><span class="ri-stat-val">${(provinces.reduce((s,p)=>s+p.bahce,0)/(provinces.reduce((s,p)=>s+p.total,0)||1)*100).toFixed(1)}%</span><span class="ri-stat-lbl">Bahçe Oranı</span></div>
-                </div>
-            </div>
-
-            <div class="ri-main-grid">
-                <div class="ri-map-wrap">
-                    <div class="ri-section-title"><i class="fas fa-map"></i> Isı Haritası: ${metricOpts.find(o=>o.val===selMetric)?.label}</div>
-                    <div id="riMapContainer" style="height:500px;border-radius:8px;"></div>
-                    <div class="ri-map-legend" id="riMapLegend"></div>
-                </div>
-                <div class="ri-region-panel">
-                    <div class="ri-section-title"><i class="fas fa-chart-bar"></i> Bölge Özeti</div>
-                    <table class="ri-region-table">
-                        <thead><tr><th>Bölge</th><th>Satış</th><th>Bahçe%</th><th>Ort.HP</th><th>İl</th></tr></thead>
-                        <tbody>${regionRows}</tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="ri-table-section">
-                <div class="ri-section-title"><i class="fas fa-list-ol"></i> İl Sıralaması (${metricOpts.find(o=>o.val===selMetric)?.label})</div>
-                <div style="overflow-x:auto">
-                    <table class="ri-table">
-                        <thead><tr>
-                            <th>#</th><th>İl</th><th>${metricOpts.find(o=>o.val===selMetric)?.label}</th><th></th>
-                            <th>Satış</th><th>Bahçe/Tarla</th><th>Ort.HP</th><th>Baskın HP</th><th>YoY</th>
-                        </tr></thead>
-                        <tbody>${top10Rows}</tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('regional-index', {year:${year}, provinces: ${JSON.stringify(sorted.slice(0,15).map(p=>({name:p.name,region:p.region,total:p.total,bahceRatio:p.bahceRatio,tarlaRatio:p.tarlaRatio,avgHp:p.avgHp,ratio4wd:p.ratio4wd,mechIndex:p.mechIndex,yoyGrowth:p.yoyGrowth,soil_type:p.soil_type,climate_zone:p.climate_zone})))}}, 'riAiPanel')">
-                    <i class="fas fa-robot"></i> AI Bölgesel Strateji Raporu
-                </button>
-                <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
-            </div>
-            <div id="riAiPanel" class="ai-panel" style="display:none"></div>
-        </div>`;
-
-        // Initialize map
-        setTimeout(() => {
-            if (riMapInstance) { riMapInstance.remove(); riMapInstance = null; }
-            riMapInstance = L.map('riMapContainer', { zoomControl: true, attributionControl: false }).setView([39.0, 35.5], 6);
-
-            // Color scale
-            const vals = provinces.map(p => p[selMetric] || 0).filter(v => v !== 0);
-            const minVal = Math.min(...vals, 0);
-            const maxVal = Math.max(...vals, 1);
-
-            function getColor(val) {
-                if (selMetric === 'yoyGrowth') {
-                    if (val > 30) return '#22c55e';
-                    if (val > 10) return '#86efac';
-                    if (val > 0) return '#bbf7d0';
-                    if (val > -10) return '#fecaca';
-                    if (val > -30) return '#f87171';
-                    return '#dc2626';
-                }
-                const t = maxVal !== minVal ? (val - minVal) / (maxVal - minVal) : 0;
-                const r = Math.round(30 + t * 225);
-                const g = Math.round(120 - t * 70);
-                const b = Math.round(200 - t * 150);
-                return `rgb(${r},${g},${b})`;
-            }
-
-            // Add markers
-            const provByName = {};
-            provinces.forEach(p => { provByName[p.name.toUpperCase()] = p; });
-
-            provinces.forEach(p => {
-                if (!p.lat || !p.lng || p.total === 0) return;
-                const val = p[selMetric] || 0;
-                const radius = Math.max(6, Math.min(25, (p.total / (sorted[0]?.total || 1)) * 25));
-                L.circleMarker([p.lat, p.lng], {
-                    radius, fillColor: getColor(val), color: '#fff', weight: 1, fillOpacity: 0.85
-                }).bindPopup(`
-                    <div style="min-width:200px;font-size:12px;">
-                        <strong style="font-size:14px">${p.name}</strong> <span style="color:#888">(${p.region})</span><hr style="margin:4px 0;border-color:#333">
-                        <b>Satış:</b> ${fmtNum(p.total)} | <b>Bahçe:</b> ${p.bahceRatio.toFixed(0)}% | <b>Tarla:</b> ${p.tarlaRatio.toFixed(0)}%<br>
-                        <b>Ort. HP:</b> ${p.avgHp} | <b>Baskın:</b> ${p.dominantHp}<br>
-                        <b>4WD:</b> ${p.ratio4wd.toFixed(0)}% | <b>Kabinli:</b> ${p.cabinRatio.toFixed(0)}%<br>
-                        <b>Mek. İndeks:</b> ${p.mechIndex} | <b>YoY:</b> ${p.yoyGrowth}%<br>
-                        ${p.soil_type ? `<b>Toprak:</b> ${p.soil_type}<br>` : ''}
-                        ${p.climate_zone ? `<b>İklim:</b> ${p.climate_zone}<br>` : ''}
-                        ${p.primary_crops ? `<b>Ürünler:</b> ${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : p.primary_crops}<br>` : ''}
-                        <b>Trend:</b> ${p.trend.map(t => `${t.year}: ${fmtNum(t.sales)}`).join(' → ')}
-                    </div>
-                `).addTo(riMapInstance);
-            });
-
-            // Legend
-            document.getElementById('riMapLegend').innerHTML = `
-                <span style="display:inline-block;width:14px;height:14px;background:${getColor(minVal)};border-radius:3px;vertical-align:middle"></span> Düşük
-                <span style="display:inline-block;width:14px;height:14px;background:${getColor((minVal+maxVal)/2)};border-radius:3px;vertical-align:middle;margin-left:8px"></span> Orta
-                <span style="display:inline-block;width:14px;height:14px;background:${getColor(maxVal)};border-radius:3px;vertical-align:middle;margin-left:8px"></span> Yüksek
-            `;
-        }, 100);
-
-    } catch (err) {
-        showError(err);
-    }
-}
 
 function getRegionalIndexFocusBrandId() {
     if (currentUser?.role !== 'admin') return String(currentUser?.brand_id || '');
@@ -14731,7 +12720,7 @@ async function loadRegionalIndexPage() {
         const brandOptions = allBrands.map(item => `
             <option value="${item.id}" ${String(item.id) === currentBrandValue ? 'selected' : ''}>${dashboardSafe(item.name)}</option>
         `).join('');
-        const selectedOption = (value, label) => value ? `<option value="${value}" selected>${label}</option>` : '';
+        const selectedOption = (value, label) => value ? `<option value="${escapeHtml(value)}" selected>${escapeHtml(label)}</option>` : '';
 
         document.getElementById('pageContent').innerHTML = `
             <div class="rix-shell">
@@ -15489,149 +13478,6 @@ async function renderModelRegionMap({ focus, themeProfile }) {
 // ============================================
 // MODEL-REGION COMPATIBILITY PAGE
 // ============================================
-async function loadModelRegionPageLegacy() {
-    try {
-        const data = await API.getModelRegion();
-        if (!data) return;
-        const { years, max_year, max_month, brands } = data;
-
-        const selBrandId = window._mrBrand || (brands[0]?.id);
-        let brandOpts = brands.map(b => `<option value="${b.id}" ${b.id == selBrandId ? 'selected' : ''}>${b.name}</option>`).join('');
-
-        const brand = brands.find(b => b.id == selBrandId) || brands[0];
-        if (!brand) { document.getElementById('pageContent').innerHTML = '<div class="empty-state"><p>Veri bulunamadı</p></div>'; return; }
-
-        const topProv = brand.topProvinces || [];
-        const totalSales = brand.totalSales || 0;
-        const totalRev = brand.totalRevenue || 0;
-
-        // Summary KPIs
-        const avgGrowth = topProv.length > 0 ? (topProv.reduce((s, p) => s + p.yoyGrowth, 0) / topProv.length) : 0;
-
-        // Province detail cards
-        let provCards = '';
-        topProv.forEach((p, i) => {
-            const pctOfBrand = totalSales > 0 ? (p.total / totalSales * 100).toFixed(1) : '0';
-            const bahcePct = p.total > 0 ? (p.bahce / p.total * 100).toFixed(0) : '0';
-            const tarlaPct = p.total > 0 ? (p.tarla / p.total * 100).toFixed(0) : '0';
-
-            // Trend sparkline (text-based)
-            const trendStr = p.yearlyTrend.map(t => fmtNum(t.sales)).join(' → ');
-            const lastTwo = p.yearlyTrend.slice(-2);
-            const trendDir = lastTwo.length === 2 && lastTwo[1].sales >= lastTwo[0].sales ? 'up' : 'down';
-
-            provCards += `
-            <div class="mr-prov-card">
-                <div class="mr-prov-header">
-                    <span class="mr-prov-rank">${i + 1}</span>
-                    <div class="mr-prov-info">
-                        <span class="mr-prov-name">${p.name}</span>
-                        <span class="mr-prov-region">${p.region} · ${p.plate_code}</span>
-                    </div>
-                    <div class="mr-prov-badge ${trendDir === 'up' ? 'mr-badge-up' : 'mr-badge-down'}">
-                        <i class="fas fa-arrow-${trendDir}"></i> ${p.yoyGrowth >= 0 ? '+' : ''}${p.yoyGrowth}%
-                    </div>
-                </div>
-                <div class="mr-prov-metrics">
-                    <div class="mr-metric">
-                        <span class="mr-metric-val">${fmtNum(p.total)}</span>
-                        <span class="mr-metric-lbl">Toplam Satış</span>
-                    </div>
-                    <div class="mr-metric">
-                        <span class="mr-metric-val">${fmtPrice(p.estimatedRevenue)}</span>
-                        <span class="mr-metric-lbl">Tahmini Ciro</span>
-                    </div>
-                    <div class="mr-metric">
-                        <span class="mr-metric-val">${p.marketShareCurr}%</span>
-                        <span class="mr-metric-lbl">${max_year} Pazar Payı</span>
-                    </div>
-                    <div class="mr-metric">
-                        <span class="mr-metric-val">${pctOfBrand}%</span>
-                        <span class="mr-metric-lbl">Marka İçi Pay</span>
-                    </div>
-                </div>
-                <div class="mr-prov-details">
-                    <div class="mr-detail-row">
-                        <span class="mr-detail-label">Kategori:</span>
-                        <div class="mr-bar-wrap">
-                            <div class="mr-bar mr-bar-tarla" style="width:${tarlaPct}%">${tarlaPct}% Tarla</div>
-                            <div class="mr-bar mr-bar-bahce" style="width:${bahcePct}%">${bahcePct}% Bahçe</div>
-                        </div>
-                    </div>
-                    <div class="mr-detail-row">
-                        <span class="mr-detail-label">Baskın HP:</span>
-                        <span class="mr-detail-val">${p.dominantHp}</span>
-                    </div>
-                    ${p.soil_type ? `<div class="mr-detail-row"><span class="mr-detail-label">Toprak:</span><span class="mr-detail-val">${p.soil_type}</span></div>` : ''}
-                    ${p.climate_zone ? `<div class="mr-detail-row"><span class="mr-detail-label">İklim:</span><span class="mr-detail-val">${p.climate_zone}</span></div>` : ''}
-                    ${p.primary_crops && p.primary_crops.length ? `<div class="mr-detail-row"><span class="mr-detail-label">Ürünler:</span><span class="mr-detail-val">${Array.isArray(p.primary_crops) ? p.primary_crops.join(', ') : p.primary_crops}</span></div>` : ''}
-                    ${p.rainfall ? `<div class="mr-detail-row"><span class="mr-detail-label">Yağış:</span><span class="mr-detail-val">${p.rainfall} mm</span></div>` : ''}
-                    ${p.elevation ? `<div class="mr-detail-row"><span class="mr-detail-label">Rakım:</span><span class="mr-detail-val">${fmtNum(p.elevation)} m</span></div>` : ''}
-                    <div class="mr-detail-row">
-                        <span class="mr-detail-label">Trend:</span>
-                        <span class="mr-detail-val mr-trend-text">${trendStr}</span>
-                    </div>
-                </div>
-            </div>`;
-        });
-
-        // Model portfolio
-        let modelCards = '';
-        (brand.models || []).forEach(m => {
-            modelCards += `<div class="mr-model-chip">
-                <span class="mr-model-name">${m.name}</span>
-                <span class="mr-model-detail">${m.hp} HP · ${m.category} · ${m.price ? fmtPrice(m.price) : '-'}</span>
-            </div>`;
-        });
-
-        document.getElementById('pageContent').innerHTML = `
-        <div class="mr-container">
-            <div class="mr-top-bar">
-                <div class="mr-brand-sel">
-                    <select class="bc-select" onchange="window._mrBrand=parseInt(this.value);loadModelRegionPage()">${brandOpts}</select>
-                    <div class="mr-brand-badge" style="background:${brand.color}"><i class="fas fa-tractor"></i></div>
-                </div>
-            </div>
-
-            <div class="mr-kpi-row">
-                <div class="mr-kpi"><span class="mr-kpi-val" style="color:${brand.color}">${fmtNum(totalSales)}</span><span class="mr-kpi-lbl">Toplam Satış</span></div>
-                <div class="mr-kpi"><span class="mr-kpi-val">${fmtPrice(totalRev)}</span><span class="mr-kpi-lbl">Tahmini Toplam Ciro</span></div>
-                <div class="mr-kpi"><span class="mr-kpi-val">${brand.provinceCount}</span><span class="mr-kpi-lbl">Satış Yapılan İl</span></div>
-                <div class="mr-kpi"><span class="mr-kpi-val">${brand.models?.length || 0}</span><span class="mr-kpi-lbl">Model Sayısı</span></div>
-                <div class="mr-kpi"><span class="mr-kpi-val ${avgGrowth >= 0 ? 'ri-up' : 'ri-down'}">${avgGrowth >= 0 ? '+' : ''}${avgGrowth.toFixed(1)}%</span><span class="mr-kpi-lbl">Ort. Büyüme</span></div>
-            </div>
-
-            <div class="mr-models-section">
-                <div class="ri-section-title"><i class="fas fa-th-list"></i> Model Portföyü</div>
-                <div class="mr-model-grid">${modelCards || '<span style="color:var(--text-muted)">Model verisi bulunamadı</span>'}</div>
-            </div>
-
-            <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('brand-region', window._mrAiContext, 'mrAiPanel')">
-                    <i class="fas fa-robot"></i> AI Strateji Raporu Oluştur
-                </button>
-                <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
-            </div>
-            <div id="mrAiPanel" class="ai-panel" style="display:none"></div>
-
-            <div class="ri-section-title" style="margin-top:8px"><i class="fas fa-chart-line"></i> İl Bazlı Derinlik Raporu — Top ${topProv.length} İl</div>
-            <div class="mr-prov-grid">${provCards}</div>
-        </div>`;
-
-        // Store AI context for later
-        window._mrAiContext = {
-            brandName: brand.name,
-            provinces: topProv,
-            models: brand.models,
-            totalSales: totalSales,
-            totalRevenue: totalRev
-        };
-
-    } catch (err) {
-        showError(err);
-    }
-}
-
 // ============================================
 // BRAND COMPARE PAGE
 // ============================================
@@ -15676,8 +13522,8 @@ async function loadBenchmarkPage() {
 
         let b1Opts = '', b2Opts = '';
         allBrands.forEach(b => {
-            b1Opts += `<option value="${b.id}" ${b.id == b1Id ? 'selected' : ''}>${b.name}</option>`;
-            b2Opts += `<option value="${b.id}" ${b.id == b2Id ? 'selected' : ''}>${b.name}</option>`;
+            b1Opts += `<option value="${b.id}" ${b.id == b1Id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`;
+            b2Opts += `<option value="${b.id}" ${b.id == b2Id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`;
         });
 
         // ── KATMAN 1: SCORECARD DATA ──
@@ -15695,7 +13541,7 @@ async function loadBenchmarkPage() {
         sc.forEach(s => {
             scoreHtml += `<div class="bm-sc-card">
                 <div class="bm-sc-icon"><i class="${s.icon}"></i></div>
-                <div class="bm-sc-label">${s.label}</div>
+                <div class="bm-sc-label">${escapeHtml(s.label)}</div>
                 <div class="bm-sc-vals">
                     <span class="bm-sc-v ${s.w===1?'bm-win':''}" style="color:${c1}">${s.v1}</span>
                     <span class="bm-sc-vs">vs</span>
@@ -15726,7 +13572,7 @@ async function loadBenchmarkPage() {
                 <div class="bm-feat-bar-wrap">
                     <div class="bm-feat-bar" style="width:${f.v1}%;background:${c1}">${f.v1.toFixed(0)}%</div>
                 </div>
-                <div class="bm-feat-label">${f.label}</div>
+                <div class="bm-feat-label">${escapeHtml(f.label)}</div>
                 <div class="bm-feat-bar-wrap bm-feat-right">
                     <div class="bm-feat-bar" style="width:${f.v2}%;background:${c2}">${f.v2.toFixed(0)}%</div>
                 </div>
@@ -15741,10 +13587,10 @@ async function loadBenchmarkPage() {
         let yoyHtml = '<tr><th>Yıl</th>';
         years.forEach(y => yoyHtml += `<th>${y}</th>`);
         yoyHtml += '</tr>';
-        yoyHtml += `<tr style="color:${c1}"><td>${brand1.name}</td>`;
+        yoyHtml += `<tr style="color:${c1}"><td>${escapeHtml(brand1.name)}</td>`;
         years.forEach(y => { const v = d1.yoyByYear[y]; yoyHtml += `<td class="${v>0?'bm-up':v<0?'bm-down':''}">${y===years[0]?'-':fmtPct(v)}</td>`; });
         yoyHtml += '</tr>';
-        yoyHtml += `<tr style="color:${c2}"><td>${brand2.name}</td>`;
+        yoyHtml += `<tr style="color:${c2}"><td>${escapeHtml(brand2.name)}</td>`;
         years.forEach(y => { const v = d2.yoyByYear[y]; yoyHtml += `<td class="${v>0?'bm-up':v<0?'bm-down':''}">${y===years[0]?'-':fmtPct(v)}</td>`; });
         yoyHtml += '</tr>';
 
@@ -15772,11 +13618,11 @@ async function loadBenchmarkPage() {
                 const cheaper1 = p1&&p2&&p1.price<=p2.price;
                 const cheaper2 = p1&&p2&&p2.price<=p1.price;
                 priceRows += `<tr>
-                    <td class="bm-mdl">${p1?`<b>${p1.name}</b><br><small>${p1.hp} HP</small>`:'-'}</td>
+                    <td class="bm-mdl">${p1?`<b>${escapeHtml(p1.name)}</b><br><small>${p1.hp} HP</small>`:'-'}</td>
                     <td class="bm-prc ${cheaper1?'bm-cheaper':''}">${p1?fmtPrice(p1.price):'-'}</td>
                     <td class="bm-hp-mid">${i===0?hr+' HP':''}</td>
                     <td class="bm-prc ${cheaper2?'bm-cheaper':''}">${p2?fmtPrice(p2.price):'-'}</td>
-                    <td class="bm-mdl">${p2?`<b>${p2.name}</b><br><small>${p2.hp} HP</small>`:'-'}</td>
+                    <td class="bm-mdl">${p2?`<b>${escapeHtml(p2.name)}</b><br><small>${p2.hp} HP</small>`:'-'}</td>
                 </tr>`;
             }
         });
@@ -15786,7 +13632,7 @@ async function loadBenchmarkPage() {
         const domSorted = [...dominanceMap].sort((a,b) => (b.s1+b.s2) - (a.s1+a.s2));
         domSorted.slice(0,25).forEach(p => {
             const cls = p.dominance === 'brand1' ? 'bm-dom1' : p.dominance === 'brand2' ? 'bm-dom2' : 'bm-dom-n';
-            domRows += `<tr class="${cls}"><td>${p.name}</td><td>${fmtNum(p.s1)}</td><td>${fmtNum(p.s2)}</td><td>${fmtNum(p.s1-p.s2)}</td></tr>`;
+            domRows += `<tr class="${cls}"><td>${escapeHtml(p.name)}</td><td>${fmtNum(p.s1)}</td><td>${fmtNum(p.s2)}</td><td>${fmtNum(p.s1-p.s2)}</td></tr>`;
         });
 
         // ── KATMAN 4: Özellik Kesişimi (Venn verisi) ──
@@ -15846,7 +13692,7 @@ async function loadBenchmarkPage() {
                     <div class="bm-card">
                         <div class="bm-card-title"><i class="fas fa-sliders-h"></i> Kategori & Donanım Dağılımı</div>
                         <div class="bm-feat-grid">
-                            <div class="bm-feat-head"><span style="color:${c1}">${brand1.name}</span><span></span><span style="color:${c2}">${brand2.name}</span></div>
+                            <div class="bm-feat-head"><span style="color:${c1}">${escapeHtml(brand1.name)}</span><span></span><span style="color:${c2}">${escapeHtml(brand2.name)}</span></div>
                             ${featHtml}
                         </div>
                     </div>
@@ -15860,9 +13706,9 @@ async function loadBenchmarkPage() {
                     <div class="bm-card">
                         <div class="bm-card-title"><i class="fas fa-map"></i> Hakimiyet Haritası
                             <span class="bm-legend-inline">
-                                <span class="bm-leg" style="background:${c1}"></span>${brand1.name}
+                                <span class="bm-leg" style="background:${c1}"></span>${escapeHtml(brand1.name)}
                                 <span class="bm-leg" style="background:#64748b"></span>Baş Başa
-                                <span class="bm-leg" style="background:${c2}"></span>${brand2.name}
+                                <span class="bm-leg" style="background:${c2}"></span>${escapeHtml(brand2.name)}
                             </span>
                         </div>
                         <div id="bmDomMap" style="height:400px;border-radius:8px;background:#0f172a;"></div>
@@ -15871,7 +13717,7 @@ async function loadBenchmarkPage() {
                         <div class="bm-card-title"><i class="fas fa-list-ol"></i> İl Bazlı Hakimiyet (Top 25)</div>
                         <div style="overflow-y:auto;max-height:400px;">
                             <table class="bm-tbl bm-tbl-dom">
-                                <thead><tr><th>İl</th><th style="color:${c1}">${brand1.name}</th><th style="color:${c2}">${brand2.name}</th><th>Fark</th></tr></thead>
+                                <thead><tr><th>İl</th><th style="color:${c1}">${escapeHtml(brand1.name)}</th><th style="color:${c2}">${escapeHtml(brand2.name)}</th><th>Fark</th></tr></thead>
                                 <tbody>${domRows}</tbody>
                             </table>
                         </div>
@@ -15934,7 +13780,7 @@ async function loadBenchmarkPage() {
                         <div class="bm-card-title"><i class="fas fa-project-diagram"></i> Özellik Kesişimi (Venn Analizi)</div>
                         <div style="overflow-y:auto;max-height:350px;">
                             <table class="bm-tbl bm-tbl-venn">
-                                <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${brand1.name}</th><th style="color:${c2}">${brand2.name}</th></tr></thead>
+                                <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${escapeHtml(brand1.name)}</th><th style="color:${c2}">${escapeHtml(brand2.name)}</th></tr></thead>
                                 <tbody>${vennHtml||'<tr><td colspan="3" style="text-align:center;color:#64748b">Veri yok</td></tr>'}</tbody>
                             </table>
                         </div>
@@ -15943,7 +13789,7 @@ async function loadBenchmarkPage() {
             </div>
 
             <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('benchmark',{b1:'${brand1.name}',b2:'${brand2.name}',d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
+                <button class="ai-btn" onclick="requestAiAnalysis('benchmark',{b1:${jsArg(brand1.name)},b2:${jsArg(brand2.name)},d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
                     <i class="fas fa-robot"></i> AI Benchmark Raporu
                 </button>
                 <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
@@ -16057,7 +13903,7 @@ async function loadBenchmarkPage() {
                 L.circleMarker([p.lat, p.lng], {
                     radius, fillColor: color, color: '#fff', weight: 1, opacity: 0.8, fillOpacity: 0.7
                 }).addTo(_bmMap).bindTooltip(
-                    `<b>${p.name}</b><br>${brand1.name}: ${fmtNum(p.s1)}<br>${brand2.name}: ${fmtNum(p.s2)}`,
+                    `<b>${escapeHtml(p.name)}</b><br>${escapeHtml(brand1.name)}: ${fmtNum(p.s1)}<br>${escapeHtml(brand2.name)}: ${fmtNum(p.s2)}`,
                     { className: 'bm-tooltip' }
                 );
             });
@@ -16341,7 +14187,7 @@ async function loadBrandComparePage() {
                 {
                     label: 'Genel skor',
                     value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
-                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} vs ${compareBrand2.name}`
                 },
                 {
                     label: 'Pazar farki',
@@ -16351,11 +14197,11 @@ async function loadBrandComparePage() {
                 {
                     label: 'İl üstünlüğü',
                     value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
-                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
                     label: 'Acik segment',
-                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek bosluk yok'
                 }
             ].map(card => `
@@ -16381,7 +14227,7 @@ async function loadBrandComparePage() {
                 {
                     label: 'Genel skor',
                     value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
-                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} vs ${compareBrand2.name}`
                 },
                 {
                     label: 'Pazar farkı',
@@ -16391,11 +14237,11 @@ async function loadBrandComparePage() {
                 {
                     label: 'İl üstünlüğü',
                     value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
-                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
                     label: 'Açık segment',
-                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek boşluk yok'
                 }
             ].map(card => `
@@ -16421,7 +14267,7 @@ async function loadBrandComparePage() {
                 {
                     label: 'Genel skor',
                     value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
-                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} vs ${compareBrand2.name}`
                 },
                 {
                     label: 'Pazar farkı',
@@ -16431,11 +14277,11 @@ async function loadBrandComparePage() {
                 {
                     label: 'İl üstünlüğü',
                     value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
-                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
                     label: 'Açık segment',
-                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek boşluk yok'
                 }
             ].map(card => `
@@ -16947,8 +14793,8 @@ async function loadBrandComparePage() {
 
         let b1Opts = '', b2Opts = '';
         allBrands.forEach(b => {
-            b1Opts += `<option value="${b.id}" ${b.id == b1Id ? 'selected' : ''}>${b.name}</option>`;
-            b2Opts += `<option value="${b.id}" ${b.id == b2Id ? 'selected' : ''}>${b.name}</option>`;
+            b1Opts += `<option value="${b.id}" ${b.id == b1Id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`;
+            b2Opts += `<option value="${b.id}" ${b.id == b2Id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`;
         });
 
         // Winner helper
@@ -16974,7 +14820,7 @@ async function loadBrandComparePage() {
             const [w1, w2] = win(k.v1, k.v2, k.higher);
             kpiRows += `<tr>
                 <td class="bc-kpi-val ${w1}">${k.fmt(k.v1)}</td>
-                <td class="bc-kpi-label">${k.label}</td>
+                <td class="bc-kpi-label">${escapeHtml(k.label)}</td>
                 <td class="bc-kpi-val ${w2}">${k.fmt(k.v2)}</td>
             </tr>`;
         });
@@ -17029,9 +14875,9 @@ async function loadBrandComparePage() {
         for (let i = 0; i < maxProv; i++) {
             const p1 = d1.topProvinces[i], p2 = d2.topProvinces[i];
             provRows += `<tr>
-                <td class="bc-prov-val">${p1 ? `${p1.name} <span class="bc-sub">${fmtNum(p1.qty)}</span>` : '-'}</td>
+                <td class="bc-prov-val">${p1 ? `${escapeHtml(p1.name)} <span class="bc-sub">${fmtNum(p1.qty)}</span>` : '-'}</td>
                 <td class="bc-prov-rank">${i + 1}</td>
-                <td class="bc-prov-val">${p2 ? `${p2.name} <span class="bc-sub">${fmtNum(p2.qty)}</span>` : '-'}</td>
+                <td class="bc-prov-val">${p2 ? `${escapeHtml(p2.name)} <span class="bc-sub">${fmtNum(p2.qty)}</span>` : '-'}</td>
             </tr>`;
         }
 
@@ -17078,11 +14924,11 @@ async function loadBrandComparePage() {
                 const diff = (price1 && price2) ? price1 - price2 : null;
                 const diffClass = diff ? (diff < 0 ? 'bc-cheaper' : diff > 0 ? 'bc-expensive' : '') : '';
                 priceRows += `<tr>
-                    <td class="bc-model-cell">${p1 ? `<span class="bc-model-name">${p1.name}</span><span class="bc-model-hp">${p1.hp} HP</span>` : '-'}</td>
+                    <td class="bc-model-cell">${p1 ? `<span class="bc-model-name">${escapeHtml(p1.name)}</span><span class="bc-model-hp">${p1.hp} HP</span>` : '-'}</td>
                     <td class="bc-price-cell ${price1 && price2 && price1 <= price2 ? 'bc-cheaper' : ''}">${p1 ? fmtPrice(price1) : '-'}</td>
                     <td class="bc-hp-range-cell">${i === 0 ? hr + ' HP' : ''}</td>
                     <td class="bc-price-cell ${price1 && price2 && price2 <= price1 ? 'bc-cheaper' : ''}">${p2 ? fmtPrice(price2) : '-'}</td>
-                    <td class="bc-model-cell">${p2 ? `<span class="bc-model-name">${p2.name}</span><span class="bc-model-hp">${p2.hp} HP</span>` : '-'}</td>
+                    <td class="bc-model-cell">${p2 ? `<span class="bc-model-name">${escapeHtml(p2.name)}</span><span class="bc-model-hp">${p2.hp} HP</span>` : '-'}</td>
                 </tr>`;
             }
         });
@@ -17108,9 +14954,9 @@ async function loadBrandComparePage() {
                 <table class="bc-kpi-table">
                     <thead>
                         <tr>
-                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-kpi-mid">Metrik</th>
-                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
                         </tr>
                     </thead>
                     <tbody>${kpiRows}</tbody>
@@ -17137,8 +14983,8 @@ async function loadBrandComparePage() {
                         <thead><tr><th>Marka</th>${yearHeaders}</tr></thead>
                         <tbody>
                             <tr class="bc-row-market"><td>Toplam Pazar</td>${yearRowMkt}</tr>
-                            <tr style="color:${brand1.primary_color}"><td>${brand1.name}</td>${yearRow1}</tr>
-                            <tr style="color:${brand2.primary_color}"><td>${brand2.name}</td>${yearRow2}</tr>
+                            <tr style="color:${brand1.primary_color}"><td>${escapeHtml(brand1.name)}</td>${yearRow1}</tr>
+                            <tr style="color:${brand2.primary_color}"><td>${escapeHtml(brand2.name)}</td>${yearRow2}</tr>
                         </tbody>
                     </table>
                 </div>
@@ -17151,9 +14997,9 @@ async function loadBrandComparePage() {
                     <div class="bc-section-title"><i class="fas fa-horse-head"></i> HP Segment Dağılımı</div>
                     <table class="bc-mirror-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-mid-col">Segment</th>
-                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
                         </tr></thead>
                         <tbody>${hpRows}</tbody>
                     </table>
@@ -17164,9 +15010,9 @@ async function loadBrandComparePage() {
                     <div class="bc-section-title"><i class="fas fa-map-marker-alt"></i> En Çok Satılan İller</div>
                     <table class="bc-mirror-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-mid-col">#</th>
-                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
                         </tr></thead>
                         <tbody>${provRows}</tbody>
                     </table>
@@ -17177,9 +15023,9 @@ async function loadBrandComparePage() {
                     <div class="bc-section-title"><i class="fas fa-sliders-h"></i> Kategori & Çekiş</div>
                     <table class="bc-mirror-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">${brand1.name}</th>
+                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-mid-col">Özellik</th>
-                            <th style="color:${brand2.primary_color}">${brand2.name}</th>
+                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
                         </tr></thead>
                         <tbody>
                             <tr>
@@ -17225,7 +15071,7 @@ async function loadBrandComparePage() {
             </div>
 
             <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('brand-compare', {brand1:'${brand1.name}',brand2:'${brand2.name}',data1:${JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models})},data2:${JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models})},maxYear:${max_year}}, 'bcAiPanel')">
+                <button class="ai-btn" onclick="requestAiAnalysis('brand-compare', {brand1:${jsArg(brand1.name)},brand2:${jsArg(brand2.name)},data1:${escapeHtml(JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models}))},data2:${escapeHtml(JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models}))},maxYear:${max_year}}, 'bcAiPanel')">
                     <i class="fas fa-robot"></i> AI Karşılaştırma Raporu
                 </button>
                 <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
@@ -17283,235 +15129,6 @@ async function loadBrandComparePage() {
 // ============================================
 let tarmakbirSelectedYear = null;
 
-async function loadTarmakBirPage() {
-    try {
-        const targetYear = tarmakbirSelectedYear || selectedYear;
-        const data = await API.getTarmakBir(targetYear);
-        if (!data) return;
-
-        const { selected_year, registration_years, months_data, model_breakdown, max_month, available_years } = data;
-        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
-
-        // Year selector options
-        let yearOptions = '';
-        (available_years || []).forEach(y => {
-            yearOptions += `<option value="${y}" ${y === selected_year ? 'selected' : ''}>${y}</option>`;
-        });
-
-        // --- Build Table ---
-        // Header: Yıl | 1 | 2 | ... | 12 | Toplam
-        let headerCells = '<th class="tb-header-label">Yıl</th>';
-        for (let m = 1; m <= 12; m++) {
-            headerCells += `<th class="tb-month-header">${m}</th>`;
-        }
-        headerCells += '<th class="tb-total-header">Toplam</th>';
-
-        // Data rows - 2 registration years
-        let bodyRows = '';
-        const rowColors = ['#2563eb', '#7c3aed', '#f59e0b', '#06b6d4', '#22c55e'];
-        registration_years.forEach((ry, idx) => {
-            const rowData = months_data[ry] || {};
-            let rowTotal = 0;
-            let cells = `<td class="tb-year-cell" style="color:${rowColors[idx % rowColors.length]}; font-weight:700;">${ry}</td>`;
-            
-            for (let m = 1; m <= 12; m++) {
-                const val = rowData[m] || 0;
-                rowTotal += val;
-                const hasData = val > 0;
-                const opacity = hasData ? 1 : 0.3;
-                cells += `<td class="tb-data-cell" style="opacity:${opacity}">${hasData ? val.toLocaleString('tr-TR') : '-'}</td>`;
-            }
-            cells += `<td class="tb-total-cell">${rowTotal > 0 ? rowTotal.toLocaleString('tr-TR') : '-'}</td>`;
-            
-            bodyRows += `<tr class="tb-data-row ${idx === 0 ? 'tb-row-primary' : 'tb-row-secondary'}">${cells}</tr>`;
-        });
-
-        // Delta row (fark)
-        if (registration_years.length >= 2) {
-            const curr = months_data[registration_years[0]] || {};
-            const prev = months_data[registration_years[1]] || {};
-            let deltaCells = '<td class="tb-year-cell" style="font-weight:700; color:#f59e0b;">Δ Fark</td>';
-            let totalCurr = 0, totalPrev = 0;
-            
-            for (let m = 1; m <= 12; m++) {
-                const c = curr[m] || 0;
-                const p = prev[m] || 0;
-                totalCurr += c;
-                totalPrev += p;
-                const diff = c - p;
-                if (c === 0 && p === 0) {
-                    deltaCells += '<td class="tb-data-cell" style="opacity:0.3">-</td>';
-                } else {
-                    const cls = diff >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
-                    const arrow = diff >= 0 ? '▲' : '▼';
-                    deltaCells += `<td class="tb-data-cell ${cls}">${arrow} ${Math.abs(diff).toLocaleString('tr-TR')}</td>`;
-                }
-            }
-            const totalDiff = totalCurr - totalPrev;
-            const totalCls = totalDiff >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
-            const totalArrow = totalDiff >= 0 ? '▲' : '▼';
-            deltaCells += `<td class="tb-total-cell ${totalCls}">${totalArrow} ${Math.abs(totalDiff).toLocaleString('tr-TR')}</td>`;
-            bodyRows += `<tr class="tb-delta-row">${deltaCells}</tr>`;
-
-            // % Değişim row
-            let pctCells = '<td class="tb-year-cell" style="font-weight:700; color:#06b6d4;">% Değişim</td>';
-            for (let m = 1; m <= 12; m++) {
-                const c = curr[m] || 0;
-                const p = prev[m] || 0;
-                if (p === 0 && c === 0) {
-                    pctCells += '<td class="tb-data-cell" style="opacity:0.3">-</td>';
-                } else if (p === 0) {
-                    pctCells += '<td class="tb-data-cell tb-delta-pos">YENİ</td>';
-                } else {
-                    const pct = ((c - p) * 100 / p).toFixed(1);
-                    const cls = parseFloat(pct) >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
-                    pctCells += `<td class="tb-data-cell ${cls}">%${pct}</td>`;
-                }
-            }
-            if (totalPrev === 0 && totalCurr > 0) {
-                pctCells += '<td class="tb-total-cell tb-delta-pos">YENİ</td>';
-            } else if (totalPrev > 0) {
-                const totalPct = ((totalCurr - totalPrev) * 100 / totalPrev).toFixed(1);
-                const totalPctCls = parseFloat(totalPct) >= 0 ? 'tb-delta-pos' : 'tb-delta-neg';
-                pctCells += `<td class="tb-total-cell ${totalPctCls}">%${totalPct}</td>`;
-            } else {
-                pctCells += '<td class="tb-total-cell" style="opacity:0.3">-</td>';
-            }
-            bodyRows += `<tr class="tb-pct-row">${pctCells}</tr>`;
-        }
-
-        // --- Chart Data ---
-        const chartLabels = [];
-        const chartDataCurr = [];
-        const chartDataPrev = [];
-        for (let m = 1; m <= 12; m++) {
-            chartLabels.push(monthNames[m - 1]);
-            chartDataCurr.push((months_data[registration_years[0]] || {})[m] || 0);
-            if (registration_years.length > 1) {
-                chartDataPrev.push((months_data[registration_years[1]] || {})[m] || 0);
-            }
-        }
-
-        // --- Build Model Breakdown Table ---
-        let modelRows = '';
-        const mRowColors = ['#ec4899', '#f97316', '#22c55e', '#ef4444'];
-        Object.keys(model_breakdown).sort((a,b) => b-a).forEach((my, idx) => {
-            const rowData = model_breakdown[my] || {};
-            let rowTotal = 0;
-            let cells = `<td class="tb-year-cell" style="color:${mRowColors[idx % mRowColors.length]}; font-weight:700;">Model Yılı ${my}</td>`;
-            for (let m = 1; m <= 12; m++) {
-                const val = rowData[m] || 0;
-                rowTotal += val;
-                cells += `<td class="tb-data-cell">${val > 0 ? val.toLocaleString('tr-TR') : '-'}</td>`;
-            }
-            cells += `<td class="tb-total-cell">${rowTotal.toLocaleString('tr-TR')}</td>`;
-            modelRows += `<tr class="tb-item-row">${cells}</tr>`;
-        });
-
-        document.getElementById('pageContent').innerHTML = `
-            <div class="tb-container">
-                <div class="tm-top-bar">
-                    <div>
-                        <h2><i class="fas fa-warehouse" style="margin-right:8px;color:var(--brand-primary)"></i>TarmakBir - [GÜNCEL] Toplam Market Analizi</h2>
-                        <p>Dinamik Tarihsel Kıyaslama ve Model Yılı Detayı</p>
-                    </div>
-                    <div style="display:flex;gap:12px;align-items:center;">
-                        <label style="color:var(--text-muted);font-size:13px;">Kırılım Yılı:</label>
-                        <select id="tarmakbirYearFilter" class="year-select" onchange="reloadTarmakBir()" style="min-width:120px;">
-                            ${yearOptions}
-                        </select>
-                    </div>
-                </div>
-
-                <!-- Chart -->
-                <div class="chart-card" style="padding:24px; margin-bottom:24px;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-chart-bar" style="margin-right:8px;color:#3b82f6"></i>Tescil Yılı Kıyaslaması (${registration_years.slice(0,2).join(' & ')})</h3>
-                    <div style="position:relative;height:350px;"><canvas id="tarmakbirChart"></canvas></div>
-                </div>
-
-                <!-- MAIN TABLE: HISTORICAL COMPARISON -->
-                <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto; margin-bottom:24px;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-history" style="margin-right:8px;color:#8b5cf6"></i>Tüm Yıllar Tescil Dağılım Tablosu</h3>
-                    <table class="tb-table">
-                        <thead><tr>${headerCells}</tr></thead>
-                        <tbody>${bodyRows}</tbody>
-                    </table>
-                </div>
-
-                <!-- SECONDARY TABLE: MODEL YEAR BREAKDOWN -->
-                <div class="chart-card tb-table-card" style="padding:24px; overflow-x:auto;">
-                    <h3 style="color:var(--text-primary);margin:0 0 16px;"><i class="fas fa-tags" style="margin-right:8px;color:#ec4899"></i>${selected_year} Yılı Model Yılı Bazlı Detay</h3>
-                    <table class="tb-table">
-                        <thead><tr>${headerCells}</tr></thead>
-                        <tbody>${modelRows}</tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-
-        // Render Chart
-        const ctx = document.getElementById('tarmakbirChart').getContext('2d');
-        const datasets = [
-            {
-                label: `${registration_years[0]} Yılı`,
-                data: chartDataCurr,
-                backgroundColor: 'rgba(37,99,235,0.8)',
-                borderColor: '#2563eb',
-                borderWidth: 1,
-                borderRadius: 6
-            }
-        ];
-        if (registration_years.length > 1) {
-            datasets.push({
-                label: `${registration_years[1]} Yılı`,
-                data: chartDataPrev,
-                backgroundColor: 'rgba(124,58,237,0.6)',
-                borderColor: '#7c3aed',
-                borderWidth: 1,
-                borderRadius: 6
-            });
-        }
-
-        charts.tarmakbir = new Chart(ctx, {
-            type: 'bar',
-            data: { labels: chartLabels, datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'top',
-                        labels: { color: '#f1f5f9', font: { size: 13, family: 'Inter' }, usePointStyle: true, padding: 20 }
-                    },
-                    tooltip: {
-                        backgroundColor: '#1e293b',
-                        titleColor: '#f1f5f9',
-                        bodyColor: '#94a3b8',
-                        borderColor: '#334155',
-                        borderWidth: 1,
-                        callbacks: {
-                            label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('tr-TR')} adet`
-                        }
-                    },
-                    datalabels: { display: false }
-                },
-                scales: {
-                    x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: 'rgba(148,163,184,0.1)' } },
-                    y: {
-                        beginAtZero: true,
-                        ticks: { color: '#94a3b8', callback: v => v.toLocaleString('tr-TR') },
-                        grid: { color: 'rgba(148,163,184,0.08)' },
-                        title: { display: true, text: 'Satış Adet', color: '#94a3b8' }
-                    }
-                }
-            }
-        });
-
-    } catch (err) {
-        showError(err);
-    }
-}
-
 function reloadTarmakBir() {
     tarmakbirSelectedYear = parseInt(document.getElementById('tarmakbirYearFilter')?.value) || null;
     API.clearCache();
@@ -17524,79 +15141,6 @@ function reloadTarmakBir() {
 // TARMAKBIR2 PAGE - Bütün Model Yılları
 // ============================================
 let tarmakbir2SelectedYear = null;
-
-async function loadTarmakBir2Page() {
-    try {
-        const targetYear = tarmakbir2SelectedYear || selectedYear;
-        const data = await API.get(`/api/sales/tarmakbir-total?year=${targetYear}`);
-        if (!data) return;
-
-        const { selected_year, brands_data, months_total, grand_total, available_years } = data;
-        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
-
-        let yearOptions = '';
-        available_years.forEach(y => {
-            yearOptions += `<option value="${y}" ${y === selected_year ? 'selected' : ''}>${y}</option>`;
-        });
-
-        // --- Build Table ---
-        // Header
-        let headerCells = '<th>Markası</th>';
-        for (let m = 1; m <= 12; m++) headerCells += `<th>${monthNames[m-1]}</th>`;
-        headerCells += '<th>G.Toplam</th>';
-
-        // G.Toplam Row (Top row in screenshot)
-        let totalRow = '<tr class="tb2-total-row"><td>G.Toplam</td>';
-        for (let m = 1; m <= 12; m++) {
-            totalRow += `<td>${months_total[m] > 0 ? months_total[m].toLocaleString('tr-TR') : '-'}</td>`;
-        }
-        totalRow += `<td>${grand_total.toLocaleString('tr-TR')}</td></tr>`;
-
-        // Brand Rows
-        let brandRows = '';
-        Object.keys(brands_data).sort().forEach(b => {
-           const row = brands_data[b];
-           let cells = `<td>${b}</td>`;
-           for(let m=1; m<=12; m++) {
-               cells += `<td>${row[m] > 0 ? row[m].toLocaleString('tr-TR') : ''}</td>`;
-           }
-           cells += `<td class="tb2-brand-total">${row[0].toLocaleString('tr-TR')}</td>`;
-           brandRows += `<tr>${cells}</tr>`;
-        });
-
-        document.getElementById('pageContent').innerHTML = `
-            <div class="tb-container">
-                <div class="tm-top-bar">
-                    <div>
-                        <h2>Bütün Model Yılları</h2>
-                        <p>${selected_year} Yılı Marka Bazlı Satış Adetleri (Model Yılı Sınırlaması Olmadan)</p>
-                    </div>
-                    <div style="display:flex;gap:12px;align-items:center;">
-                        <label style="color:var(--text-muted);font-size:13px;">Veri Yılı:</label>
-                        <select id="tarmakbir2YearFilter" class="year-select" onchange="reloadTarmakBir2()">
-                            ${yearOptions}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="card" style="margin-top:16px;">
-                    <div class="card-body" style="overflow-x:auto; padding:0;">
-                        <table class="tb2-table">
-                            <thead><tr>${headerCells}</tr></thead>
-                            <tbody>
-                                ${totalRow}
-                                ${brandRows}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        `;
-
-    } catch (err) {
-        showError(err);
-    }
-}
 
 function reloadTarmakBir2() {
     tarmakbir2SelectedYear = parseInt(document.getElementById('tarmakbir2YearFilter')?.value) || null;
@@ -18235,7 +15779,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
     });
 
     const topProvinceChips = (provinceSales || []).slice(0, 6).map(item => `
-        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadWeatherDetail('${item.province_id}')">
+        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadWeatherDetail(${jsArg(item.province_id)})">
             <strong>${dashboardSafe(item.province_name)}</strong>
             <small>${fmtNum(item.total_sales)} adet</small>
         </button>
@@ -19355,7 +16899,7 @@ async function renderProvinceIntelligenceCenter(provinceId, provinceSales = []) 
         .filter(item => item.province_id)
         .slice(0, 8)
         .map(item => `
-            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadProvinceDetail('${item.province_id}')">
+            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadProvinceDetail(${jsArg(item.province_id)})">
                 <strong>${dashboardSafe(item.province_name || '-')}</strong>
                 <small>${focusBrandId ? `${fmtNum(item.total_sales || 0)} adet / ${fmtPct(item.share_pct || 0, 1)} pay` : `${fmtNum(item.total_sales || 0)} adet toplam`}</small>
             </button>
@@ -20542,7 +18086,7 @@ function showError(err) {
         <div class="empty-state">
             <i class="fas fa-exclamation-circle" style="color:var(--danger)"></i>
             <h3>Bir hata oluştu</h3>
-            <p>${err.message || 'Bilinmeyen hata'}</p>
+            <p>${escapeHtml(err.message || 'Bilinmeyen hata')}</p>
             <button class="btn-filter" onclick="navigateTo(currentPage)" style="margin-top:16px">Tekrar Dene</button>
         </div>
     `;

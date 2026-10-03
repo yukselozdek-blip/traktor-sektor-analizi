@@ -287,7 +287,7 @@
             grid.innerHTML = plans.map(p => {
                 const features = (() => { try { return typeof p.features === 'string' ? JSON.parse(p.features) : (p.features || []); } catch (e) { return []; } })();
                 return `
-                    <div class="plan-card" data-slug="${p.slug}" onclick="selectPlan('${p.slug}')">
+                    <div class="plan-card" data-slug="${escapeHtml(p.slug)}" onclick="selectPlan(this.dataset.slug)">
                         <div class="plan-tier">Tier ${p.tier_rank || 1}</div>
                         <div class="plan-name">${escapeHtml(p.name)}</div>
                         <div class="plan-price">₺${formatNumber(p.price_monthly)}<small>/ay</small></div>
@@ -308,7 +308,7 @@
             const sel = document.getElementById('brandSelect');
             const list = (Array.isArray(directory) ? directory : []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'tr'));
             sel.innerHTML = '<option value="">Marka seçin...</option>' +
-                list.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+                list.map(b => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join('');
         }
 
         function selectPlan(slug) {
