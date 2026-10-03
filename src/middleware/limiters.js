@@ -11,4 +11,14 @@ const SIGNUP_LIMITER = rateLimit({
     message: { error: 'Çok fazla kayıt denemesi. 1 saat bekleyin.' }
 });
 
-module.exports = { LOGIN_LIMITER, SIGNUP_LIMITER };
+const FORGOT_LIMITER = rateLimit({
+    windowMs: 60 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Çok fazla şifre sıfırlama isteği. 1 saat sonra tekrar deneyin.' }
+});
+// validate + reset uç noktaları için (token tahminini zorlaştırır)
+const RESET_LIMITER = rateLimit({
+    windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Çok fazla deneme. Lütfen daha sonra tekrar deneyin.' }
+});
+
+module.exports = { LOGIN_LIMITER, SIGNUP_LIMITER, FORGOT_LIMITER, RESET_LIMITER };

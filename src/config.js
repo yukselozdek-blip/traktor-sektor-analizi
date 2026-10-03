@@ -27,6 +27,9 @@ function errMsg(err) {
     return IS_PRODUCTION ? 'Sunucu hatası' : (err && err.message ? err.message : 'Sunucu hatası');
 }
 
+const PASSWORD_POLICY = /^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/;
+const PASSWORD_POLICY_MESSAGE = 'Şifre en az 10 karakter, 1 büyük harf, 1 sayı ve 1 özel karakter içermeli';
+
 const APP_BASE_URL = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
 const WHATSAPP_QUERY_API_KEY = process.env.WHATSAPP_QUERY_API_KEY || '';
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
@@ -48,6 +51,8 @@ module.exports = {
     IS_PRODUCTION,
     safeEqualStr,
     errMsg,
+    PASSWORD_POLICY,
+    PASSWORD_POLICY_MESSAGE,
     APP_BASE_URL,
     WHATSAPP_QUERY_API_KEY,
     WHATSAPP_VERIFY_TOKEN,
