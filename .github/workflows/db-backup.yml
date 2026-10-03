@@ -1,6 +1,6 @@
-name: Veritabanı Yedeği (Hetzner)
+name: Traktör Sektör Analizi - Veritabanı Yedeği (Hetzner Storage Box)
 
-# Her gece Railway Postgres yedeğini alır, GPG ile şifreler ve Hetzner Storage Box'a yükler.
+# Traktör Sektör Analizi uygulaması: her gece Railway Postgres yedeğini alır, GPG ile şifreler ve Hetzner Storage Box'a yükler.
 # Depo herkese açık olduğu için yedek ASLA artifact/commit olarak saklanmaz.
 on:
   schedule:
@@ -49,9 +49,9 @@ jobs:
           set -euo pipefail
           STAMP=$(date -u +%Y%m%d-%H%M)
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
-          /usr/lib/postgresql/18/bin/pg_dump --format=custom --no-owner --no-privileges --file "traktor-$STAMP.dump" "$DB_URL"
-          SIZE=$(stat -c %s "traktor-$STAMP.dump")
-          TABLES=$(/usr/lib/postgresql/18/bin/pg_restore --list "traktor-$STAMP.dump" | grep -c "TABLE DATA" || true)
+          /usr/lib/postgresql/18/bin/pg_dump --format=custom --no-owner --no-privileges --file "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump" "$DB_URL"
+          SIZE=$(stat -c %s "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump")
+          TABLES=$(/usr/lib/postgresql/18/bin/pg_restore --list "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump" | grep -c "TABLE DATA" || true)
           echo "Yedek boyutu: $SIZE bayt, veri tablosu: $TABLES"
           if [ "$SIZE" -lt 1000000 ] || [ "$TABLES" -lt 50 ]; then
             echo "::error::Yedek şüpheli derecede küçük/eksik (boyut=$SIZE, tablo=$TABLES). Yüklenmeyecek."
@@ -62,9 +62,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
-            --symmetric --cipher-algo AES256 -o "traktor-$STAMP.dump.gpg" "traktor-$STAMP.dump"
-          rm -f "traktor-$STAMP.dump"
-          ls -l "traktor-$STAMP.dump.gpg"
+            --symmetric --cipher-algo AES256 -o "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump.gpg" "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump"
+          rm -f "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump"
+          ls -l "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump.gpg"
 
       - name: Storage Box'a yükle ve eskileri temizle
         run: |
@@ -77,25 +77,25 @@ jobs:
           SFTP="sftp -q -P 23 -i $HOME/.ssh/id_backup -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts_backup"
           DEST="$SB_USER@$SB_HOST"
 
-          printf -- '-mkdir backups\nput traktor-%s.dump.gpg backups/traktor-%s.dump.gpg\n' "$STAMP" "$STAMP" | $SFTP -b - "$DEST"
+          printf -- '-mkdir traktor-sektor-analizi-yedekler\nput traktor-sektor-analizi_hetzner-storagebox_%s.dump.gpg traktor-sektor-analizi-yedekler/traktor-sektor-analizi_hetzner-storagebox_%s.dump.gpg\n' "$STAMP" "$STAMP" | $SFTP -b - "$DEST"
 
           # Yüklemeyi doğrula
-          LOCAL_SIZE=$(stat -c %s "traktor-$STAMP.dump.gpg")
-          REMOTE_LS=$(printf 'ls -l backups\n' | $SFTP -b - "$DEST" || true)
-          echo "$REMOTE_LS" | grep "traktor-$STAMP.dump.gpg" | grep -q "$LOCAL_SIZE" \
+          LOCAL_SIZE=$(stat -c %s "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump.gpg")
+          REMOTE_LS=$(printf 'ls -l traktor-sektor-analizi-yedekler\n' | $SFTP -b - "$DEST" || true)
+          echo "$REMOTE_LS" | grep "traktor-sektor-analizi_hetzner-storagebox_$STAMP.dump.gpg" | grep -q "$LOCAL_SIZE" \
             || { echo "::error::Yüklenen dosya boyutu doğrulanamadı"; exit 1; }
           echo "Yükleme doğrulandı."
 
           # Son $KEEP yedek hariç eskileri sil
-          printf 'ls -1 backups\n' | $SFTP -b - "$DEST" \
-            | grep -oE 'traktor-[0-9]{8}-[0-9]{4}\.dump\.gpg' | sort -u > remote_list.txt
+          printf 'ls -1 traktor-sektor-analizi-yedekler\n' | $SFTP -b - "$DEST" \
+            | grep -oE 'traktor-sektor-analizi_hetzner-storagebox_[0-9]{8}-[0-9]{4}\.dump\.gpg' | sort -u > remote_list.txt
           TOTAL=$(wc -l < remote_list.txt)
           if [ "$TOTAL" -gt "$KEEP" ]; then
-            head -n $((TOTAL - KEEP)) remote_list.txt | sed 's#^#rm backups/#' | $SFTP -b - "$DEST"
+            head -n $((TOTAL - KEEP)) remote_list.txt | sed 's#^#rm traktor-sektor-analizi-yedekler/#' | $SFTP -b - "$DEST"
             echo "$((TOTAL - KEEP)) eski yedek silindi."
           fi
           echo "Toplam saklanan yedek: $(( TOTAL > KEEP ? KEEP : TOTAL ))"
 
       - name: Geçici dosyaları sil
         if: always()
-        run: rm -f traktor-*.dump traktor-*.dump.gpg remote_list.txt ~/.ssh/id_backup ~/.ssh/known_hosts_backup
+        run: rm -f traktor-sektor-analizi_hetzner-storagebox_*.dump traktor-sektor-analizi_hetzner-storagebox_*.dump.gpg remote_list.txt ~/.ssh/id_backup ~/.ssh/known_hosts_backup

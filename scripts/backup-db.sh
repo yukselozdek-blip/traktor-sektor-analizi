@@ -46,7 +46,7 @@ mkdir -p "$BACKUP_DIR"
 
 # Yedek dosya adı (YYYYMMDD-HHMMSS formatı)
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-DUMP_FILE="$BACKUP_DIR/traktor-$TIMESTAMP.dump"
+DUMP_FILE="$BACKUP_DIR/traktor-sektor-analizi_hetzner-storagebox_$TIMESTAMP.dump"
 
 # Yedek al
 echo "Yedekleniyor: $DUMP_FILE"
@@ -58,6 +58,6 @@ echo "Başarılı. Dosya boyutu: $SIZE"
 
 # Son 8 yedek dışındakileri sil
 echo "Eski yedekler temizleniyor (son 8 tutulacak)..."
-ls -t "$BACKUP_DIR"/traktor-*.dump 2>/dev/null | tail -n +9 | xargs -r rm -v
+ls -t "$BACKUP_DIR"/traktor-sektor-analizi_hetzner-storagebox_*.dump 2>/dev/null | tail -n +9 | xargs -r rm -v
 
 echo "Hazır!"
