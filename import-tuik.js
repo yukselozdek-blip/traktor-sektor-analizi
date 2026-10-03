@@ -1,43 +1,152 @@
 const xlsx = require('xlsx');
 const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
-});
+const EXCEL_PATH = path.join(__dirname, 'data', 'TuikRapor.xlsx');
+const BATCH_SIZE = 1000;
 
-async function importExcel() {
-    const filePath = './data/TuikRapor.xlsx';
-    if (!fs.existsSync(filePath)) {
-        console.error('HATA: Excel dosyası bulunamadı:', filePath);
-        return { success: false, message: 'Dosya bulunamadı' };
+const TUIK_COLUMNS = ['Marka', 'TuikModelAdi', 'TescilYil', 'TescilAy', 'SehirKodu', 'SehirAdi',
+    'ModelYili', 'MotorHacmiCC', 'Renk', 'SatisAdet'];
+const TEKNIK_COLUMNS = ['Marka', 'Model', 'TuikModelAdi', 'FiyatUSD', 'EmisyonSeviyesi', 'CekisTipi',
+    'Koruma', 'VitesSayisi', 'Mensei', 'KullanimAlani', 'MotorMarka', 'SilindirSayisi',
+    'MotorGucuHP', 'MotorDevriRPM', 'MaksimumTork', 'DepoHacmiLT', 'HidrolikKaldirma', 'Agirlik',
+    'DingilMesafesi', 'Uzunluk', 'Yukseklik', 'Genislik', 'ModelYillari'];
+
+// Sayfanın ilk satırındaki (başlık) sütun adlarını döndürür
+function readHeaders(sheet) {
+    const headers = new Set();
+    if (!sheet || !sheet['!ref']) return headers;
+    const range = xlsx.utils.decode_range(sheet['!ref']);
+    for (let c = range.s.c; c <= range.e.c; c++) {
+        const cell = sheet[xlsx.utils.encode_cell({ r: range.s.r, c })];
+        if (cell && cell.v !== undefined && cell.v !== null) headers.add(String(cell.v).trim());
+    }
+    return headers;
+}
+
+function assertColumns(sheet, name, required) {
+    const headers = readHeaders(sheet);
+    const missing = required.filter(c => !headers.has(c));
+    if (missing.length) {
+        throw new Error(`${name} sayfasında zorunlu sütun(lar) eksik: ${missing.join(', ')}`);
+    }
+}
+
+// Çoklu satır INSERT (unnest ile, parametreli). cols: [{name, type, get(row)}]
+async function batchInsert(client, table, cols, rows, extraSql) {
+    const names = cols.map(c => c.name).join(', ');
+    const unnestArgs = cols.map((c, i) => `$${i + 1}::${c.type}[]`).join(', ');
+    const sql = `INSERT INTO ${table} (${names}) SELECT * FROM unnest(${unnestArgs})${extraSql || ''}`;
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const chunk = rows.slice(i, i + BATCH_SIZE);
+        await client.query(sql, cols.map(c => chunk.map(r => {
+            const v = c.get(r);
+            return v === undefined ? null : v;
+        })));
+    }
+}
+
+async function importExcel(poolOrClient) {
+    const started = Date.now();
+
+    // ---- 1. Çalışma kitabını DB'ye dokunmadan oku ve doğrula ----
+    if (!fs.existsSync(EXCEL_PATH)) {
+        throw new Error(`Excel dosyası bulunamadı: ${EXCEL_PATH}`);
     }
 
     console.log('📦 Excel dosyası okunuyor...');
-    const workbook = xlsx.readFile(filePath);
-    
+    const workbook = xlsx.readFile(EXCEL_PATH);
+
     const tuikSheet = workbook.Sheets['TuikVeri'];
     const teknikSheet = workbook.Sheets['TeknikVeri'];
-    
     if (!tuikSheet || !teknikSheet) {
-        console.error('HATA: TuikVeri veya TeknikVeri sayfası bulunamadı.');
-        process.exit(1);
+        throw new Error('TuikVeri veya TeknikVeri sayfası bulunamadı.');
     }
+    assertColumns(tuikSheet, 'TuikVeri', TUIK_COLUMNS);
+    assertColumns(teknikSheet, 'TeknikVeri', TEKNIK_COLUMNS);
 
     const tuikData = xlsx.utils.sheet_to_json(tuikSheet);
     const teknikData = xlsx.utils.sheet_to_json(teknikSheet);
 
+    if (tuikData.length === 0) throw new Error('TuikVeri sayfasında hiç kayıt yok.');
+    if (teknikData.length === 0) throw new Error('TeknikVeri sayfasında hiç kayıt yok.');
+
     console.log(`📊 TuikVeri: ${tuikData.length} kayıt okundu.`);
     console.log(`⚙️ TeknikVeri: ${teknikData.length} kayıt okundu.`);
 
-    const client = await pool.connect();
-    
+    // ---- 2. Satırları bellekte hazırla (DB gerekmez) ----
+    const teknikRows = teknikData.map(row => ({
+        marka: row['Marka'], model: row['Model'], tuikModelAdi: row['TuikModelAdi'],
+        fiyatUsd: parseFloat(row['FiyatUSD']) || null, emisyon: row['EmisyonSeviyesi'],
+        cekis: row['CekisTipi'], koruma: row['Koruma'], vites: row['VitesSayisi'],
+        mensei: row['Mensei'], kullanim: row['KullanimAlani'], motorMarka: row['MotorMarka'],
+        silindir: parseInt(row['SilindirSayisi']) || null,
+        hp: parseFloat(row['MotorGucuHP']) || null, rpm: parseInt(row['MotorDevriRPM']) || null,
+        tork: parseFloat(row['MaksimumTork']) || null, depo: parseFloat(row['DepoHacmiLT']) || null,
+        hidrolik: parseFloat(row['HidrolikKaldirma']) || null, agirlik: parseFloat(row['Agirlik']) || null,
+        dingil: parseInt(row['DingilMesafesi']) || null, uzunluk: parseInt(row['Uzunluk']) || null,
+        yukseklik: parseInt(row['Yukseklik']) || null, genislik: parseInt(row['Genislik']) || null,
+        modelYillari: row['ModelYillari']
+    }));
+
+    const getHpRange = (hp) => {
+        if (!hp) return null;
+        if (hp <= 39) return '1-39';
+        if (hp <= 49) return '40-49';
+        if (hp <= 54) return '50-54';
+        if (hp <= 59) return '55-59';
+        if (hp <= 69) return '60-69';
+        if (hp <= 79) return '70-79';
+        if (hp <= 89) return '80-89';
+        if (hp <= 99) return '90-99';
+        if (hp <= 109) return '100-109';
+        if (hp <= 119) return '110-119';
+        return '120+';
+    };
+
+    const teknikMap = {};
+    for (const t of teknikData) {
+        if (t['TuikModelAdi']) {
+            teknikMap[String(t['TuikModelAdi']).toUpperCase()] = t;
+        }
+    }
+
+    // Geçerli TuikVeri satırları
+    const tuikRows = [];
+    for (const row of tuikData) {
+        const tescilYil = parseInt(row['TescilYil']);
+        const tescilAy = parseInt(row['TescilAy']);
+        const satisAdet = parseInt(row['SatisAdet']) || 0;
+        const marka = String(row['Marka']).trim();
+        const sehirAdi = String(row['SehirAdi']).trim();
+        const sehirKodu = parseInt(row['SehirKodu']);
+        const modelYili = parseInt(row['ModelYili']);
+        const tuikModelAdi = String(row['TuikModelAdi'] || '').trim();
+
+        if (!tescilYil || !tescilAy || isNaN(satisAdet) || satisAdet <= 0 || !marka) continue;
+
+        tuikRows.push({
+            row, tescilYil, tescilAy, satisAdet, marka, sehirAdi, sehirKodu, modelYili, tuikModelAdi
+        });
+    }
+    if (tuikRows.length === 0) {
+        throw new Error('TuikVeri sayfasında geçerli (yıl, ay, adet > 0, marka dolu) satır bulunamadı.');
+    }
+
+    // ---- 3. Tek transaction: şema + temizle + yükle + sales_data üret ----
+    const ownPool = !poolOrClient;
+    const pool = ownPool ? new Pool({ connectionString: process.env.DATABASE_URL }) : poolOrClient;
+    const isClient = !ownPool && typeof pool.release === 'function';
+    const client = isClient ? pool : await pool.connect();
+
     try {
         await client.query('BEGIN');
+        // Eşzamanlı iki import çalışmasını engelle (transaction bitince kilit kalkar)
+        await client.query('SELECT pg_advisory_xact_lock(724001)');
 
         console.log('🏗️ Veritabanı tabloları güncelleniyor (tuik_veri, teknik_veri eklenecek)...');
-        
         await client.query(`
             CREATE TABLE IF NOT EXISTS tuik_veri (
                 id SERIAL PRIMARY KEY,
@@ -81,14 +190,11 @@ async function importExcel() {
             );
         `);
 
-        // Temizle
-        await client.query('TRUNCATE tuik_veri RESTART IDENTITY CASCADE');
-        await client.query('TRUNCATE teknik_veri RESTART IDENTITY CASCADE');
-        
-        // sales_data tablosuna model_year ve diğer özellikleri taşıyan sütunlar ekleyelim (TarmakBir uyumluluğu)
         await client.query(`ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER;`);
 
-        // UNIQUE kısıtlamalarını temizleyelim (çünkü Excel'de aynı ay/marka için birden fazla satır olabilir)
+        // Excel'de aynı ay/marka için birden fazla satır olabileceğinden orijinal davranış:
+        // sales_data üzerindeki UNIQUE kısıtlamalarını kaldır (artık transaction içinde;
+        // hata olursa geri alınır). Şemada sales_data için UNIQUE kısıtı yoktur.
         await client.query(`
             DO $$ 
             DECLARE 
@@ -103,104 +209,56 @@ async function importExcel() {
             END $$;
         `);
 
-        // Tabloyu temizle (TRUNCATE Delete'den çok daha hızlıdır)
-        console.log('🗑️ Eski veriler temizleniyor...');
+        console.log('🗑️ Eski veriler temizleniyor (transaction içinde)...');
         await client.query('TRUNCATE sales_data, tuik_veri, teknik_veri RESTART IDENTITY CASCADE');
 
-        // 2. TeknikVeri Excel'den DB'ye aktarımı
+        // TeknikVeri
         console.log('📥 TeknikVeri Excel verileri SQL e yazılıyor...');
-        for (const row of teknikData) {
-            await client.query(`
-                INSERT INTO teknik_veri (
-                    marka, model, tuik_model_adi, fiyat_usd, emisyon_seviyesi, cekis_tipi,
-                    koruma, vites_sayisi, mensei, kullanim_alani, motor_marka, silindir_sayisi,
-                    motor_gucu_hp, motor_devri_rpm, maksimum_tork, depo_hacmi_lt, hidrolik_kaldirma,
-                    agirlik, dingil_mesafesi, uzunluk, yukseklik, genislik, model_yillari
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
-            `, [
-                row['Marka'], row['Model'], row['TuikModelAdi'],
-                parseFloat(row['FiyatUSD']) || null, row['EmisyonSeviyesi'], row['CekisTipi'],
-                row['Koruma'], row['VitesSayisi'], row['Mensei'], row['KullanimAlani'],
-                row['MotorMarka'], parseInt(row['SilindirSayisi']) || null,
-                parseFloat(row['MotorGucuHP']) || null, parseInt(row['MotorDevriRPM']) || null,
-                parseFloat(row['MaksimumTork']) || null, parseFloat(row['DepoHacmiLT']) || null,
-                parseFloat(row['HidrolikKaldirma']) || null, parseFloat(row['Agirlik']) || null,
-                parseInt(row['DingilMesafesi']) || null, parseInt(row['Uzunluk']) || null,
-                parseInt(row['Yukseklik']) || null, parseInt(row['Genislik']) || null,
-                row['ModelYillari']
-            ]);
-        }
+        await batchInsert(client, 'teknik_veri', [
+            { name: 'marka', type: 'text', get: r => r.marka },
+            { name: 'model', type: 'text', get: r => r.model },
+            { name: 'tuik_model_adi', type: 'text', get: r => r.tuikModelAdi },
+            { name: 'fiyat_usd', type: 'numeric', get: r => r.fiyatUsd },
+            { name: 'emisyon_seviyesi', type: 'text', get: r => r.emisyon },
+            { name: 'cekis_tipi', type: 'text', get: r => r.cekis },
+            { name: 'koruma', type: 'text', get: r => r.koruma },
+            { name: 'vites_sayisi', type: 'text', get: r => r.vites },
+            { name: 'mensei', type: 'text', get: r => r.mensei },
+            { name: 'kullanim_alani', type: 'text', get: r => r.kullanim },
+            { name: 'motor_marka', type: 'text', get: r => r.motorMarka },
+            { name: 'silindir_sayisi', type: 'integer', get: r => r.silindir },
+            { name: 'motor_gucu_hp', type: 'numeric', get: r => r.hp },
+            { name: 'motor_devri_rpm', type: 'integer', get: r => r.rpm },
+            { name: 'maksimum_tork', type: 'numeric', get: r => r.tork },
+            { name: 'depo_hacmi_lt', type: 'numeric', get: r => r.depo },
+            { name: 'hidrolik_kaldirma', type: 'numeric', get: r => r.hidrolik },
+            { name: 'agirlik', type: 'numeric', get: r => r.agirlik },
+            { name: 'dingil_mesafesi', type: 'integer', get: r => r.dingil },
+            { name: 'uzunluk', type: 'integer', get: r => r.uzunluk },
+            { name: 'yukseklik', type: 'integer', get: r => r.yukseklik },
+            { name: 'genislik', type: 'integer', get: r => r.genislik },
+            { name: 'model_yillari', type: 'text', get: r => r.modelYillari }
+        ], teknikRows);
 
-        // 3. Markaları Normalize Et
-        let brandCache = {};
+        // Marka / il önbellekleri
+        const brandCache = {};
         const brandsRes = await client.query('SELECT id, name FROM brands');
         brandsRes.rows.forEach(b => { brandCache[b.name.toUpperCase()] = b.id; });
 
-        // 4. İlleri Normalize Et
-        let provCache = {};
+        const provCache = {};
         const provRes = await client.query('SELECT id, name, plate_code FROM provinces');
-        provRes.rows.forEach(p => { 
-            provCache[p.name.toUpperCase()] = p.id; 
+        provRes.rows.forEach(p => {
+            provCache[p.name.toUpperCase()] = p.id;
             provCache[p.plate_code] = p.id;
         });
 
-        // HP Segment Helper (uygulamada filtreler için)
-        const getHpRange = (hp) => {
-            if (!hp) return null;
-            if (hp <= 39) return '1-39';
-            if (hp <= 49) return '40-49';
-            if (hp <= 54) return '50-54';
-            if (hp <= 59) return '55-59';
-            if (hp <= 69) return '60-69';
-            if (hp <= 79) return '70-79';
-            if (hp <= 89) return '80-89';
-            if (hp <= 99) return '90-99';
-            if (hp <= 109) return '100-109';
-            if (hp <= 119) return '110-119';
-            return '120+';
-        };
-
-        const teknikMap = {};
-        for (const t of teknikData) {
-            if (t['TuikModelAdi']) {
-                teknikMap[String(t['TuikModelAdi']).toUpperCase()] = t;
-            }
-        }
-
-        // 5. TuikVeri Insert (Ham Veri + Dashboard Mapping)
         console.log('📥 TuikVeri (Satışlar) SQL e işleniyor ve Dashboard için eşleştiriliyor...');
-        
-        let processedSales = 0;
-        let unmappedBrands = new Set();
-        
-        // Veritabanına toplu aktarım için hafızada özetleme (aggregation) yapalım
-        // Çünkü aynı grup parametrelerine sahip birden fazla model satırı olabilir
-        const salesBucket = {}; 
+        const unmappedBrands = new Set();
+        const salesBucket = {};
 
-        for (const row of tuikData) {
-            const tescilYil = parseInt(row['TescilYil']);
-            const tescilAy = parseInt(row['TescilAy']);
-            const satisAdet = parseInt(row['SatisAdet']) || 0;
-            const marka = String(row['Marka']).trim();
-            const sehirAdi = String(row['SehirAdi']).trim();
-            const sehirKodu = parseInt(row['SehirKodu']);
-            const modelYili = parseInt(row['ModelYili']);
-            const tuikModelAdi = String(row['TuikModelAdi'] || '').trim();
+        for (const t of tuikRows) {
+            const { row, tescilYil, tescilAy, satisAdet, marka, sehirAdi, sehirKodu, modelYili, tuikModelAdi } = t;
 
-            if (!tescilYil || !tescilAy || isNaN(satisAdet) || satisAdet <= 0 || !marka) continue;
-
-            // 5a. Tam İstenilen Şekilde `tuik_veri` Tablosuna Aktarım
-            await client.query(`
-                INSERT INTO tuik_veri (
-                    marka, tuik_model_adi, tescil_yil, tescil_ay, sehir_kodu,
-                    sehir_adi, model_yili, motor_hacmi_cc, renk, satis_adet
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-            `, [
-                marka, tuikModelAdi, tescilYil, tescilAy, sehirKodu || null,
-                sehirAdi, modelYili || null, String(row['MotorHacmiCC'] || ''), String(row['Renk'] || ''), satisAdet
-            ]);
-
-            // 5b. Platformun Çalışması İçin `sales_data` Tablosuna Eşleştirme (Mapping)
             let brandId = brandCache[marka.toUpperCase()];
             if (!brandId) {
                 const slug = marka.toLowerCase().replace(/\\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -210,10 +268,9 @@ async function importExcel() {
                 unmappedBrands.add(marka);
             }
 
-            // Plaka veya Sehir adi ile İlleri bulalım
             let provinceId = provCache[sehirAdi.toUpperCase()];
             if (!provinceId && sehirKodu) {
-                let pCode = sehirKodu.toString().padStart(2, '0');
+                const pCode = sehirKodu.toString().padStart(2, '0');
                 provinceId = provCache[pCode];
             }
 
@@ -232,53 +289,88 @@ async function importExcel() {
                 category = String(teknik['KullanimAlani'] || '').toLowerCase().includes('bahçe') ? 'bahce' : 'tarla';
             }
 
-            // Bucket key oluştur (Grup parametreleri)
             const bucketKey = `${brandId}-${provinceId || 0}-${tescilYil}-${tescilAy}-${category}-${cabinType}-${driveType}-${hpRange || 'N/A'}-${gearConfig}-${modelYili || 0}`;
-            
+
             if (!salesBucket[bucketKey]) {
                 salesBucket[bucketKey] = {
-                    brandId, provinceId, year: tescilYil, month: tescilAy, 
+                    brandId, provinceId, year: tescilYil, month: tescilAy,
                     quantity: 0, category, cabinType, driveType, hpRange, gearConfig, modelYear: modelYili
                 };
             }
             salesBucket[bucketKey].quantity += satisAdet;
+            t.row = row;
         }
 
-        console.log(`📥 Toplam ${Object.keys(salesBucket).length} farklı veri grubu sales_data'ya aktarılıyor...`);
+        // tuik_veri ham veri
+        await batchInsert(client, 'tuik_veri', [
+            { name: 'marka', type: 'text', get: t => t.marka },
+            { name: 'tuik_model_adi', type: 'text', get: t => t.tuikModelAdi },
+            { name: 'tescil_yil', type: 'integer', get: t => t.tescilYil },
+            { name: 'tescil_ay', type: 'integer', get: t => t.tescilAy },
+            { name: 'sehir_kodu', type: 'integer', get: t => t.sehirKodu || null },
+            { name: 'sehir_adi', type: 'text', get: t => t.sehirAdi },
+            { name: 'model_yili', type: 'integer', get: t => t.modelYili || null },
+            { name: 'motor_hacmi_cc', type: 'text', get: t => String(t.row['MotorHacmiCC'] || '') },
+            { name: 'renk', type: 'text', get: t => String(t.row['Renk'] || '') },
+            { name: 'satis_adet', type: 'integer', get: t => t.satisAdet }
+        ], tuikRows);
 
-        // 6. Bucket'ları Veritabanına Yükle
-        for (const key in salesBucket) {
-            const s = salesBucket[key];
-            try {
-                await client.query(`
-                    INSERT INTO sales_data (
-                        brand_id, province_id, year, month, quantity, 
-                        category, cabin_type, drive_type, hp_range, gear_config, model_year, data_source
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'TuikRapor_Excel')
-                `, [
-                    s.brandId, s.provinceId || null, s.year, s.month, s.quantity,
-                    s.category, s.cabinType, s.driveType, s.hpRange, s.gearConfig, s.modelYear || null
-                ]);
-                processedSales++;
-            } catch (err) {
-                console.error("Sales DB insert error:", err.message);
-            }
+        const salesRows = Object.values(salesBucket);
+        console.log(`📥 Toplam ${salesRows.length} farklı veri grubu sales_data'ya aktarılıyor...`);
+
+        const salesCols = [
+            { name: 'brand_id', type: 'integer', get: s => s.brandId },
+            { name: 'province_id', type: 'integer', get: s => s.provinceId || null },
+            { name: 'year', type: 'integer', get: s => s.year },
+            { name: 'month', type: 'integer', get: s => s.month },
+            { name: 'quantity', type: 'integer', get: s => s.quantity },
+            { name: 'category', type: 'text', get: s => s.category },
+            { name: 'cabin_type', type: 'text', get: s => s.cabinType },
+            { name: 'drive_type', type: 'text', get: s => s.driveType },
+            { name: 'hp_range', type: 'text', get: s => s.hpRange },
+            { name: 'gear_config', type: 'text', get: s => s.gearConfig },
+            { name: 'model_year', type: 'integer', get: s => s.modelYear || null }
+        ];
+        // data_source sabit değer
+        const names = salesCols.map(c => c.name).join(', ');
+        const unnestArgs = salesCols.map((c, i) => `$${i + 1}::${c.type}[]`).join(', ');
+        const salesSql = `INSERT INTO sales_data (${names}, data_source) SELECT u.*, 'TuikRapor_Excel' FROM unnest(${unnestArgs}) AS u`;
+        for (let i = 0; i < salesRows.length; i += BATCH_SIZE) {
+            const chunk = salesRows.slice(i, i + BATCH_SIZE);
+            await client.query(salesSql, salesCols.map(c => chunk.map(s => c.get(s))));
         }
 
         await client.query('COMMIT');
+
+        const result = {
+            tuik: tuikRows.length,
+            teknik: teknikRows.length,
+            sales: salesRows.length,
+            ms: Date.now() - started
+        };
         console.log('✅ BÜTÜN EXCEL VERİLERİ BAŞARIYLA YÜKLENDİ!');
-        console.log(`📊 Yeni Tablolar (tuik_veri, teknik_veri) birebir istendiği gibi oluşturuldu.`);
-        console.log(`📊 Toplam ${processedSales} satış kaydı Dashboard platformunu beslemek için sales_data tablosuna map edildi.`);
+        console.log(`📊 tuik_veri: ${result.tuik}, teknik_veri: ${result.teknik}, sales_data: ${result.sales} kayıt (${result.ms} ms).`);
         if (unmappedBrands.size > 0) console.log('⚠️ Yeni Tanimlanan Markalar:', Array.from(unmappedBrands));
-        
-        return { success: true, count: processedSales };
+
+        // Geriye dönük uyumluluk: eski dönüş alanları
+        return Object.assign({ success: true, count: result.sales }, result);
     } catch (e) {
-        await client.query('ROLLBACK');
-        console.error('HATA OLUŞTU:', e);
-        return { success: false, message: e.message };
+        try { await client.query('ROLLBACK'); } catch (_) { /* bağlantı kopmuş olabilir */ }
+        console.error('HATA OLUŞTU (işlem geri alındı, eski veriler korundu):', e.message);
+        throw e;
     } finally {
-        client.release();
+        if (!isClient) client.release();
+        if (ownPool) await pool.end();
     }
 }
 
 module.exports = { importExcel };
+
+if (require.main === module) {
+    importExcel()
+        .then(() => process.exit(0))
+        .catch((err) => {
+            console.error('Import başarısız:', err.message);
+            process.exit(1);
+        });
+}
