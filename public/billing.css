@@ -476,8 +476,8 @@
 /* Superuser Preview Plan Switch */
 .superuser-preview-switch {
     position: fixed;
-    top: 14px;
-    right: 14px;
+    bottom: 78px;
+    right: 16px;
     z-index: 1300;
     display: inline-flex;
     align-items: center;
@@ -509,4 +509,9 @@
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
+}
+
+@media (max-width: 900px) {
+    .superuser-preview-switch { bottom: 72px; right: 12px; padding: 6px 10px; }
+    .superuser-preview-switch .sup-pre-label { display: none; }
 }
