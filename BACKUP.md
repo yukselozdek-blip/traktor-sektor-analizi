@@ -18,7 +18,13 @@ Veritabanı kaybı tüm işleri durdurur. **TÜİK içe aktarma (import-tuik.js)
 
 Her gece 04:17'de (Türkiye saati) GitHub, Railway veritabanının yedeğini alır, **şifreler** ve Hetzner Storage Box'a yükler. Son 14 yedek saklanır. Depo herkese açık olduğu için yedek GitHub'da **asla** tutulmaz. Çalıştıran: `.github/workflows/db-backup.yml`.
 
-### Tek seferlik kurulum (yaklaşık 15 dakika)
+### Tek seferlik kurulum (yaklaşık 20 dakika)
+
+**0) Hetzner'de bu uygulama için ayrı proje ve Storage Box açın.** Başka uygulamaların yedeklerine dokunmamak için:
+1. console.hetzner.com → **New project** → ad: **`TraktorSektorAnalizi_Yedek`**
+2. Bu projenin içinde **Storage Box** sipariş edin (en küçük boyut yeterli; güncel fiyatı sipariş ekranında görün).
+3. Kutu açılınca **SSH desteğini açın** (Storage Box ayarlarında) ve kutunun **sunucu adresini** (`uXXXXXX.your-storagebox.de`) ile **kullanıcı adını** (`uXXXXXX`) not edin. Aşağıda `YENI_KUTU` ve `YENI_KUTU_KULLANICI` olarak geçen yerlere bunları yazacaksınız.
+Mevcut `Atlas_KurulumSihirbazi` projesine ve kutusuna dokunmayın.
 
 **1) Yedek için yeni bir anahtar çifti üretin** (kendi bilgisayarınızda; kendi SSH anahtarınızı kullanmayın):
 ```bash
@@ -27,11 +33,11 @@ cat ~/.ssh/traktor-sektor-analizi_hetzner-storagebox.pub
 ```
 Son komut tek satırlık `ssh-ed25519 AAAA...` metnini yazar (açık anahtar, paylaşılabilir).
 
-**2) Açık anahtarı Storage Box'a ekleyin:** Hetzner Console → Storage Box → SSH anahtarları bölümü → yeni satır olarak yapıştırın (SSH desteğinin açık olduğundan emin olun).
+**2) Açık anahtarı Storage Box'a ekleyin:** Hetzner Console → **TraktorSektorAnalizi_Yedek** projesi → Storage Box → SSH anahtarları bölümü → yeni satır olarak yapıştırın (SSH desteğinin açık olduğundan emin olun).
 
 **3) Sunucunun parmak izini alın** (araya sahte sunucu girmesini engeller):
 ```bash
-ssh-keyscan -p 23 u648249.your-storagebox.de
+ssh-keyscan -p 23 YENI_KUTU.your-storagebox.de
 ```
 Çıkan **tüm satırları** kopyalayın.
 
@@ -47,8 +53,8 @@ Bu parola olmadan yedekler **açılamaz**. Kaybetmeyin, sohbete yazmayın.
 |---|---|
 | `BACKUP_DATABASE_URL` | Railway → Postgres → Variables → `DATABASE_PUBLIC_URL` |
 | `BACKUP_PASSPHRASE` | 4. adımdaki parola |
-| `STORAGEBOX_HOST` | `u648249.your-storagebox.de` |
-| `STORAGEBOX_USER` | `u648249` |
+| `STORAGEBOX_HOST` | `YENI_KUTU.your-storagebox.de` |
+| `STORAGEBOX_USER` | `YENI_KUTU_KULLANICI` |
 | `STORAGEBOX_SSH_KEY` | `cat ~/.ssh/traktor-sektor-analizi_hetzner-storagebox` çıktısının **tamamı** (`-----BEGIN` ile `-----END` satırları dahil) |
 | `STORAGEBOX_KNOWN_HOSTS` | 3. adımdaki satırlar |
 
