@@ -40,6 +40,21 @@ Tüm `CHANGE_ME` işaretlemelerini gerçek değerlerle değiştir:
 - AI sağlayıcı API anahtarları (OpenAI, Anthropic, MiniMax)
 - Harici API anahtarları (Bing Search, Brave Search, OpenWeatherMap)
 
+## E-posta (SMTP) kurulumu
+
+Şifre sıfırlama ve e-posta doğrulama mailleri SMTP ile gönderilir. **SMTP tanımlı değilse e-posta gönderilmez**: kullanıcı "Şifremi unuttum" dediğinde her zaman aynı genel mesajı görür ama mail ulaşmaz (sunucu ilk kullanımda tek bir uyarı loglar). Production'da `APP_BASE_URL` (örn. `https://alanadiniz.com`) de tanımlı olmalıdır; aksi halde mail içindeki bağlantı üretilemez.
+
+Gerekli ortam değişkenleri: `SMTP_HOST`, `SMTP_PORT` (varsayılan 587), `SMTP_SECURE` (465 için `true`), `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`.
+
+| Sağlayıcı | SMTP_HOST | Port | Kullanıcı / Şifre |
+|---|---|---|---|
+| Brevo | `smtp-relay.brevo.com` | 587 | Brevo SMTP login / SMTP anahtarı |
+| Resend | `smtp.resend.com` | 465 (`SMTP_SECURE=true`) veya 587 | Kullanıcı `resend`, şifre API anahtarı |
+| Mailgun | `smtp.mailgun.org` (AB: `smtp.eu.mailgun.org`) | 587 | `postmaster@alanadiniz` / SMTP şifresi |
+| Amazon SES | `email-smtp.<bölge>.amazonaws.com` | 587 | SES SMTP kimlik bilgileri (IAM'den ayrı üretilir) |
+
+Teslim edilebilirlik: `MAIL_FROM` adresinin alan adı için sağlayıcının verdiği **SPF** ve **DKIM** (mümkünse DMARC) DNS kayıtlarını ekleyin; aksi halde mailler spam'e düşer veya reddedilir. Şifre sıfırlama bağlantısı 30 dakika geçerli ve tek kullanımlıktır; token veritabanında yalnızca sha256 özeti olarak saklanır.
+
 ## Doğrulama
 
 - [ ] Docker Compose'u test et: `docker compose config -q`

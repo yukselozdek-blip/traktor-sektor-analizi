@@ -705,7 +705,7 @@
                         <input type="checkbox" name="remember_me" id="rememberMe">
                         <span>Beni hatırla</span>
                     </label>
-                    <a class="forgot-link" onclick="onForgotPassword()">Şifremi unuttum?</a>
+                    <a class="forgot-link" onclick="onForgotPassword()" role="button" tabindex="0">Şifremi unuttum?</a>
                 </div>
 
                 <button type="submit" class="btn-login-primary"><i class="fas fa-right-to-bracket"></i> Giriş Yap</button>
@@ -729,6 +729,17 @@
                 <div class="auth-foot">
                     Hesabınız yok mu? <a onclick="showTab('signup')">Üye Ol</a>
                 </div>
+            </form>
+
+            <!-- ŞİFRE SIFIRLAMA İSTEĞİ -->
+            <form class="auth-form" id="forgotForm" data-form="forgot">
+                <h2 class="login-welcome">Şifrenizi Sıfırlayın</h2>
+                <p style="margin:0 0 6px;color:var(--muted);font-size:13px;text-align:center;">Hesabınızın e-posta adresini girin; kayıtlıysa size şifre sıfırlama bağlantısı gönderelim.</p>
+                <div class="field compact">
+                    <input type="email" name="email" required autocomplete="email" maxlength="254" placeholder="E-posta adresiniz" id="forgotEmail">
+                </div>
+                <button type="submit" class="btn-login-primary" id="forgotSubmit"><i class="fas fa-paper-plane"></i> Sıfırlama Bağlantısı Gönder</button>
+                <div class="auth-foot"><a onclick="showTab('login')">Giriş ekranına dön</a></div>
             </form>
 
             <!-- SIGNUP WIZARD -->
@@ -1032,8 +1043,40 @@
         }
 
         function onForgotPassword() {
-            showInfo('Şifre sıfırlama yakında. Lütfen yukselozdek@gmail.com adresine ulaşın veya Üye Ol sekmesinden yeni hesap açın.');
+            showTab('forgot');
+            const lt = document.querySelector('.auth-tab[data-tab="login"]');
+            if (lt) lt.classList.add('is-active');
+            const le = document.querySelector('#loginForm input[name="email"]');
+            const fe = document.getElementById('forgotEmail');
+            if (le && fe && le.value && !fe.value) fe.value = le.value.trim();
+            if (fe) fe.focus();
         }
+
+        document.getElementById('forgotForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessages();
+            const btn = document.getElementById('forgotSubmit');
+            const email = document.getElementById('forgotEmail').value.trim().toLowerCase();
+            if (!email) { showError('E-posta adresi gerekli'); return; }
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    showInfo(data.message || 'Eğer bu e-posta kayıtlıysa, şifre sıfırlama bağlantısı gönderildi. Lütfen gelen kutunuzu kontrol edin.');
+                } else {
+                    showError(data.error || 'İstek gönderilemedi. Lütfen daha sonra tekrar deneyin.');
+                }
+            } catch (err) {
+                showError('Bağlantı hatası. Lütfen tekrar deneyin.');
+            } finally {
+                btn.disabled = false;
+            }
+        });
 
         function showMoreSignInWays() {
             showInfo('Şu anda Google ve kurumsal e-posta + şifre giriş yolları desteklenir. Kurumsal SSO/SAML Enterprise paketlere özel olarak yapılandırılabilir.');

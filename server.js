@@ -111,7 +111,7 @@ app.use('/api/', limiter);
 // AUTH MIDDLEWARE
 // ============================================
 const { authMiddleware, adminOnly } = require('./src/middleware/auth');
-const { LOGIN_LIMITER, SIGNUP_LIMITER } = require('./src/middleware/limiters');
+const { LOGIN_LIMITER, SIGNUP_LIMITER, FORGOT_LIMITER, RESET_LIMITER } = require('./src/middleware/limiters');
 
 app.get('/api/auth/diagnostic', authMiddleware, adminOnly, async (req, res) => {
     try {
@@ -4856,7 +4856,7 @@ app.post('/api/public/whatsapp/webhook', async (req, res) => {
 // AUTH ENDPOINTS — Hardened (rate limit, lock, Google OAuth, email verify)
 // ============================================
 const SUPERUSER_EMAILS = new Set(SUPERUSER_EMAILS_LIST);
-const PASSWORD_POLICY = /^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/;
+const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('./src/config');
 async function logAuthAudit(userId, event, req, metadata = {}) {
     try {
         await pool.query(
@@ -4886,6 +4886,8 @@ function buildUserPayload(user) {
         } : null
     };
 }
+
+function escapeMailHtml(v) { return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function issueAuthToken(user) {
     return jwt.sign(
@@ -4967,7 +4969,7 @@ app.post('/api/auth/signup', SIGNUP_LIMITER, async (req, res) => {
             return res.status(400).json({ error: 'E-posta, şifre, ad-soyad, marka, firma adı ve unvan zorunludur' });
         }
         if (!PASSWORD_POLICY.test(String(password))) {
-            return res.status(400).json({ error: 'Şifre en az 10 karakter, 1 büyük harf, 1 sayı ve 1 özel karakter içermeli' });
+            return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
         }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
             return res.status(400).json({ error: 'Geçerli bir e-posta adresi girin' });
@@ -5023,6 +5025,21 @@ app.post('/api/auth/signup', SIGNUP_LIMITER, async (req, res) => {
         }
 
         await logAuthAudit(newUser.id, 'signup_password', req, { brand_id: Number(brand_id), plan: plan_slug || null });
+        // E-posta doğrulama bağlantısı: hata/SMTP yokluğu kayıt akışını asla etkilemez.
+        if (!isSuperuser) {
+            try {
+                const base = require('./src/lib/app-url').getBaseUrl(req);
+                if (base) {
+                    const link = `${base}/api/auth/verify-email?token=${verifyToken}`;
+                    require('./src/lib/mailer').sendMail({
+                        to: newUser.email,
+                        subject: 'E-posta adresinizi doğrulayın - Traktör Sektör Analizi',
+                        text: `Merhaba ${newUser.full_name || ''},\n\nTraktör Sektör Analizi hesabınızı doğrulamak için aşağıdaki bağlantıya tıklayın (24 saat geçerlidir):\n${link}\n\nBu kaydı siz yapmadıysanız bu e-postayı yok sayabilirsiniz.`,
+                        html: `<p>Merhaba ${escapeMailHtml(newUser.full_name || '')},</p><p>Traktör Sektör Analizi hesabınızı doğrulamak için aşağıdaki bağlantıya tıklayın (24 saat geçerlidir):</p><p><a href="${link}">E-postamı doğrula</a></p><p>Bu kaydı siz yapmadıysanız bu e-postayı yok sayabilirsiniz.</p>`
+                    }).catch(() => {});
+                }
+            } catch (_) { /* kayıt başarısız olmamalı */ }
+        }
         const token = issueAuthToken(newUser);
         res.status(201).json({
             token,
@@ -5160,6 +5177,8 @@ app.get('/api/auth/verify-email', async (req, res) => {
         res.send(`<h2>E-postanız doğrulandı: ${r.rows[0].email}</h2><p><a href="/login.html">Giriş yap</a></p>`);
     } catch (err) { res.status(500).send('Hata'); }
 });
+
+require('./src/routes/password-reset')(app, { pool, logAuthAudit, FORGOT_LIMITER, RESET_LIMITER });
 
 // Superuser preview plan switch (yukselozdek için)
 app.post('/api/auth/preview-plan', authMiddleware, async (req, res) => {
