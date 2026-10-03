@@ -3621,9 +3621,6 @@ async function loadMapFullPage() {
         zoomControl: true,
         attributionControl: false
     });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd', maxZoom: 19
-    }).addTo(mapFullInstance);
 
     // İlk yükleme
     await onMapFilterChange();
@@ -3693,7 +3690,7 @@ async function onMapFilterChange() {
 
 async function renderMapFullGeoJSON(salesData) {
     try {
-        const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+        const response = await fetch('/tr-cities.json');
         const geoData = await response.json();
 
         const provinceSales = {};
@@ -7306,9 +7303,6 @@ function initLeafletMap(salesData, selectedRegion = 'all') {
     });
 
     // Dark tile layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd', maxZoom: 19
-    }).addTo(leafletMap);
 
     // Load GeoJSON
     loadTurkeyGeoJSON(salesData, selectedRegion);
@@ -7317,7 +7311,7 @@ function initLeafletMap(salesData, selectedRegion = 'all') {
 async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
     try {
         // Fetch Turkey provinces GeoJSON
-        const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+        const response = await fetch('/tr-cities.json');
         const geoData = await response.json();
 
         // Aggregate sales by province name
@@ -13887,7 +13881,6 @@ async function loadRegionalIndexPageLegacy() {
         setTimeout(() => {
             if (riMapInstance) { riMapInstance.remove(); riMapInstance = null; }
             riMapInstance = L.map('riMapContainer', { zoomControl: true, attributionControl: false }).setView([39.0, 35.5], 6);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(riMapInstance);
 
             // Color scale
             const vals = provinces.map(p => p[selMetric] || 0).filter(v => v !== 0);
@@ -15429,10 +15422,9 @@ async function renderModelRegionMap({ focus, themeProfile }) {
             keyboard: false,
             zoomSnap: 0.25
         }).setView([39.0, 35.5], 6);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(_mrxMap);
 
         try {
-            const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+            const response = await fetch('/tr-cities.json');
             const geoData = await response.json();
 
             const nameMap = {
@@ -16058,7 +16050,6 @@ async function loadBenchmarkPage() {
         if (_bmMap) { _bmMap.remove(); _bmMap = null; }
         setTimeout(() => {
             _bmMap = L.map('bmDomMap', { zoomControl: true, attributionControl: false }).setView([39.0, 35.5], 6);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(_bmMap);
             dominanceMap.forEach(p => {
                 if (!p.lat || !p.lng) return;
                 const color = p.dominance === 'brand1' ? c1 : p.dominance === 'brand2' ? c2 : '#64748b';
@@ -16825,11 +16816,10 @@ async function loadBrandComparePage() {
                     keyboard: false,
                     zoomSnap: 0.25
                 }).setView([39.0, 35.5], 6);
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(_bmMap);
 
                 // GeoJSON il sınırları (choropleth)
                 try {
-                    const response = await fetch('https://raw.githubusercontent.com/cihadturhan/tr-geojson/master/geo/tr-cities-utf8.json');
+                    const response = await fetch('/tr-cities.json');
                     const geoData = await response.json();
 
                     // Province name mapping (GeoJSON name -> DB name)
