@@ -80,6 +80,13 @@ const CORS_ALLOWED_ORIGINS = new Set(
         .map(o => (o || '').trim().replace(/\/$/, ''))
         .filter(Boolean)
 );
+const compression = require('compression');
+app.use(compression({
+    filter: (req, res) => {
+        if (/no-transform/i.test(res.getHeader('Cache-Control') || '')) return false;
+        return compression.filter(req, res);
+    }
+}));
 app.use(cors({
     origin: (origin, cb) => {
         if (!origin) return cb(null, true);
@@ -94,19 +101,41 @@ app.use(express.json({
         if (req.originalUrl && req.originalUrl.startsWith('/api/public/whatsapp/webhook')) req.rawBody = buf;
     }
 }));
+// Production: serve minified builds (public/dist, produced by `npm run build`)
+// under the original URLs so HTML and ?v= cache-busting keep working.
+const MINIFIED_ASSETS = new Map();
+if (process.env.NODE_ENV === 'production') {
+    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'style.css', 'billing.css', 'media-watch.css']) {
+        const min = f.replace(/\.(js|css)$/, '.min.$1');
+        if (fs.existsSync(path.join(__dirname, 'public', 'dist', min))) MINIFIED_ASSETS.set('/' + f, '/dist/' + min);
+    }
+    if (MINIFIED_ASSETS.size) {
+        app.use((req, res, next) => {
+            if (req.method === 'GET' || req.method === 'HEAD') {
+                const target = MINIFIED_ASSETS.get(req.path);
+                if (target) req.url = target + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '');
+            }
+            next();
+        });
+    }
+}
 app.use(express.static(path.join(__dirname, 'public'), {
-    etag: false,
+    etag: true,
+    lastModified: true,
     maxAge: 0,
     setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.html')) {
+        if (/\.html?$/i.test(filePath)) {
             res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
             res.set('Pragma', 'no-cache');
             res.set('Expires', '0');
             return;
         }
 
-        if (/\.(js|css)$/i.test(filePath)) {
-            res.set('Cache-Control', 'public, max-age=0, must-revalidate');
+        if (/\.(js|css|json|png|svg|woff2)$/i.test(filePath)) {
+            const v = res.req && res.req.query && res.req.query.v;
+            res.set('Cache-Control', v
+                ? 'public, max-age=31536000, immutable'
+                : 'public, max-age=3600');
         }
     }
 }));

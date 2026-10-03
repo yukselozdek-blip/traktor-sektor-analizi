@@ -818,50 +818,7 @@ function navigateTo(page) {
         }
     }
 
-    const loaders = {
-        'brand-hub': loadBrandHubPage,
-        dashboard: loadDashboard,
-        historical: loadHistoricalPage,
-        'total-market': loadTotalMarketPage,
-        'brand-summary': loadBrandEcosystemPage,
-        'distributor': loadBrandEcosystemPage,
-        'hp-segment': loadHpSegmentPage,
-        'hp-top': loadHpTopPage,
-        'hp-top-il': loadHpTopIlPage,
-        'hp-top-model': loadHpTopModelPage,
-        'hp-top-il-cat': loadHpTopIlCatPage,
-        'obt-hp': loadObtHpPage,
-        'brand-hp': loadBrandHpPage,
-        'hp-brand-matrix': loadHpBrandMatrixPage,
-        'prov-top-brand': loadProvTopBrandPage,
-        'brand-compare': loadBrandComparePage,
-        'benchmark': loadBrandComparePage,
-        'regional-index': loadRegionalIndexPage,
-        'model-region': loadModelRegionPage,
-        'map-full': loadMapFullPage,
-        map: loadMapPage,
-        sales: loadSalesPage,
-        competitors: loadCompetitorsPage,
-        models: loadModelsPage,
-        'model-intel': loadModelIntelPage,
-        'model-images-admin': loadModelImagesAdminPage,
-        province: loadProvincePage,
-        weather: loadWeatherPage,
-        'media-watch': loadMediaWatchPage,
-        'ai-insights': loadAIInsightsPage,
-        subscription: loadSubscriptionPage,
-        tarmakbir: loadTarmakBirPage,
-        tarmakbir2: loadTarmakBirPage,
-        settings: loadSettingsPage
-    };
-    loaders['hp-segment'] = loadHpCommandCenterPage;
-    loaders['hp-top'] = loadHpCommandCenterPage;
-    loaders['hp-top-il'] = loadHpCommandCenterPage;
-    loaders['hp-top-model'] = loadHpCommandCenterPage;
-    loaders['hp-top-il-cat'] = loadHpCommandCenterPage;
-    loaders['obt-hp'] = loadHpCommandCenterPage;
-    loaders['brand-hp'] = loadHpCommandCenterPage;
-    loaders['hp-brand-matrix'] = loadHpCommandCenterPage;
+    const loaders = getPageLoaders();
     const registryLoaders = getReportLoaders();
     const loader = registryLoaders[page] || loaders[page] || (() => {});
 

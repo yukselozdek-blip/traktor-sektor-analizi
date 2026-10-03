@@ -1,12 +1,20 @@
-FROM node:22-bookworm-slim
-
+# ---- build stage: all deps + minified assets ----
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build && rm -rf node_modules
+
+# ---- runtime stage ----
+FROM node:22-bookworm-slim
+WORKDIR /app
+ENV NODE_ENV=production
 
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-COPY . .
-
+COPY --from=build /app/ ./
 RUN chown -R node:node /app
 
 EXPOSE 3000
