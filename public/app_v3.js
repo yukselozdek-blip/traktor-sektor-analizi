@@ -8441,7 +8441,7 @@ const ModelImagesAdmin = {
                             <td class="mig-num-danger">${fmtNum(r.missing_models)}</td>
                             <td>
                                 <div class="mig-bar"><div class="mig-bar-fill" style="width:${Math.min(100, r.coverage_pct)}%"></div></div>
-                                <span class="mig-pct">${r.coverage_pct.toFixed(1)}%</span>
+                                <span class="mig-pct">${Number(r.coverage_pct || 0).toFixed(1)}%</span>
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-ghost" data-action="brand-sync" data-brand="${escapeHtml(r.brand_name)}">
@@ -14187,7 +14187,7 @@ async function loadBrandComparePage() {
                 {
                     label: 'Genel skor',
                     value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
-                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} vs ${compareBrand2.name}`
                 },
                 {
                     label: 'Pazar farki',
@@ -14197,11 +14197,11 @@ async function loadBrandComparePage() {
                 {
                     label: 'İl üstünlüğü',
                     value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
-                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
                     label: 'Acik segment',
-                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek bosluk yok'
                 }
             ].map(card => `
@@ -14227,7 +14227,7 @@ async function loadBrandComparePage() {
                 {
                     label: 'Genel skor',
                     value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
-                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} vs ${compareBrand2.name}`
                 },
                 {
                     label: 'Pazar farkı',
@@ -14237,11 +14237,11 @@ async function loadBrandComparePage() {
                 {
                     label: 'İl üstünlüğü',
                     value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
-                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
                     label: 'Açık segment',
-                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek boşluk yok'
                 }
             ].map(card => `
@@ -14267,7 +14267,7 @@ async function loadBrandComparePage() {
                 {
                     label: 'Genel skor',
                     value: `${compareWinnerScore.brand1} - ${compareWinnerScore.brand2}`,
-                    meta: `${safe(compareBrand1.name)} vs ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} vs ${compareBrand2.name}`
                 },
                 {
                     label: 'Pazar farkı',
@@ -14277,11 +14277,11 @@ async function loadBrandComparePage() {
                 {
                     label: 'İl üstünlüğü',
                     value: `${fmtNum(compareProvinceWins.brand1)} / ${fmtNum(compareProvinceWins.brand2)}`,
-                    meta: `${safe(compareBrand1.name)} / ${safe(compareBrand2.name)}`
+                    meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
                     label: 'Açık segment',
-                    value: topOpportunity ? `${safe(topOpportunity.hp)} HP` : '-',
+                    value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek boşluk yok'
                 }
             ].map(card => `
