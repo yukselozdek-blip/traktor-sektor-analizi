@@ -1,6 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -11,66 +10,18 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = (() => {
-    if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-    if (process.env.NODE_ENV === 'production') {
-        console.error('!!! GÜVENLİK UYARISI: JWT_SECRET ortam değişkeni tanımlı değil. Geçici rastgele anahtar üretildi; her yeniden başlatmada tüm oturumlar geçersiz olur. JWT_SECRET tanımlayın !!!');
-    }
-    return crypto.randomBytes(48).toString('hex');
-})();
-const SUPERUSER_EMAILS_LIST = (process.env.SUPERUSER_EMAILS || 'yukselozdek@gmail.com')
-    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-function safeEqualStr(a, b) {
-    const ba = Buffer.from(String(a == null ? '' : a));
-    const bb = Buffer.from(String(b == null ? '' : b));
-    if (ba.length !== bb.length) return false;
-    return crypto.timingSafeEqual(ba, bb);
-}
-function errMsg(err) {
-    return IS_PRODUCTION ? 'Sunucu hatası' : (err && err.message ? err.message : 'Sunucu hatası');
-}
+const {
+    PORT, JWT_SECRET, SUPERUSER_EMAILS_LIST, IS_PRODUCTION, safeEqualStr, errMsg, APP_BASE_URL,
+    WHATSAPP_QUERY_API_KEY, WHATSAPP_VERIFY_TOKEN, WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID,
+    MEDIA_WATCH_WEBHOOK_KEY, N8N_WHATSAPP_PROCESSOR_URL, N8N_MODEL_INTEL_WEBHOOK_URL, MODEL_IMAGE_BRIDGE_URL
+} = require('./src/config');
+const { pool } = require('./src/db');
+const { isSafeSql } = require('./src/lib/sql-guard');
 process.on('unhandledRejection', (reason) => {
     console.error('unhandledRejection:', reason && reason.stack ? reason.stack : reason);
 });
 process.on('uncaughtException', (err) => {
     console.error('uncaughtException:', err && err.stack ? err.stack : err);
-});
-const APP_BASE_URL = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
-const WHATSAPP_QUERY_API_KEY = process.env.WHATSAPP_QUERY_API_KEY || '';
-const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
-const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
-const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
-const MEDIA_WATCH_WEBHOOK_KEY = process.env.MEDIA_WATCH_WEBHOOK_KEY || process.env.WHATSAPP_QUERY_API_KEY || '';
-const N8N_WHATSAPP_PROCESSOR_URL = (
-    process.env.N8N_WHATSAPP_PROCESSOR_URL
-    || (process.env.RAILWAY_SERVICE_N8N_URL ? `https://${process.env.RAILWAY_SERVICE_N8N_URL}/webhook/whatsapp-sales-assistant-process-v4` : '')
-).replace(/\/$/, '');
-const N8N_MODEL_INTEL_WEBHOOK_URL = (process.env.N8N_MODEL_INTEL_WEBHOOK_URL || '').replace(/\/$/, '');
-const MODEL_IMAGE_BRIDGE_URL = (process.env.MODEL_IMAGE_BRIDGE_URL || 'http://127.0.0.1:3012').replace(/\/$/, '');
-
-function shouldUseDatabaseSsl(connectionString) {
-    if (process.env.NODE_ENV !== 'production' || !connectionString) return false;
-
-    try {
-        const hostname = (new URL(connectionString).hostname || '').toLowerCase();
-        const localHosts = ['localhost', '127.0.0.1', 'postgres', 'host.docker.internal'];
-        if (!hostname) return false;
-        if (localHosts.includes(hostname)) return false;
-        if (hostname.endsWith('.internal')) return false;
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-// Database
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: shouldUseDatabaseSsl(process.env.DATABASE_URL)
-        ? { rejectUnauthorized: false }
-        : false
 });
 
 // Middleware
@@ -2838,63 +2789,6 @@ Hatayı düzelt ve çalışan bir PostgreSQL SELECT sorgusu yaz.
         console.error('Text-to-SQL retry error:', err.message);
         return null;
     }
-}
-
-const SQL_ALLOWED_TABLES = new Set([
-    'sales_view', 'sales_data', 'brands', 'provinces', 'tractor_models',
-    'teknik_veri', 'tuik_veri', 'market_share'
-]);
-const SQL_DENY_PATTERN = /\b(pg_\w*|information_schema|current_setting|set_config|dblink\w*|lo_\w+|copy|users|payments?|subscriptions?|auth_audit|invoices?|usage_meters?|\w*password\w*|\w*token\w*|\w*secret\w*|\w*api_key\w*|into|pg|txid_\w*|version|current_user|session_user|current_database|inet_\w+|generate_series|unnest|lateral)\b/i;
-
-function isSafeSql(sql) {
-    if (typeof sql !== 'string') return false;
-    let text = sql.trim();
-    if (!text) return false;
-    // Tek ifade: sadece sondaki ';' serbest
-    text = text.replace(/;\s*$/, '');
-    // Metin sabitlerini çıkar (analiz için)
-    const stripped = text.replace(/'(?:[^']|'')*'/g, ' 0 ');
-    if (stripped.includes(';')) return false;
-    if (stripped.includes('--') || stripped.includes('/*') || stripped.includes('*/')) return false;
-    if (stripped.includes('"') || stripped.includes('$') || stripped.includes('\\')) return false;
-    if (/'/.test(stripped)) return false; // kapanmamış tırnak
-
-    const upper = stripped.toUpperCase();
-    const dangerous = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'COPY', 'CALL', 'DO', 'VACUUM', 'ANALYZE', 'LOCK', 'LISTEN', 'NOTIFY', 'SET', 'RESET', 'SHOW', 'BEGIN', 'COMMIT', 'ROLLBACK'];
-    for (const keyword of dangerous) {
-        if (new RegExp(`\\b${keyword}\\b`, 'i').test(upper)) return false;
-    }
-    if (!/^\s*\(*\s*(SELECT|WITH)\b/i.test(stripped)) return false;
-    if (/\bFOR\s+(UPDATE|SHARE|NO\s+KEY)/i.test(stripped)) return false;
-    if (SQL_DENY_PATTERN.test(stripped)) return false;
-
-    // CTE adlarını topla (izinli)
-    const cteNames = new Set();
-    const cteRe = /(?:\bWITH\s+(?:RECURSIVE\s+)?|,\s*)([a-z_][a-z0-9_]*)\s+AS\s*(?:NOT\s+MATERIALIZED\s*|MATERIALIZED\s*)?\(/gi;
-    let m;
-    while ((m = cteRe.exec(stripped)) !== null) cteNames.add(m[1].toLowerCase());
-
-    // FROM içindeki fonksiyon-benzeri kullanımları (EXTRACT(... FROM ...)) analizden çıkar
-    const forTables = stripped
-        .replace(/\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi, ' ')
-        .replace(/\b(EXTRACT|SUBSTRING|TRIM|OVERLAY|POSITION)\s*\([^()]*\)/gi, ' 0 ');
-
-    const fromRe = /\b(?:FROM|JOIN)\s+([^()]*?)(?=\bWHERE\b|\bGROUP\b|\bORDER\b|\bLIMIT\b|\bHAVING\b|\bJOIN\b|\bON\b|\bUNION\b|\bINTERSECT\b|\bEXCEPT\b|\bINNER\b|\bLEFT\b|\bRIGHT\b|\bFULL\b|\bCROSS\b|\bNATURAL\b|\bWINDOW\b|\bOFFSET\b|\bFETCH\b|\)|$)/gi;
-    let found = 0;
-    while ((m = fromRe.exec(forTables)) !== null) {
-        const parts = m[1].split(',');
-        for (const part of parts) {
-            const tok = part.trim().split(/\s+/)[0];
-            if (!tok) continue;
-            found++;
-            let name = tok.toLowerCase();
-            if (name.startsWith('public.')) name = name.slice(7);
-            if (name.includes('.')) return false;
-            if (!SQL_ALLOWED_TABLES.has(name) && !cteNames.has(name)) return false;
-        }
-    }
-    // Satır içi alt sorgular için "FROM (" durumunda tablo yok sayılır; en az bir FROM yoksa da (ör. SELECT 1) sorun değil
-    return true;
 }
 
 async function executeSafeSql(sql) {
