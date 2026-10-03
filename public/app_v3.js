@@ -590,7 +590,8 @@ async function init() {
     }
 
     updateUserUI();
-    navigateTo(getInitialPage());
+    navigateTo(getRoutePageFromLocation() || getInitialPage(), { history: 'replace' });
+    window.addEventListener('popstate', handleRouteChange);
 
     bindSidebarInteractions();
     bindModelIntelInteractions();
@@ -696,8 +697,113 @@ function getReportLoaders() {
 // ============================================
 // NAVIGATION
 // ============================================
-function navigateTo(page) {
+function getPageLoaders() {
+    const loaders = {
+        'brand-hub': loadBrandHubPage,
+        dashboard: loadDashboard,
+        historical: loadHistoricalPage,
+        'total-market': loadTotalMarketPage,
+        'brand-summary': loadBrandEcosystemPage,
+        'distributor': loadBrandEcosystemPage,
+        'hp-segment': loadHpSegmentPage,
+        'hp-top': loadHpTopPage,
+        'hp-top-il': loadHpTopIlPage,
+        'hp-top-model': loadHpTopModelPage,
+        'hp-top-il-cat': loadHpTopIlCatPage,
+        'obt-hp': loadObtHpPage,
+        'brand-hp': loadBrandHpPage,
+        'hp-brand-matrix': loadHpBrandMatrixPage,
+        'prov-top-brand': loadProvTopBrandPage,
+        'brand-compare': loadBrandComparePage,
+        'benchmark': loadBrandComparePage,
+        'regional-index': loadRegionalIndexPage,
+        'model-region': loadModelRegionPage,
+        'map-full': loadMapFullPage,
+        map: loadMapPage,
+        sales: loadSalesPage,
+        competitors: loadCompetitorsPage,
+        models: loadModelsPage,
+        'model-intel': loadModelIntelPage,
+        'model-images-admin': loadModelImagesAdminPage,
+        province: loadProvincePage,
+        weather: loadWeatherPage,
+        'media-watch': loadMediaWatchPage,
+        'ai-insights': loadAIInsightsPage,
+        subscription: loadSubscriptionPage,
+        tarmakbir: loadTarmakBirPage,
+        tarmakbir2: loadTarmakBirPage,
+        settings: loadSettingsPage
+    };
+    loaders['hp-segment'] = loadHpCommandCenterPage;
+    loaders['hp-top'] = loadHpCommandCenterPage;
+    loaders['hp-top-il'] = loadHpCommandCenterPage;
+    loaders['hp-top-model'] = loadHpCommandCenterPage;
+    loaders['hp-top-il-cat'] = loadHpCommandCenterPage;
+    loaders['obt-hp'] = loadHpCommandCenterPage;
+    loaders['brand-hp'] = loadHpCommandCenterPage;
+    loaders['hp-brand-matrix'] = loadHpCommandCenterPage;
+    return loaders;
+}
+
+// ============================================
+// HASH ROUTING  (#/<page>[?params])
+// ============================================
+const ADMIN_ONLY_PAGES = ['model-images-admin'];
+
+function parseRouteHash(hash) {
+    const raw = String(hash || '').replace(/^#\/?/, '');
+    const name = raw.split(/[?&#/]/)[0];
+    try { return decodeURIComponent(name).trim(); } catch (e) { return name.trim(); }
+}
+
+function isRoutablePage(page) {
+    if (!page) return false;
+    const target = normalizeReportPage(page);
+    const loaders = getPageLoaders();
+    if (!Object.prototype.hasOwnProperty.call(loaders, target) && !Object.prototype.hasOwnProperty.call(getReportLoaders(), target)) return false;
+    if (ADMIN_ONLY_PAGES.includes(target) && currentUser?.role !== 'admin') return false;
+    return true;
+}
+
+function getRoutePageFromLocation() {
+    const fromHash = parseRouteHash(location.hash);
+    if (fromHash && isRoutablePage(fromHash)) return normalizeReportPage(fromHash);
+    if (!fromHash) {
+        // Legacy query-string entry (e.g. /?page=subscription from billing redirects)
+        let q = '';
+        try { q = new URLSearchParams(location.search).get('page') || ''; } catch (e) {}
+        if (q && isRoutablePage(q)) return normalizeReportPage(q);
+    }
+    return null;
+}
+
+function syncRouteHash(page, mode) {
+    if (mode === 'none') return;
+    try {
+        const current = parseRouteHash(location.hash);
+        if (current && isRoutablePage(current) && normalizeReportPage(current) === page) return; // already there; keep extra params
+        const url = location.pathname + location.search + '#/' + page;
+        if (mode === 'replace') history.replaceState({ route: page }, '', url);
+        else history.pushState({ route: page }, '', url);
+    } catch (e) { /* history API unavailable: routing degrades gracefully */ }
+}
+
+function handleRouteChange() {
+    if (!currentUser) return;
+    const page = getRoutePageFromLocation();
+    if (page) {
+        if (page !== currentPage) navigateTo(page, { history: 'none' });
+    } else {
+        const fallback = getInitialPage();
+        if (fallback !== currentPage) navigateTo(fallback, { history: 'replace' });
+        else syncRouteHash(fallback, 'replace');
+    }
+}
+
+function navigateTo(page, opts = {}) {
     page = normalizeReportPage(page);
+    if (ADMIN_ONLY_PAGES.includes(page) && currentUser?.role !== 'admin') page = getInitialPage();
+    syncRouteHash(page, opts.history || 'push');
     const previousPage = currentPage;
     if (previousPage === 'map' && page !== 'map') teardownTurkeyMapWorkspace();
     currentPage = page;
