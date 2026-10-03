@@ -71,11 +71,27 @@ jobs:
           set -euo pipefail
           umask 077
           mkdir -p ~/.ssh
-          printf '%s\n' "$SB_KEY" > ~/.ssh/id_backup
-          printf '%s\n' "$SB_KNOWN_HOSTS" > ~/.ssh/known_hosts_backup
+          # Windows satır sonlarını ve baştaki/sondaki boşlukları temizle
+          printf '%s\n' "$SB_KEY" | tr -d '\r' > ~/.ssh/id_backup
+          printf '%s\n' "$SB_KNOWN_HOSTS" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' > ~/.ssh/known_hosts_backup
           chmod 600 ~/.ssh/id_backup ~/.ssh/known_hosts_backup
-          SFTP="sftp -q -P 23 -i $HOME/.ssh/id_backup -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts_backup"
+
+          # Özel anahtar geçerli mi? (açık anahtarı üretebiliyorsak geçerlidir)
+          if ! ssh-keygen -y -f ~/.ssh/id_backup >/dev/null 2>key_check.txt; then
+            echo "::error::STORAGEBOX_SSH_KEY geçersiz: $(cat key_check.txt). BEGIN/END satırları dahil, anahtarın tamamı yapıştırılmalı."
+            exit 1
+          fi
+          echo "known_hosts satır sayısı: $(grep -c . ~/.ssh/known_hosts_backup)"
+
+          SSH_OPTS="-P 23 -i $HOME/.ssh/id_backup -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts_backup -o ConnectTimeout=20"
+          SFTP="sftp $SSH_OPTS"
           DEST="$SB_USER@$SB_HOST"
+
+          # Bağlantı denemesi: hata varsa nedeni açıkça görünsün
+          if ! printf 'pwd\n' | $SFTP -b - "$DEST" 2> conn_err.txt; then
+            echo "::error::Storage Box bağlantısı kurulamadı: $(tr '\n' ' ' < conn_err.txt)"
+            exit 1
+          fi
 
           printf -- '-mkdir traktor-sektor-analizi-yedekler\nput traktor-sektor-analizi_hetzner-storagebox_%s.dump.gpg traktor-sektor-analizi-yedekler/traktor-sektor-analizi_hetzner-storagebox_%s.dump.gpg\n' "$STAMP" "$STAMP" | $SFTP -b - "$DEST"
 
@@ -98,4 +114,4 @@ jobs:
 
       - name: Geçici dosyaları sil
         if: always()
-        run: rm -f traktor-sektor-analizi_hetzner-storagebox_*.dump traktor-sektor-analizi_hetzner-storagebox_*.dump.gpg remote_list.txt ~/.ssh/id_backup ~/.ssh/known_hosts_backup
+        run: rm -f traktor-sektor-analizi_hetzner-storagebox_*.dump traktor-sektor-analizi_hetzner-storagebox_*.dump.gpg remote_list.txt key_check.txt conn_err.txt ~/.ssh/id_backup ~/.ssh/known_hosts_backup
