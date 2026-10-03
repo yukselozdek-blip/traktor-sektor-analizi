@@ -103,23 +103,35 @@ const StripeProvider = {
     },
 
     verifyWebhook(rawBody, headers) {
+        const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : (typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody));
         if (STRIPE_MOCK) {
-            const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
-            return { event: parsed, verified: false };
+            if (process.env.NODE_ENV === 'production') throw new Error('Webhook mock modda production ortamında reddedildi');
+            return { event: JSON.parse(bodyStr), verified: false };
         }
         const sig = headers['stripe-signature'] || '';
         if (!STRIPE_WEBHOOK_SECRET) throw new Error('STRIPE_WEBHOOK_SECRET tanımlı değil');
-        const parts = String(sig).split(',').reduce((acc, p) => {
-            const [k, v] = p.split('=');
-            acc[k] = v;
-            return acc;
-        }, {});
+        const parts = {};
+        for (const p of String(sig).split(',')) {
+            const idx = p.indexOf('=');
+            if (idx > 0) {
+                const k = p.slice(0, idx).trim();
+                if (k === 'v1' && parts.v1) continue; // ilk v1 kullanılır
+                parts[k] = p.slice(idx + 1).trim();
+            }
+        }
+        if (!parts.t || !parts.v1) throw new Error('Stripe webhook imzası geçersiz');
+        const ts = Number(parts.t);
+        if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) {
+            throw new Error('Stripe webhook zaman damgası geçersiz');
+        }
         const expected = crypto
             .createHmac('sha256', STRIPE_WEBHOOK_SECRET)
-            .update(`${parts.t}.${rawBody}`)
+            .update(`${parts.t}.${bodyStr}`)
             .digest('hex');
-        if (expected !== parts.v1) throw new Error('Stripe webhook imzası geçersiz');
-        return { event: JSON.parse(rawBody), verified: true };
+        const a = Buffer.from(expected);
+        const b = Buffer.from(String(parts.v1));
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error('Stripe webhook imzası geçersiz');
+        return { event: JSON.parse(bodyStr), verified: true };
     },
 
     parseWebhookEvent(event) {
@@ -226,6 +238,7 @@ const IyzicoProvider = {
 
     verifyWebhook(rawBody, headers) {
         if (IYZICO_MOCK) {
+            if (process.env.NODE_ENV === 'production') throw new Error('Webhook mock modda production ortamında reddedildi');
             const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
             return { event: parsed, verified: false };
         }
@@ -234,7 +247,9 @@ const IyzicoProvider = {
             .createHmac('sha256', IYZICO_SECRET)
             .update(typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody))
             .digest('base64');
-        if (expected !== sig) throw new Error('iyzico webhook imzası geçersiz');
+        const ea = Buffer.from(expected);
+        const sb = Buffer.from(String(sig));
+        if (ea.length !== sb.length || !crypto.timingSafeEqual(ea, sb)) throw new Error('iyzico webhook imzası geçersiz');
         return { event: typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody, verified: true };
     },
 
