@@ -9,7 +9,7 @@
     "seed": "node database/seed.js",
     "migrate": "node database/migrate.js",
     "test": "node --test \"tests/*.test.js\"",
-    "lint:syntax": "node --check server.js && node --check database/migrate.js && node --check import-tuik.js && node --check billing/providers.js",
+    "lint:syntax": "node --check server.js && node --check database/migrate.js && node --check import-tuik.js && node --check billing/providers.js && find src -name '*.js' -exec node --check {} \\;",
     "build": "node scripts/build-assets.js"
   },
   "dependencies": {
