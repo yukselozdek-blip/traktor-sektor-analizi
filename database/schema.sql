@@ -434,6 +434,24 @@ CREATE TABLE IF NOT EXISTS media_watch_runs (
 );
 
 -- ============================================
+-- 22. INTELLIGENCE SOURCES
+-- ============================================
+CREATE TABLE IF NOT EXISTS intelligence_sources (
+    id SERIAL PRIMARY KEY,
+    source_code VARCHAR(100) NOT NULL UNIQUE,
+    title VARCHAR(255) NOT NULL,
+    publisher VARCHAR(150),
+    source_type VARCHAR(50) NOT NULL,
+    geography_scope VARCHAR(50) DEFAULT 'turkiye',
+    official_url VARCHAR(500),
+    publication_date DATE,
+    notes TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================
 -- 18C. MEDYA TAKIP OGELERI
 -- ============================================
 CREATE TABLE IF NOT EXISTS media_watch_items (
@@ -624,24 +642,6 @@ CREATE TABLE IF NOT EXISTS brand_portal_contacts (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(brand_id, contact_type, label, city)
-);
-
--- ============================================
--- 22. INTELLIGENCE SOURCES
--- ============================================
-CREATE TABLE IF NOT EXISTS intelligence_sources (
-    id SERIAL PRIMARY KEY,
-    source_code VARCHAR(100) NOT NULL UNIQUE,
-    title VARCHAR(255) NOT NULL,
-    publisher VARCHAR(150),
-    source_type VARCHAR(50) NOT NULL,
-    geography_scope VARCHAR(50) DEFAULT 'turkiye',
-    official_url VARCHAR(500),
-    publication_date DATE,
-    notes TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ============================================
