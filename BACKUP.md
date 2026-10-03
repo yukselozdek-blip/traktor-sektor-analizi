@@ -1,4 +1,4 @@
-# Yedekleme Stratejisi (Backup Strategy)
+# Traktör Sektör Analizi - Yedekleme Stratejisi (Hetzner Storage Box)
 
 ## Neden ve Ne?
 
@@ -14,7 +14,7 @@ Veritabanı kaybı tüm işleri durdurur. **TÜİK içe aktarma (import-tuik.js)
 
 ---
 
-## Otomatik Gece Yedeği (önerilen): GitHub → Hetzner Storage Box
+## Otomatik Gece Yedeği (önerilen): Traktör Sektör Analizi → GitHub → Hetzner Storage Box
 
 Her gece 04:17'de (Türkiye saati) GitHub, Railway veritabanının yedeğini alır, **şifreler** ve Hetzner Storage Box'a yükler. Son 14 yedek saklanır. Depo herkese açık olduğu için yedek GitHub'da **asla** tutulmaz. Çalıştıran: `.github/workflows/db-backup.yml`.
 
@@ -22,8 +22,8 @@ Her gece 04:17'de (Türkiye saati) GitHub, Railway veritabanının yedeğini al�
 
 **1) Yedek için yeni bir anahtar çifti üretin** (kendi bilgisayarınızda; kendi SSH anahtarınızı kullanmayın):
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/hetzner_yedek -N "" -C "github-yedek"
-cat ~/.ssh/hetzner_yedek.pub
+ssh-keygen -t ed25519 -f ~/.ssh/traktor-sektor-analizi_hetzner-storagebox -N "" -C "traktor-sektor-analizi hetzner-storagebox github-yedek"
+cat ~/.ssh/traktor-sektor-analizi_hetzner-storagebox.pub
 ```
 Son komut tek satırlık `ssh-ed25519 AAAA...` metnini yazar (açık anahtar, paylaşılabilir).
 
@@ -49,14 +49,14 @@ Bu parola olmadan yedekler **açılamaz**. Kaybetmeyin, sohbete yazmayın.
 | `BACKUP_PASSPHRASE` | 4. adımdaki parola |
 | `STORAGEBOX_HOST` | `u648249.your-storagebox.de` |
 | `STORAGEBOX_USER` | `u648249` |
-| `STORAGEBOX_SSH_KEY` | `cat ~/.ssh/hetzner_yedek` çıktısının **tamamı** (`-----BEGIN` ile `-----END` satırları dahil) |
+| `STORAGEBOX_SSH_KEY` | `cat ~/.ssh/traktor-sektor-analizi_hetzner-storagebox` çıktısının **tamamı** (`-----BEGIN` ile `-----END` satırları dahil) |
 | `STORAGEBOX_KNOWN_HOSTS` | 3. adımdaki satırlar |
 
-**6) Deneyin:** Depo → **Actions → "Veritabanı Yedeği (Hetzner)" → Run workflow**. Yeşil tik çıkmalı, Storage Box'ta `backups/` klasöründe `traktor-....dump.gpg` dosyası görünmeli.
+**6) Deneyin:** Depo → **Actions → "Traktör Sektör Analizi - Veritabanı Yedeği (Hetzner Storage Box)" → Run workflow**. Yeşil tik çıkmalı, Storage Box'ta `traktor-sektor-analizi-yedekler/` klasöründe `traktor-sektor-analizi_hetzner-storagebox_YYYYMMDD-HHMM.dump.gpg` dosyası görünmeli.
 
 ### Geri yükleme
 ```bash
-gpg -d traktor-YYYYMMDD-HHMM.dump.gpg > geri.dump        # parolayı sorar
+gpg -d traktor-sektor-analizi_hetzner-storagebox_YYYYMMDD-HHMM.dump.gpg > geri.dump        # parolayı sorar
 bash scripts/restore-db.sh geri.dump "HEDEF_VERITABANI_ADRESI"
 ```
 Önce kendi bilgisayarınızdaki boş bir test veritabanına geri yüklemeyi deneyin.
@@ -110,7 +110,7 @@ bash scripts/backup-db.sh
 ```
 
 **3. Yedek nerede?**
-- `./backups/traktor-20260103-143022.dump` gibi bir dosya oluşturulur
+- `./backups/traktor-sektor-analizi_hetzner-storagebox_20260103-143022.dump` gibi bir dosya oluşturulur
 - Boyutu ekranda gösterilir
 - Son 8 yedek tutulur, eski olanlar silinir
 
@@ -124,7 +124,7 @@ bash scripts/backup-db.sh
 
 **Yerel test için:**
 ```bash
-bash scripts/restore-db.sh backups/traktor-20260103-143022.dump "postgresql://..."
+bash scripts/restore-db.sh backups/traktor-sektor-analizi_hetzner-storagebox_20260103-143022.dump "postgresql://..."
 ```
 
 Script, üretim sunucularına karşı güvenlik sorgusu sorar. Onaylamak için:

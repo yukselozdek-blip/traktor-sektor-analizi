@@ -8,7 +8,7 @@ Kullanım:
   bash scripts/restore-db.sh <dump-file> <target-database-url>
 
 Örnek:
-  bash scripts/restore-db.sh backups/traktor-20260103-143022.dump "postgresql://..."
+  bash scripts/restore-db.sh backups/traktor-sektor-analizi_hetzner-storagebox_20260103-143022.dump "postgresql://..."
 
 DİKKAT: Bu, hedef veritabanındaki tüm verileri değiştirir!
 EOF
