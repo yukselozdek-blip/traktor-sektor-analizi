@@ -9,7 +9,8 @@ RUN npm run build && rm -rf node_modules
 # ---- runtime stage ----
 FROM node:22-bookworm-slim
 WORKDIR /app
-ENV NODE_ENV=production
+# Serve public/dist minified assets without altering other NODE_ENV-dependent behaviour
+ENV SERVE_MINIFIED=1
 
 COPY package*.json ./
 RUN npm ci --omit=dev

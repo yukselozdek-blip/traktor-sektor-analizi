@@ -104,7 +104,7 @@ app.use(express.json({
 // Production: serve minified builds (public/dist, produced by `npm run build`)
 // under the original URLs so HTML and ?v= cache-busting keep working.
 const MINIFIED_ASSETS = new Map();
-if (process.env.NODE_ENV === 'production') {
+if (process.env.NODE_ENV === 'production' || process.env.SERVE_MINIFIED === '1') {
     for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'style.css', 'billing.css', 'media-watch.css']) {
         const min = f.replace(/\.(js|css)$/, '.min.$1');
         if (fs.existsSync(path.join(__dirname, 'public', 'dist', min))) MINIFIED_ASSETS.set('/' + f, '/dist/' + min);
@@ -134,7 +134,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
         if (/\.(js|css|json|png|svg|woff2)$/i.test(filePath)) {
             const v = res.req && res.req.query && res.req.query.v;
             res.set('Cache-Control', v
-                ? 'public, max-age=31536000, immutable'
+                ? 'public, max-age=86400'
                 : 'public, max-age=3600');
         }
     }
