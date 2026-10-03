@@ -1,0 +1,101 @@
+name: Veritabanı Yedeği (Hetzner)
+
+# Her gece Railway Postgres yedeğini alır, GPG ile şifreler ve Hetzner Storage Box'a yükler.
+# Depo herkese açık olduğu için yedek ASLA artifact/commit olarak saklanmaz.
+on:
+  schedule:
+    - cron: '17 1 * * *'   # 01:17 UTC = 04:17 Türkiye saati
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DB_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      SB_HOST: ${{ secrets.STORAGEBOX_HOST }}
+      SB_USER: ${{ secrets.STORAGEBOX_USER }}
+      SB_KEY: ${{ secrets.STORAGEBOX_SSH_KEY }}
+      SB_KNOWN_HOSTS: ${{ secrets.STORAGEBOX_KNOWN_HOSTS }}
+      KEEP: '14'
+    steps:
+      - name: Gerekli secret'lar tanımlı mı?
+        run: |
+          missing=0
+          for v in DB_URL BACKUP_PASSPHRASE SB_HOST SB_USER SB_KEY SB_KNOWN_HOSTS; do
+            if [ -z "${!v}" ]; then echo "::error::Secret eksik: $v"; missing=1; fi
+          done
+          exit $missing
+
+      - name: PostgreSQL 18 istemcisini kur
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsS -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-client-18
+
+      - name: Yedek al ve doğrula
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%Y%m%d-%H%M)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          /usr/lib/postgresql/18/bin/pg_dump --format=custom --no-owner --no-privileges --file "traktor-$STAMP.dump" "$DB_URL"
+          SIZE=$(stat -c %s "traktor-$STAMP.dump")
+          TABLES=$(/usr/lib/postgresql/18/bin/pg_restore --list "traktor-$STAMP.dump" | grep -c "TABLE DATA" || true)
+          echo "Yedek boyutu: $SIZE bayt, veri tablosu: $TABLES"
+          if [ "$SIZE" -lt 1000000 ] || [ "$TABLES" -lt 50 ]; then
+            echo "::error::Yedek şüpheli derecede küçük/eksik (boyut=$SIZE, tablo=$TABLES). Yüklenmeyecek."
+            exit 1
+          fi
+
+      - name: Şifrele (GPG AES256)
+        run: |
+          set -euo pipefail
+          printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 -o "traktor-$STAMP.dump.gpg" "traktor-$STAMP.dump"
+          rm -f "traktor-$STAMP.dump"
+          ls -l "traktor-$STAMP.dump.gpg"
+
+      - name: Storage Box'a yükle ve eskileri temizle
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SB_KEY" > ~/.ssh/id_backup
+          printf '%s\n' "$SB_KNOWN_HOSTS" > ~/.ssh/known_hosts_backup
+          chmod 600 ~/.ssh/id_backup ~/.ssh/known_hosts_backup
+          SFTP="sftp -q -P 23 -i $HOME/.ssh/id_backup -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts_backup"
+          DEST="$SB_USER@$SB_HOST"
+
+          printf -- '-mkdir backups\nput traktor-%s.dump.gpg backups/traktor-%s.dump.gpg\n' "$STAMP" "$STAMP" | $SFTP -b - "$DEST"
+
+          # Yüklemeyi doğrula
+          LOCAL_SIZE=$(stat -c %s "traktor-$STAMP.dump.gpg")
+          REMOTE_LS=$(printf 'ls -l backups\n' | $SFTP -b - "$DEST" || true)
+          echo "$REMOTE_LS" | grep "traktor-$STAMP.dump.gpg" | grep -q "$LOCAL_SIZE" \
+            || { echo "::error::Yüklenen dosya boyutu doğrulanamadı"; exit 1; }
+          echo "Yükleme doğrulandı."
+
+          # Son $KEEP yedek hariç eskileri sil
+          printf 'ls -1 backups\n' | $SFTP -b - "$DEST" \
+            | grep -oE 'traktor-[0-9]{8}-[0-9]{4}\.dump\.gpg' | sort -u > remote_list.txt
+          TOTAL=$(wc -l < remote_list.txt)
+          if [ "$TOTAL" -gt "$KEEP" ]; then
+            head -n $((TOTAL - KEEP)) remote_list.txt | sed 's#^#rm backups/#' | $SFTP -b - "$DEST"
+            echo "$((TOTAL - KEEP)) eski yedek silindi."
+          fi
+          echo "Toplam saklanan yedek: $(( TOTAL > KEEP ? KEEP : TOTAL ))"
+
+      - name: Geçici dosyaları sil
+        if: always()
+        run: rm -f traktor-*.dump traktor-*.dump.gpg remote_list.txt ~/.ssh/id_backup ~/.ssh/known_hosts_backup

@@ -14,7 +14,61 @@ Veritabanı kaybı tüm işleri durdurur. **TÜİK içe aktarma (import-tuik.js)
 
 ---
 
-## Seçenek A: Railway Yerleşik Yedekleri (Tercih Edilen)
+## Otomatik Gece Yedeği (önerilen): GitHub → Hetzner Storage Box
+
+Her gece 04:17'de (Türkiye saati) GitHub, Railway veritabanının yedeğini alır, **şifreler** ve Hetzner Storage Box'a yükler. Son 14 yedek saklanır. Depo herkese açık olduğu için yedek GitHub'da **asla** tutulmaz. Çalıştıran: `.github/workflows/db-backup.yml`.
+
+### Tek seferlik kurulum (yaklaşık 15 dakika)
+
+**1) Yedek için yeni bir anahtar çifti üretin** (kendi bilgisayarınızda; kendi SSH anahtarınızı kullanmayın):
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/hetzner_yedek -N "" -C "github-yedek"
+cat ~/.ssh/hetzner_yedek.pub
+```
+Son komut tek satırlık `ssh-ed25519 AAAA...` metnini yazar (açık anahtar, paylaşılabilir).
+
+**2) Açık anahtarı Storage Box'a ekleyin:** Hetzner Console → Storage Box → SSH anahtarları bölümü → yeni satır olarak yapıştırın (SSH desteğinin açık olduğundan emin olun).
+
+**3) Sunucunun parmak izini alın** (araya sahte sunucu girmesini engeller):
+```bash
+ssh-keyscan -p 23 u648249.your-storagebox.de
+```
+Çıkan **tüm satırları** kopyalayın.
+
+**4) Yedek parolası üretin ve parola yöneticinize kaydedin:**
+```bash
+openssl rand -hex 24
+```
+Bu parola olmadan yedekler **açılamaz**. Kaybetmeyin, sohbete yazmayın.
+
+**5) GitHub'a secret'ları ekleyin:** Depo → **Settings → Secrets and variables → Actions → New repository secret**. Aşağıdaki 6 secret'ı tek tek ekleyin:
+
+| Ad | Değer |
+|---|---|
+| `BACKUP_DATABASE_URL` | Railway → Postgres → Variables → `DATABASE_PUBLIC_URL` |
+| `BACKUP_PASSPHRASE` | 4. adımdaki parola |
+| `STORAGEBOX_HOST` | `u648249.your-storagebox.de` |
+| `STORAGEBOX_USER` | `u648249` |
+| `STORAGEBOX_SSH_KEY` | `cat ~/.ssh/hetzner_yedek` çıktısının **tamamı** (`-----BEGIN` ile `-----END` satırları dahil) |
+| `STORAGEBOX_KNOWN_HOSTS` | 3. adımdaki satırlar |
+
+**6) Deneyin:** Depo → **Actions → "Veritabanı Yedeği (Hetzner)" → Run workflow**. Yeşil tik çıkmalı, Storage Box'ta `backups/` klasöründe `traktor-....dump.gpg` dosyası görünmeli.
+
+### Geri yükleme
+```bash
+gpg -d traktor-YYYYMMDD-HHMM.dump.gpg > geri.dump        # parolayı sorar
+bash scripts/restore-db.sh geri.dump "HEDEF_VERITABANI_ADRESI"
+```
+Önce kendi bilgisayarınızdaki boş bir test veritabanına geri yüklemeyi deneyin.
+
+### Dikkat
+- Postgres parolasını yenilerseniz `BACKUP_DATABASE_URL` secret'ını da güncelleyin, yoksa yedek başarısız olur (GitHub size e-posta gönderir).
+- GitHub, 60 gün hiç hareket olmayan herkese açık depolarda zamanlanmış işleri durdurur. Ayda bir Actions sayfasına bakın.
+- `pg_dump` sürümü Railway'in Postgres sürümüyle (şu an 18) uyumlu olmalıdır. Railway Postgres'i yükseltirse iş akışındaki `18` değerini güncelleyin.
+
+---
+
+## Seçenek A: Railway Yerleşik Yedekleri (yalnızca Pro plan)
 
 Railway, Postgres servisine otomatik yedekleme sunabilir.
 
