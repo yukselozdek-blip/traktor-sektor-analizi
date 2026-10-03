@@ -1,5 +1,3 @@
--- NOT: Şemanın tek doğruluk kaynağı database/migrations/ dizinidir (bkz. database/migrate.js).
--- Bu dosya 001_baseline.sql ile aynı içeriktedir ve yalnızca referans/docker-compose mount için tutulur.
 -- ============================================
 -- TRAKTÖR SEKTÖR ANALİZİ - VERİTABANI ŞEMASI
 -- ============================================
