@@ -19,6 +19,8 @@ The production app currently supports:
 
 ## Public URLs
 
+> **Güncelleme (2026-10):** Uygulamanın asıl adresi artık `https://app.tarimtraktor.com`. Aşağıdaki Railway adresi **Meta tarafında kayıtlı callback adresleri** olduğu için hâlâ geçerlidir ve çalışır durumda tutulur; Meta/WhatsApp ayarları yeni adrese **bilinçli olarak taşınana kadar** eski adres kapatılmaz ve değiştirilmez. Taşırken Meta Webhook, gizlilik/şartlar/veri silme URL'leri ve doğrulama belirteci birlikte güncellenir (bkz. `../../operasyon-altyapi-anayasasi/SKILL.md`).
+
 - App base URL: `https://affectionate-blessing-production-f2fe.up.railway.app`
 - Sales query route: `https://affectionate-blessing-production-f2fe.up.railway.app/api/public/assistant/sales-query`
 - WhatsApp webhook route: `https://affectionate-blessing-production-f2fe.up.railway.app/api/public/whatsapp/webhook`
@@ -66,6 +68,6 @@ Common commands when the linked Railway project is available:
 - `railway status`
 - `railway service status`
 - `railway logs --latest --lines 40`
-- `railway up -d -m "message"`
+- ~~`railway up -d -m "message"`~~ → **kullanılmaz.** Canlıya çıkış: GitHub PR → CI → squash merge → Railway otomatik deploy (bkz. `../../operasyon-altyapi-anayasasi/SKILL.md` §5)
 
 Use Railway variables for secrets. Avoid committing runtime tokens.
