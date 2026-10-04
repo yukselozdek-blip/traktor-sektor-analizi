@@ -76,3 +76,8 @@ Cloudflare'i "Yalnızca DNS"ten "Proxied"a geçirme sırası: (1) `TRUST_PROXY_H
 (2) Cloudflare'de SSL modunu **Full (strict)** yap, (3) kaydı turuncu buluta çevir,
 (4) giriş denemesi sınırının tek bir IP'ye (Cloudflare) düşmediğini logdan doğrula.
 Apex/www için Railway'e özel alan adı olarak da eklenmelidir (aksi halde yönlendirme çalışmaz).
+
+## Bağımlılık güvenliği (npm audit)
+
+- `axios`, `form-data`, `path-to-regexp`, `body-parser` güncellendi; kullanılmayan `node-cron` kaldırıldı; `qs` için `overrides` ile güvenli sürüm (6.16.0) zorlandı. Üretim bağımlılıklarında `npm audit` yalnızca `xlsx` için uyarı verir.
+- **Kabul edilen risk: `xlsx@0.18.5`** (prototype pollution, ReDoS; npm'de düzeltilmiş sürüm yok, düzeltme yalnızca SheetJS CDN paketinde `0.20.x`). Yalnızca `import-tuik.js` kullanır ve depodaki sabit dosyayı (`EXCEL_PATH`) okur; kullanıcıdan Excel yüklenmez. **Kullanıcı Excel yüklemesi eklenirse önce `xlsx`'i `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` ile yükseltin.**
