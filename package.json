@@ -9,6 +9,7 @@
     "seed": "node database/seed.js",
     "migrate": "node database/migrate.js",
     "test": "node --test \"tests/*.test.js\"",
+    "lint:undef": "eslint server.js src database billing import-tuik.js",
     "lint:syntax": "node --check server.js && node --check database/migrate.js && node --check import-tuik.js && node --check billing/providers.js && find src -name '*.js' -exec node --check {} \\;",
     "build": "node scripts/build-assets.js"
   },
@@ -31,6 +32,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
     "nodemon": "^3.0.2"
   },
   "engines": {

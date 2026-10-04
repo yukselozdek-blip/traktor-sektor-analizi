@@ -1165,4 +1165,7 @@ module.exports = function registerGeo(app, ctx) {
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
+
+    // server.js (WhatsApp yardımcıları, /api/provinces) bu yardımcıları da kullanır.
+    return { enrichProvinceWithReference, hpRangeFromHorsepower, computeModelProvinceCompatibility, buildModelRegionMission, parseHpBand };
 };

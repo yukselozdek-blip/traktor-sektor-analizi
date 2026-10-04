@@ -3,7 +3,7 @@
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
 module.exports = function registerModels(app, ctx) {
-    const { pool, authMiddleware, adminOnly, normalizeSearchText, roundMetric, calculateYoY, errMsg, APP_BASE_URL, MEDIA_WATCH_WEBHOOK_KEY, N8N_MODEL_INTEL_WEBHOOK_URL, MODEL_IMAGE_BRIDGE_URL } = ctx;
+    const { geoHelpers, pool, authMiddleware, adminOnly, normalizeSearchText, roundMetric, calculateYoY, errMsg, APP_BASE_URL, MEDIA_WATCH_WEBHOOK_KEY, N8N_MODEL_INTEL_WEBHOOK_URL, MODEL_IMAGE_BRIDGE_URL } = ctx;
 
     // ============================================
     // TRACTOR MODELS
@@ -2062,6 +2062,6 @@ module.exports = function registerModels(app, ctx) {
         }
     });
 
-    require('./geo')(app, { pool, authMiddleware, normalizeSearchText, roundMetric, calculateYoY });
+    Object.assign(geoHelpers, require('./geo')(app, { pool, authMiddleware, normalizeSearchText, roundMetric, calculateYoY }));
 
 };

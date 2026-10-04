@@ -16,6 +16,13 @@ const {
     MEDIA_WATCH_WEBHOOK_KEY, N8N_WHATSAPP_PROCESSOR_URL, N8N_MODEL_INTEL_WEBHOOK_URL, MODEL_IMAGE_BRIDGE_URL
 } = require('./src/config');
 const { pool } = require('./src/db');
+// geo route modülünün (src/routes/geo.js) yardımcıları; models modülü kaydı sırasında doldurulur.
+const geoHelpers = {};
+const enrichProvinceWithReference = (...a) => geoHelpers.enrichProvinceWithReference(...a);
+const hpRangeFromHorsepower = (...a) => geoHelpers.hpRangeFromHorsepower(...a);
+const computeModelProvinceCompatibility = (...a) => geoHelpers.computeModelProvinceCompatibility(...a);
+const buildModelRegionMission = (...a) => geoHelpers.buildModelRegionMission(...a);
+const parseHpBand = (...a) => geoHelpers.parseHpBand(...a);
 const { isSafeSql } = require('./src/lib/sql-guard');
 process.on('unhandledRejection', (reason) => {
     console.error('unhandledRejection:', reason && reason.stack ? reason.stack : reason);
@@ -5199,7 +5206,7 @@ app.get('/api/provinces', authMiddleware, async (req, res) => {
 });
 
 require('./src/routes/sales')(app, { pool, authMiddleware, roundMetric, calculateYoY, ensureProvincesSeeded });
-require('./src/routes/models')(app, { pool, authMiddleware, adminOnly, normalizeSearchText, roundMetric, calculateYoY, errMsg, APP_BASE_URL, MEDIA_WATCH_WEBHOOK_KEY, N8N_MODEL_INTEL_WEBHOOK_URL, MODEL_IMAGE_BRIDGE_URL });
+require('./src/routes/models')(app, { geoHelpers, pool, authMiddleware, adminOnly, normalizeSearchText, roundMetric, calculateYoY, errMsg, APP_BASE_URL, MEDIA_WATCH_WEBHOOK_KEY, N8N_MODEL_INTEL_WEBHOOK_URL, MODEL_IMAGE_BRIDGE_URL });
 // ============================================
 // AI INSIGHTS
 // ============================================
