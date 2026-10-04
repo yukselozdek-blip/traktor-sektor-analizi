@@ -915,6 +915,7 @@ function navigateTo(page, opts = {}) {
 
     const [title, subtitle] = titles[page] || ['', ''];
     document.getElementById('pageTitle').textContent = title;
+    { const h = document.getElementById('pageTitleSr'); if (h) h.textContent = title || 'Panel'; }
     document.getElementById('pageSubtitle').textContent = subtitle;
 
     // Global marka banner: her sekmede sayfa adını üstte gösterir
@@ -924,6 +925,7 @@ function navigateTo(page, opts = {}) {
     const meta = getReportMeta(page) || null;
     if (meta) {
         document.getElementById('pageTitle').textContent = meta.title || title;
+        { const h = document.getElementById('pageTitleSr'); if (h) h.textContent = meta.title || title || 'Panel'; }
         document.getElementById('pageSubtitle').textContent = meta.subtitle || subtitle;
     }
 
@@ -11443,7 +11445,7 @@ async function loadSubscriptionPage() {
             const isCurrent = subscription?.plan_slug === plan.slug && (subscription?.status === 'active' || subscription?.status === 'trialing');
             const isSelected = subscriptionState.selectedPlan === plan.slug;
             return `
-                <article class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan(${jsArg(plan.slug)})">
+                <div class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan(${jsArg(plan.slug)})">
                     ${plan.tier_rank === 2 ? '<div class="sub-plan-badge">EN POPÜLER</div>' : ''}
                     ${isCurrent ? '<div class="sub-plan-current">MEVCUT PLAN</div>' : ''}
                     <div class="sub-plan-tier">Tier ${plan.tier_rank || 1}</div>
@@ -11460,7 +11462,7 @@ async function loadSubscriptionPage() {
                     <div class="sub-plan-meta">
                         <span><i class="fas fa-users"></i> ${plan.max_users >= 999 ? 'Sınırsız kullanıcı' : `${plan.max_users} kullanıcı`}</span>
                     </div>
-                </article>
+                </div>
             `;
         }).join('');
 

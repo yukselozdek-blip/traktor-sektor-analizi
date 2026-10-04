@@ -25,7 +25,14 @@
     function hasName(el) {
         if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return true;
         if (el.getAttribute('title')) return true;
-        if (el.labels && el.labels.length) return true;
+        if (el.labels && el.labels.length) {
+            for (var li = 0; li < el.labels.length; li++) {
+                var c = el.labels[li].cloneNode(true);
+                var inner = c.querySelectorAll('select,input,textarea,option');
+                for (var ci = 0; ci < inner.length; ci++) inner[ci].remove();
+                if (text(c)) return true;
+            }
+        }
         if (el.tagName === 'BUTTON' || el.tagName === 'A') {
             if (text(el)) return true;
             var img = el.querySelector('img[alt]:not([alt=""])');
@@ -89,6 +96,22 @@
         }
     }
 
+    // Başlık sırası: atlanan seviyeleri aria-level ile düzelt (yalnızca erişilebilirlik ağacı; görünüm değişmez)
+    function fixHeadings() {
+        var main = document.getElementById('mainContent');
+        if (!main) return;
+        var hs = main.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]');
+        var last = 1;
+        for (var i = 0; i < hs.length; i++) {
+            var h = hs[i];
+            if (h.getAttribute('aria-hidden') === 'true' || h.id === 'pageTitleSr') continue;
+            var nat = /^H[1-6]$/.test(h.tagName) ? +h.tagName.charAt(1) : (+h.getAttribute('aria-level') || 2);
+            var lvl = Math.min(nat, last + 1);
+            if (h.dataset.a11yLvl !== '1' && lvl !== nat) { h.setAttribute('aria-level', String(lvl)); h.dataset.a11yLvl = '1'; }
+            last = h.dataset.a11yLvl === '1' ? +h.getAttribute('aria-level') : nat;
+        }
+    }
+
     function scan(root) {
         var scope = root && root.querySelectorAll ? root : document;
         var controls = scope.querySelectorAll('button, select, input, textarea, [onclick]');
@@ -117,6 +140,7 @@
         queued = false;
         var nodes = Array.from(pending); pending.clear();
         for (var i = 0; i < nodes.length; i++) if (document.contains(nodes[i])) scan(nodes[i]);
+        fixHeadings();
     }
     function schedule() {
         if (queued) return;
@@ -126,6 +150,7 @@
 
     function start() {
         scan(document.body);
+        fixHeadings();
         new MutationObserver(function (muts) {
             for (var i = 0; i < muts.length; i++) {
                 var added = muts[i].addedNodes;
