@@ -6,16 +6,17 @@
 // - Doğrulanamayan token'larda atlanır (401'i rotanın kendi authMiddleware'i üretir).
 // - TTL: RESPONSE_CACHE_TTL_MS (varsayılan 60 sn; 0 = kapalı). Çoklu replikada her süreç kendi önbelleğini tutar.
 const jwt = require('jsonwebtoken');
+const { getRequestToken } = require('../lib/session');
 
 function createResponseCache({ jwtSecret, ttlMs = 60000, maxEntries = 500, pathPrefixes = [] }) {
     const store = new Map(); // key -> { body, exp }
     const pending = new Map(); // key -> Promise (ilk hesaplama bitince çözülür)
 
     function keyFor(req) {
-        const token = req.headers.authorization?.replace('Bearer ', '');
-        if (!token) return null;
+        const found = getRequestToken(req);
+        if (!found) return null;
         let p;
-        try { p = jwt.verify(token, jwtSecret); } catch { return null; }
+        try { p = jwt.verify(found.token, jwtSecret); } catch { return null; }
         return `${p.id}|${p.role}|${p.brand_id ?? ''}|${req.originalUrl}`;
     }
 

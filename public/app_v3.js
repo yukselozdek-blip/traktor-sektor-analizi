@@ -550,9 +550,6 @@ async function requestAiAnalysis(type, context, panelId) {
 // INITIALIZATION
 // ============================================
 async function init() {
-    const token = localStorage.getItem('auth_token');
-    if (!token) { window.location.href = API.getLoginDestination(); return; }
-
     try {
         currentUser = await API.me();
     } catch (err) {

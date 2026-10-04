@@ -168,6 +168,28 @@ const limiter = rateLimit({
     legacyHeaders: false
 });
 app.use('/api/', limiter);
+// Oturum çerezi: giriş/kayıt/Google yanıtındaki JWT'yi httpOnly çereze yazar. Web istemcisi (X-Web-Session: 1)
+// için token JSON gövdesinden çıkarılır (JS erişemesin); API istemcileri token'ı gövdede almaya devam eder.
+{
+    const { setSessionCookie } = require('./src/lib/session');
+    require('./src/middleware/auth').setCsrfAllowedOrigins(CORS_ALLOWED_ORIGINS);
+    const SESSION_ISSUING = new Set(['/api/auth/login', '/api/auth/signup', '/api/auth/google']);
+    app.use((req, res, next) => {
+        if (req.method !== 'POST' || !SESSION_ISSUING.has(req.path)) return next();
+        const origJson = res.json.bind(res);
+        res.json = body => {
+            if (res.statusCode >= 200 && res.statusCode < 300 && body && typeof body.token === 'string') {
+                setSessionCookie(req, res, body.token);
+                if (req.headers['x-web-session'] === '1') {
+                    const { token, ...rest } = body;
+                    return origJson({ ...rest, session: true });
+                }
+            }
+            return origJson(body);
+        };
+        next();
+    });
+}
 // Analitik GET yanıtları için kullanıcıya özel kısa önbellek (RESPONSE_CACHE_TTL_MS, 0 = kapalı).
 {
     const ttl = parseInt(process.env.RESPONSE_CACHE_TTL_MS || '', 10);
@@ -4756,6 +4778,11 @@ app.post('/api/auth/preview-plan', authMiddleware, async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    require('./src/lib/session').clearSessionCookie(req, res);
+    res.json({ ok: true });
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {

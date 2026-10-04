@@ -5,6 +5,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const billingProviders = require('../../billing/providers');
+const { getRequestToken } = require('../lib/session');
 
 module.exports = function registerBilling(app, ctx) {
     const {
@@ -194,10 +195,11 @@ module.exports = function registerBilling(app, ctx) {
                 userId = r.rows[0]?.user_id || null;
             }
             // 2) Yöntem: Authorization header
-            if (!userId && req.headers.authorization) {
+            if (!userId) {
                 try {
-                    const token = req.headers.authorization.replace('Bearer ', '');
-                    const decoded = jwt.verify(token, JWT_SECRET);
+                    const found = getRequestToken(req);
+                    if (!found) throw new Error('no token');
+                    const decoded = jwt.verify(found.token, JWT_SECRET);
                     userId = decoded?.id || null;
                 } catch (e) {}
             }

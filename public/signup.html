@@ -261,7 +261,7 @@
         </section>
     </div>
 
-    <script src="/api_v3.js?v=5.78-mc"></script>
+    <script src="/api_v3.js?v=6.0-session"></script>
     <script>
         let allPlans = [];
         let selectedPlanSlug = null;
@@ -356,7 +356,7 @@
 
             try {
                 const data = await API.signup(payload);
-                if (data?.token) {
+                if (data?.session || data?.token) {
                     // Yönlendirme: ödeme sayfasına geç (Subscription tab'ı checkout başlatır)
                     window.location.href = `/?page=subscription&plan=${selectedPlanSlug}&billing=start`;
                 } else {

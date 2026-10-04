@@ -10,6 +10,7 @@ MW serveStatic /^\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
 GET ["/giris/:brandSlug","/login/:brandSlug","/portal/:brandSlug"] [<anonymous>]
 MW <anonymous> /^\/api\/?(?=\/|$)/i
+MW <anonymous> /^\/?(?=\/|$)/i
 MW middleware /^\/api\/?(?=\/|$)/i
 GET "/api/auth/diagnostic" [authMiddleware>adminOnly><anonymous>]
 GET "/api/sales/model-region" [authMiddleware><anonymous>]
@@ -37,6 +38,7 @@ POST "/api/auth/forgot-password" [<anonymous>><anonymous>]
 GET "/api/auth/reset-password/validate" [<anonymous>><anonymous>]
 POST "/api/auth/reset-password" [<anonymous>><anonymous>]
 POST "/api/auth/preview-plan" [authMiddleware><anonymous>]
+POST "/api/auth/logout" [<anonymous>]
 GET "/api/auth/me" [authMiddleware><anonymous>]
 GET "/api/gear-configs" [authMiddleware><anonymous>]
 GET "/api/map-filter-options" [authMiddleware><anonymous>]

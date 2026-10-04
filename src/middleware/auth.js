@@ -3,10 +3,15 @@
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../config');
 const { pool } = require('../db');
+const { getRequestToken, csrfOk } = require('../lib/session');
 
 // Şifre sıfırlamadan önce verilmiş JWT'leri geçersiz kılmak için küçük bellek içi önbellek:
 // userId -> { at: password_changed_at (epoch sn, yoksa 0), exp: önbellek bitişi (ms) }.
 // Çoklu replika durumunda başka süreçlerde en fazla TTL kadar gecikir.
+// CSRF için izin verilen ek origin'ler (server.js CORS listesini verir); aynı host her zaman geçerlidir.
+let csrfAllowedOrigins = new Set();
+function setCsrfAllowedOrigins(set) { csrfAllowedOrigins = set; }
+
 const PWD_CHANGED_TTL_MS = 60 * 1000;
 const PWD_CHANGED_MAX = 10000;
 const pwdChangedCache = new Map();
@@ -28,8 +33,13 @@ async function getPasswordChangedAt(userId) {
 }
 
 async function authMiddleware(req, res, next) {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Token gerekli' });
+    const found = getRequestToken(req);
+    if (!found) return res.status(401).json({ error: 'Token gerekli' });
+    const token = found.token;
+    // Çerezle kimlik doğrulanan değiştirici isteklerde CSRF koruması (Bearer isteklerinde gerekmez).
+    if (found.source === 'cookie' && !csrfOk(req, csrfAllowedOrigins)) {
+        return res.status(403).json({ error: 'İstek doğrulanamadı (CSRF)' });
+    }
     let payload;
     try {
         payload = jwt.verify(token, JWT_SECRET);
@@ -65,4 +75,4 @@ async function adminOnly(req, res, next) {
     }
 }
 
-module.exports = { authMiddleware, adminOnly, invalidatePasswordChangedCache };
+module.exports = { authMiddleware, adminOnly, invalidatePasswordChangedCache, setCsrfAllowedOrigins };

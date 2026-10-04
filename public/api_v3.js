@@ -2,9 +2,11 @@
 // API CLIENT - Traktör Sektör Analizi
 // ============================================
 
+// Oturum artık httpOnly çerezdedir (JS erişemez). Eski sürümden kalan localStorage anahtarını temizle.
+try { localStorage.removeItem('auth_token'); } catch (e) { /* depolama kapalı olabilir */ }
+
 const API = {
     baseURL: '',
-    token: localStorage.getItem('auth_token'),
     cache: new Map(),
     cacheTTL: 5 * 60 * 1000,
     requestTimeoutMs: 15000,
@@ -34,14 +36,15 @@ const API = {
             if (Date.now() - cached.time < this.cacheTTL) return cached.data;
         }
 
-        const headers = { 'Content-Type': 'application/json' };
-        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        // Çerez otomatik gönderilir; X-Requested-With CSRF korumasının parçasıdır, X-Web-Session token'ı gövdeden çıkarır.
+        const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-Web-Session': '1' };
 
-        const opts = { method, headers };
+        const opts = { method, headers, credentials: 'same-origin' };
         if (body) opts.body = JSON.stringify(body);
 
         const res = await this.fetchWithTimeout(`${this.baseURL}${path}`, opts);
-        if (res.status === 401) {
+        // Giriş/kayıt denemelerindeki 401 (yanlış şifre) oturum düşmesi değildir: hata mesajı gösterilsin.
+        if (res.status === 401 && !/^\/api\/auth\/(login|signup|google)/.test(path)) {
             this.logout();
             return null;
         }
@@ -120,9 +123,17 @@ const API = {
         return res.json();
     },
 
-    setToken(token) {
-        this.token = token;
-        localStorage.setItem('auth_token', token);
+    // Geriye dönük uyumluluk: token artık saklanmaz (oturum çerezde).
+    setToken() {},
+
+    // Oturum var mı? 401'de yönlendirme yapmaz (giriş sayfası için). Kullanıcıyı ya da null döndürür.
+    async probeSession() {
+        try {
+            const res = await this.fetchWithTimeout('/api/auth/me', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin', cache: 'no-store'
+            });
+            return res.ok ? await res.json() : null;
+        } catch (e) { return null; }
     },
 
     getLoginDestination() {
@@ -131,10 +142,12 @@ const API = {
     },
 
     logout() {
-        this.token = null;
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user_data');
-        window.location.href = this.getLoginDestination();
+        const go = () => { window.location.href = this.getLoginDestination(); };
+        // Sunucu çerezi siler; ağ hatasında bile yönlendir.
+        fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(go, go);
     },
 
     clearCache() { this.cache.clear(); },
@@ -142,8 +155,7 @@ const API = {
     // Auth
     async login(email, password) {
         const data = await this.post('/api/auth/login', { email, password });
-        if (data?.token) {
-            this.setToken(data.token);
+        if (data?.session || data?.token) {
             localStorage.setItem('user_data', JSON.stringify(data.user));
             if (data.user?.brand?.slug) {
                 localStorage.setItem('last_brand_slug', data.user.brand.slug);
@@ -314,8 +326,7 @@ const API = {
     async getInvoices() { return this.get('/api/billing/invoices'); },
     async signup(payload) {
         const data = await this.post('/api/auth/signup', payload);
-        if (data?.token) {
-            this.setToken(data.token);
+        if (data?.session || data?.token) {
             localStorage.setItem('user_data', JSON.stringify(data.user));
         }
         return data;

@@ -869,7 +869,7 @@
         </section>
     </div>
 
-    <script src="/api_v3.js?v=5.85-mc"></script>
+    <script src="/api_v3.js?v=6.0-session"></script>
     <script>
         const SUPERUSER_HINT = ['yukselozdek@gmail.com'];
         let allBrands = [];
@@ -1089,7 +1089,7 @@
             const remember = !!fd.get('remember_me');
             try {
                 const data = await API.login(email, fd.get('password'));
-                if (data?.token) {
+                if (data?.session || data?.token) {
                     if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
                     if (remember) localStorage.setItem('remember_email', email);
                     else localStorage.removeItem('remember_email');
@@ -1134,7 +1134,7 @@
             };
             try {
                 const data = await API.signup(payload);
-                if (data?.token) {
+                if (data?.session || data?.token) {
                     showInfo('Üyeliğiniz oluşturuldu. Ödeme adımına yönlendiriliyorsunuz...');
                     setTimeout(() => { window.location.href = `/?page=subscription&plan=${payload.plan_slug}&billing=start`; }, 800);
                 }
@@ -1184,7 +1184,8 @@
                 };
                 const r = await fetch('/api/auth/google', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-Web-Session': '1' },
+                    credentials: 'same-origin',
                     body: JSON.stringify(payload)
                 });
                 const data = await r.json();
@@ -1194,8 +1195,7 @@
                     return;
                 }
                 if (!r.ok) { showError(data.error || 'Google girişi başarısız'); return; }
-                if (data?.token) {
-                    API.setToken(data.token);
+                if (data?.session || data?.token) {
                     localStorage.setItem('user_data', JSON.stringify(data.user));
                     if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
                     if (data.is_new && data.pending_subscription) {
@@ -1215,9 +1215,7 @@
         initGoogle();
 
         // Auto-redirect if already logged in
-        if (API.token) {
-            API.me().then(u => { if (u) window.location.href = '/'; }).catch(() => { localStorage.removeItem('auth_token'); API.token = null; });
-        }
+        API.probeSession().then(u => { if (u) window.location.href = '/'; });
     </script>
     <script>
         // Backend'den Google client ID'sini opsiyonel olarak al, butonun durumunu güncelle
