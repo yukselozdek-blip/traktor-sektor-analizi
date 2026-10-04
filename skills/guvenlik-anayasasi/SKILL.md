@@ -82,7 +82,8 @@ Not: `src/db.js` (DB SSL) ve minify servisi (`server.js`) hâlâ doğrudan `NODE
 | Yönerge | Değer |
 |---------|-------|
 | `default-src` | `'self'` |
-| `script-src` | `'self' 'unsafe-inline' https://accounts.google.com/gsi/client` |
+| `script-src` | `'self' https://accounts.google.com/gsi/client` (**`'unsafe-inline'` ve `'unsafe-eval'` YOK**) |
+| `script-src-attr` | `'none'` (satır içi olay öznitelikleri tümden kapalı) |
 | `style-src` | `'self' 'unsafe-inline' https://accounts.google.com/gsi/style` |
 | `img-src` | `'self' data: blob: https:` |
 | `font-src` | `'self' data:` |
@@ -95,11 +96,11 @@ Not: `src/db.js` (DB SSL) ve minify servisi (`server.js`) hâlâ doğrudan `NODE
 - Ek: `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()`; `Cross-Origin-Opener-Policy: same-origin-allow-popups` (Google penceresi için); `Cross-Origin-Embedder-Policy` kapalı.
 - **Üçüncü taraf kütüphane/yazı tipi CDN'den YÜKLENMEZ.** Chart.js, datalabels, DOMPurify, Leaflet, Font Awesome ve yazı tipleri `public/vendor/` altındadır (`public/vendor/README.md` sürüm tablosu; `/vendor/` 7 gün önbellek). Yeni kütüphane: `npm i` → dosyayı `public/vendor/`'a kopyala → README tablosuna sürümü yaz. `<script src="https://...">` (Google GSI hariç) EKLENMEZ; `tests/security-headers.test.js` bunu denetler.
 - **Acil geri alma:** Railway'de `CSP_MODE=report` (yalnızca raporla, engelleme) veya `CSP_MODE=off`. Sorun çözülünce kaldırılır (varsayılan `enforce`).
-- **Satır içi olay yöneticisi YASAĞI (hedef kural):** Yeni kodda `onclick="..."`, `onchange="..."` gibi satır içi olay yöneticileri YAZILMAZ; `addEventListener` ve `data-*` öznitelikleri kullanılır. Gerekçe: bu yöneticiler `'unsafe-inline'` bağımlılığının tek nedenidir; her yeni satır içi yönetici CSP'yi sıkılaştırmayı zorlaştırır.
+- **Satır içi olay yöneticisi YASAĞI (KESİN KURAL):** `onclick="..."`, `onchange="..."`, `oninput`, `onerror` vb. satır içi öznitelikler ve satır içi `<script>` gövdeleri YAZILMAZ; CSP bunları zaten engeller. Bunun yerine `data-on-<olay>="ifade"` kullanılır (`public/inline-actions.js`: `eval`/`new Function` KULLANMAYAN, tokenizer + özyinelemeli ayrıştırıcılı güvenli yorumlayıcı; tek delege dinleyici). Desteklenen ifadeler: çağrılar ve zincirler (`fn(a,'x')`, `Obj.m()`), `;` dizileri, atama, üçlü işleç, `this`/`event`/`this.value`, `return false`. Karmaşık mantık için `app_v3.js`'te adlandırılmış işlev yazılır ve `data-on-click="adliIslev(...)"` ile çağrılır. Dinamik değerler şablona konurken HER ZAMAN kaçırılır (`escapeHtml` / `jsArg`); `data-on-*` öznitelik enjeksiyonu yorumlayıcı üzerinden global işlev çağırabileceği için kaçış eksiği hâlâ XSS'tir. DOMPurify çıktısında `ALLOW_DATA_ATTR: false` (kullanıcı içeriğinden `data-on-*` sızmasın). `script-src` yalnızca kendi sunucumuzdan: yeni betik `public/` altında ayrı dosya olarak eklenir, `scripts/build-assets.js` listesine ve `server.js` `MINIFIED_ASSETS`'e kaydedilir.
+- **Stil:** `style-src` `'unsafe-inline'` içerir (yaygın `style=` kullanımı); stil enjeksiyonu betik çalıştırmaz ama içerik sahteciliğine yol açabilir; yeni kodda satır içi stil yerine sınıf tercih edilir.
+- **Doğrulama:** `tests/security-headers.test.js` (başlık), `tests/html-quality.test.js` (satır içi yönetici/`<script>` gövdesi YOK), `tests/inline-actions.test.js` (yorumlayıcı; `eval` yok), `e2e/click-through.js` (tüm sayfalarda CSP ihlali 0; kaynak ve `SERVE_MINIFIED=1` modunda). Yeni etkileşim eklenince `npm run e2e:click` çalıştırılır.
 
-<!-- CSP-DURUMU: koordinatör güncelleyecek -->
-
-Belge yazılırken doğrulanan durum (**eskimiş olabilir; satır içi yöneticilerin kaldırılması ve CSP sıkılaştırması sürüyorsa koordinatör yukarıdaki işaretçiyi günceller, önce `server.js` `cspDirectives` ve `grep -c 'onclick=' public/*` ile kontrol edin**): `script-src` ve `style-src` hâlâ `'unsafe-inline'` içerir; `public/app_v3.js` içinde ~52, `public/index.html` içinde ~37 `onclick=` bulunur. `public/a11y.js` bu yöneticilere dayanır (bkz. erişilebilirlik anayasası).
+**Durum (doğrulandı):** `script-src 'self' https://accounts.google.com/gsi/client` + `script-src-attr 'none'`; `public/` altında satır içi `on*=` sayısı **0**; `e2e/click-through.js` iki modda 92 OK, CSP ihlali 0. Bilinen, CSP'yle ilgisiz iki madde: `api_v3.js` yerel dağıtım köprüsüne (`127.0.0.1:3010`) istek atar (üretimde `connect-src` ile engellenir) ve harita sayfasından çıkarken aralıklı Leaflet `_leaflet_pos` yarışı.
 
 ---
 

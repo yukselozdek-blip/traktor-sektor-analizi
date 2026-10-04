@@ -8,7 +8,7 @@ const { execFileSync } = require('child_process');
 const BASE = process.env.BASE || 'http://localhost:3000';
 (async () => {
     let bad = 0;
-    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js']) {
+    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js']) {
         const orig = fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
         const res = await fetch(`${BASE}/${f}?v=check`);
         const body = await res.text();

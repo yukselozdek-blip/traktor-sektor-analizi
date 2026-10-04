@@ -439,3 +439,7 @@ const API = {
     async getRailwayDeployStatus() { return this.deployBridgeRequest('GET', '/api/deploy/status'); },
     async triggerRailwayDeploy() { return this.deployBridgeRequest('POST', '/api/deploy/railway', {}); }
 };
+
+// Satır içi olay yorumlayıcısı (inline-actions.js) global kapsamdaki `const` bildirimlerini göremez;
+// data-on-* ifadelerinde kullanılan API nesnesi bu yüzden window üzerinde de yayımlanır.
+window.API = API;

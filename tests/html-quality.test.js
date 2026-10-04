@@ -31,3 +31,46 @@ it('görsel olmayan metin alanlarında yalnızca placeholder ile etiketlenmiş �
         }
     }
 });
+
+// ---- CSP: script-src 'unsafe-inline' kaldırıldı -> satır içi olay yöneticisi / satır içi betik OLMAMALI ----
+const jsFiles = fs.readdirSync(dir).filter(n => n.endsWith('.js'));
+const INLINE_HANDLER = /\son(click|dblclick|change|input|keyup|keydown|keypress|submit|error|load|focus|blur|mouse\w+)\s*=\s*["'`]/;
+
+it('public/*.html ve public/*.js içinde satır içi olay yöneticisi (onclick= vb.) yok (şablon dizeleri dahil)', () => {
+    for (const f of [...pages, ...jsFiles]) {
+        const lines = fs.readFileSync(path.join(dir, f), 'utf8').split('\n');
+        lines.forEach((line, i) => {
+            assert.ok(!INLINE_HANDLER.test(line), `${f}:${i + 1} satır içi olay yöneticisi var (data-on-* kullanın): ${line.trim().slice(0, 100)}`);
+            assert.ok(!/setAttribute\(\s*['"]on[a-z]+['"]/.test(line), `${f}:${i + 1} setAttribute('on...') var (data-on-* kullanın)`);
+            assert.ok(!/(?:href|src|action)\s*=\s*["']\s*javascript:/i.test(line), `${f}:${i + 1} javascript: URL var`);
+        });
+    }
+});
+
+it('HTML sayfalarında satır içi <script> gövdesi yok (yalnızca src li betikler) ve inline-actions.js ilk betik', () => {
+    for (const f of pages) {
+        const html = fs.readFileSync(path.join(dir, f), 'utf8');
+        const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+        assert.ok(scripts.length > 0, `${f}: betik yok`);
+        for (const m of scripts) {
+            assert.match(m[1], /\bsrc="/, `${f}: satır içi <script> gövdesi var: ${m[2].trim().slice(0, 60)}`);
+            assert.equal(m[2].trim(), '', `${f}: src li betiğin gövdesi boş olmalı`);
+        }
+        assert.match(scripts[0][1], /src="\/inline-actions\.js\?v=/, `${f}: ilk betik inline-actions.js olmalı`);
+    }
+});
+
+it('HTML sayfalarındaki betik dosyaları var ve data-on-* ifadeleri yorumlayıcıda ayrıştırılabiliyor', () => {
+    const IA = require('../public/inline-actions.js');
+    for (const f of pages) {
+        const html = fs.readFileSync(path.join(dir, f), 'utf8');
+        for (const m of html.matchAll(/<script\b[^>]*\bsrc="(\/[^"?]+)/g)) {
+            if (/^\/(vendor)\//.test(m[1])) continue;
+            assert.ok(fs.existsSync(path.join(dir, m[1])), `${f}: ${m[1]} yok`);
+        }
+        for (const m of html.matchAll(/\sdata-on-([a-z]+)="([^"]*)"/g)) {
+            const expr = m[2].replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+            assert.equal(IA.check(expr), null, `${f}: data-on-${m[1]} ayrıştırılamadı: ${expr}`);
+        }
+    }
+});

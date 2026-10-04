@@ -58,14 +58,14 @@ Dinamik üretilen arayüzde **eksik erişilebilirlik bilgisini tamamlayan** katm
 
 Yapar:
 - İsimsiz ikon butonlarına `aria-label` verir (Font Awesome sınıfından, ör. `fa-sign-out-alt` → "Çıkış yap"); isimsiz `<select>`'lere id/ad ipucundan etiket verir; hemen önündeki ilişkisiz `<label>`'i alana bağlar; `placeholder`/ad ile isimsiz input'lara `aria-label` verir.
-- `onclick` olup doğal olarak odaklanamayan öğelere `tabindex="0"` + `role="button"` ekler; `Enter`/`Space` ile `click()` tetikler.
+- `data-on-click` (eski `onclick`) taşıyıp doğal olarak odaklanamayan öğelere `tabindex="0"` + `role="button"` ekler; `Enter`/`Space` ile `click()` tetikler.
 - Kaydırılabilir kapların klavyeyle kaydırılabilmesi için `tabindex="0"` verir.
 - Atlanan başlık seviyelerini `aria-level` ile düzeltir (yalnızca erişilebilirlik ağacı; görünüm değişmez).
 
 Yapmaz:
 - Görünür etiket/metin yazmaz, renk/kontrast düzeltmez, odak sırasını yeniden düzenlemez, modal odak tuzağı kurmaz.
 - **Yeni kodda a11y.js'e güvenme:** doğru HTML (gerçek `<button>`, `<label for>`, `aria-label`) ilk günden yazılır; a11y.js yalnızca ağ (safety net)'dır.
-- Not: ikon etiket haritasında olmayan ikon için `aria-label` açıkça yazılmalıdır. Betik belge yazılırken `onclick` özniteliğine dayanıyordu (`[onclick]` seçicisi, `role=button`/Enter-Space davranışı); satır içi olay yöneticileri `addEventListener`/`data-on-*` modeline taşındıkça bu bağımlılık değişir (**koordinatör bu maddeyi taşıma sonrası güncelleyecek**). Tıklanabilir öğeler için gerçek `<button>` kullanımı her durumda doğrudur.
+- Not: ikon etiket haritasında olmayan ikon için `aria-label` açıkça yazılmalıdır. Betik `[data-on-click]` (ve geriye dönük `[onclick]`) seçicisiyle çalışır; satır içi yöneticiler kaldırıldı, olaylar `public/inline-actions.js` ile `data-on-*` üzerinden yönetilir. Tıklanabilir öğeler için gerçek `<button>` kullanımı her durumda doğrudur.
 
 ---
 
@@ -76,7 +76,7 @@ Yapmaz:
 - **Skip link:** `public/index.html` ilk öğe `<a class="skip-link" href="#mainContent">İçeriğe geç</a>`; odaklanınca görünür (`.skip-link:focus { top: 12px }`). `#mainContent` korunur.
 - **`.sr-only`:** yalnızca ekran okuyucuya görünen metin için.
 - **Reduced motion:** `@media (prefers-reduced-motion: reduce)` tüm animasyon/geçişi fiilen kapatır. Yeni animasyon bu bloğu bozmaz; zorunlu bilgi animasyona bağlanmaz.
-- **Klavye:** her etkileşimli öğe Tab ile ulaşılır, Enter/Space ile çalışır; `div onclick` yerine `<button>`/`<a href>`. Tıklanabilir kart gerekiyorsa gerçek `<button>`/`<a>` içerir.
+- **Klavye:** her etkileşimli öğe Tab ile ulaşılır, Enter/Space ile çalışır; `div data-on-click` yerine `<button>`/`<a href>`. Tıklanabilir kart gerekiyorsa gerçek `<button>`/`<a>` içerir.
 - **Etiketler:** her form alanında görünür `<label for>` (placeholder etiket DEĞİLDİR; şifre alanları dahil). Yalnızca ikonlu butonda `aria-label`. Görsellerde anlamlı `alt` (süs görselde `alt=""`).
 - Dil: `<html lang="tr">`, `viewport` meta (zoom'u engelleme yok), `<main>` işareti (landmark) her sayfada (`tests/html-quality.test.js`).
 
@@ -122,7 +122,7 @@ Yapmaz:
 - [ ] Başlık seviyeleri sıralı mı; sayfa başlığı `pageTitleSr` ile güncelleniyor mu?
 - [ ] Animasyon `prefers-reduced-motion` altında kapanıyor mu; bilgi yalnızca animasyonla verilmiyor mu?
 - [ ] 390 px'te yatay taşma yok mu (`minmax(0,1fr)`, tablo kabı `overflow-x:auto`)? Sticky yalnızca masaüstünde mi?
-- [ ] Kullanıcı/DB verisi `escapeHtml`/`safeHref` ile basılıyor mu; yeni satır içi `onclick` yazılmadı mı (bkz. güvenlik anayasası)?
+- [ ] Kullanıcı/DB verisi `escapeHtml`/`safeHref` ile basılıyor mu; satır içi `on*=` yazılmadı, `data-on-*` kullanıldı mı (bkz. güvenlik anayasası)?
 - [ ] Görünür metin düzgün Türkçe karakterli mi (`turkce-karakter-anayasasi`)?
 - [ ] Yeni sayfa için `npm run e2e:a11y`, `npm run e2e:mobile`, `npm run e2e:xss` temiz mi? Marka renkleri/tema dokunulduysa `npm run e2e:contrast` temiz mi?
 
@@ -138,11 +138,11 @@ Tarayıcı (Chromium + playwright-core) denetimleri; yerel Postgres (`TEST_DATAB
 | `npm run e2e:contrast` | `e2e/brand-contrast.js` | Her marka için marka kullanıcısıyla panel sayfalarında axe `color-contrast` |
 | `npm run e2e:mobile` | `e2e/mobile-overflow.js` | 390 px'te yatay taşma yapan öğeler |
 | `npm run e2e:xss` | `e2e/xss-crawl.js` | Zehirli veriyle (marka/il/model/portal/medya) tüm sayfaları gezer; betik çalışırsa hata |
-| `node e2e/click-through.js` | `e2e/click-through.js` | Tıklama turu + CSP ihlali denetimi (npm komutu yok, bkz. aşağıdaki not) |
+| `npm run e2e:click` | `e2e/click-through.js` | Tıklama turu (92 kontrol) + CSP ihlali denetimi; `SERVE_MINIFIED=1` ile minify modunda da çalıştır |
 | `npm run e2e:auth` | `e2e/auth-flow.js` | Giriş akışı, httpOnly çerez, localStorage'da anahtar yok, yenileme, çıkış |
 
 Örnek: `TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run e2e:a11y`
 
-- `e2e/click-through.js` (tıklama turu: giriş etkileşimleri, tüm menü sayfaları, filtre `<select>`'leri, admin düğmeleri, bildirim paneli; CSP ihlali ve bozulan etkileşim denetler) belge yazılırken depoda mevcuttu ama `package.json`'da npm komutu **yoktu**; çalıştırma: `TEST_DATABASE_URL=postgresql://... [CHROMIUM_PATH=...] [SERVE_MINIFIED=1] node e2e/click-through.js`. Satır içi olay yöneticileri `addEventListener`/`data-on-*` modeline taşındığında davranışın bozulmadığını doğrulamak için kullanılır. (Koordinatör: npm komutu/README eklendiyse bu satırı güncelleyin.)
+- `e2e/click-through.js` (tıklama turu: giriş etkileşimleri, tüm menü sayfaları, filtre `<select>`'leri, admin düğmeleri, bildirim paneli; CSP ihlali ve bozulan etkileşim denetler) çalıştırma (`npm run e2e:click` de aynı): `TEST_DATABASE_URL=postgresql://... [CHROMIUM_PATH=...] [SERVE_MINIFIED=1] node e2e/click-through.js`. Satır içi olay yöneticileri `addEventListener`/`data-on-*` modeline taşındığında davranışın bozulmadığını doğrulamak için kullanılır.
 - Tarayıcısız statik kontrol: `tests/html-quality.test.js` (lang, viewport, main, a11y.js, etiketsiz şifre alanı yok) `npm test` içinde çalışır.
 - Üretimle aynı davranış için denetimler minify modunda da çalıştırılabilir (`SERVE_MINIFIED=1`; `e2e/auth-flow.js` böyle başlar).

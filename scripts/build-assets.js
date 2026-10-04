@@ -1,6 +1,6 @@
 // Minifies front-end assets into public/dist/*.min.(js|css).
-// Semantics-preserving: no bundling, no identifier renaming (inline onclick="..."
-// handlers reference globals by name), whitespace + syntax minification only.
+// Semantics-preserving: no bundling, no identifier renaming (data-on-click="..."
+// handlers (inline-actions.js) reference globals by name), whitespace + syntax minification only.
 const path = require('path');
 const fs = require('fs');
 const esbuild = require('esbuild');
@@ -8,7 +8,7 @@ const esbuild = require('esbuild');
 const PUBLIC = path.join(__dirname, '..', 'public');
 const DIST = path.join(PUBLIC, 'dist');
 
-const JS = ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js'];
+const JS = ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js'];
 const CSS = ['style.css', 'billing.css', 'media-watch.css'];
 
 async function main() {

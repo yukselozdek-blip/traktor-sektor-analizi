@@ -95,7 +95,7 @@ Yine de Railway'de `NODE_ENV=production` tanımlamanız önerilir.
 
 **CSP:** Zorunlu. Betikler yalnızca kendi sunucumuzdan (`/vendor/*`: Chart.js, Leaflet, DOMPurify, Font Awesome, yazı tipleri) ve
 Google ile giriş için `accounts.google.com`. Acil geri alma: `CSP_MODE=report` (yalnızca raporla) ya da `CSP_MODE=off`.
-`'unsafe-inline'` hâlâ açık (satır içi `onclick=` yöneticileri nedeniyle); kalıcı çözüm olay yöneticilerini `addEventListener`'a taşımaktır.
+Betikler için `'unsafe-inline'` **kapalı** (`script-src 'self'` + `script-src-attr 'none'`): satır içi olay yöneticileri `data-on-*` + `public/inline-actions.js` modeline taşındı. `style-src` hâlâ `'unsafe-inline'` içerir.
 
 **Ödeme:** Abonelik yalnızca imzalı sağlayıcı webhook'u ile aktive edilir. Sahte (MOCK) ödeme yalnızca geliştirmede veya
 `ALLOW_MOCK_BILLING=1` ile çalışır. Stripe/iyzico anahtarları tanımlı değilse üretimde kart ödemesi `503` döner; banka havalesi (admin onaylı) çalışır.

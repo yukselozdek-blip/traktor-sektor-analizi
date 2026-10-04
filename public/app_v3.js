@@ -41,6 +41,8 @@ function mdToHtml(md) {
         return window.DOMPurify.sanitize(html, {
             ALLOWED_TAGS: MD_ALLOWED_TAGS,
             ALLOWED_ATTR: ['class', 'href', 'target', 'rel'],
+            // data-on-* (inline-actions.js) eylem öznitelikleri kullanıcı içeriğinden asla geçmemeli
+            ALLOW_DATA_ATTR: false,
             ALLOWED_URI_REGEXP: /^https?:/i
         });
     }
@@ -1056,6 +1058,11 @@ function toggleSidebar(event) {
     sidebar.classList.toggle('open');
 }
 
+// Hata ekranındaki "Tekrar Dene": satır içi ifade `let currentPage` (global sözcüksel) değişkenini göremediği için adlandırılmış işlev
+function retryCurrentPage() {
+    navigateTo(currentPage);
+}
+
 function onYearChange() {
     selectedYear = parseInt(document.getElementById('yearFilter').value);
     if (['tarmakbir', 'tarmakbir2'].includes(currentPage)) {
@@ -2047,7 +2054,7 @@ async function loadHpCommandCenterPage() {
                         <div class="hpx-period-pill"><i class="fas fa-calendar-alt"></i><span>${periodLabel}</span></div>
                         <div class="hpx-brand-picker">
                             <label>Marka spotlight</label>
-                            <select id="hpCommandBrandSelect" class="year-select hpx-select" onchange="reloadHpCommandCenter()">
+                            <select id="hpCommandBrandSelect" class="year-select hpx-select" data-on-change="reloadHpCommandCenter()">
                                 ${brandOptions}
                             </select>
                         </div>
@@ -3175,7 +3182,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
         const quickProvinceChips = provinces.slice(0, 8).map(item => `
             <button
                 class="ptx-quick-chip ${item.province_id === selectedProvince.province_id ? 'is-active' : ''}"
-                onclick="loadProvTopBrandPage(${jsArg(item.province_id)}, '')">
+                data-on-click="loadProvTopBrandPage(${jsArg(item.province_id)}, '')">
                 <strong>${safe(item.province_name)}</strong>
                 <span>${fmtNum(item.total_sales)} adet</span>
             </button>
@@ -3275,7 +3282,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
             <tr ${item.brand_id === selectedBrand.brand_id ? 'class="is-selected"' : ''}>
                 <td><strong>#${item.rank}</strong></td>
                 <td>
-                    <button class="ptx-link-btn" onclick="loadProvTopBrandPage(${jsArg(selectedProvince.province_id)}, ${jsArg(item.brand_id)})">
+                    <button class="ptx-link-btn" data-on-click="loadProvTopBrandPage(${jsArg(selectedProvince.province_id)}, ${jsArg(item.brand_id)})">
                         ${safe(item.brand_name)}
                     </button>
                     <span>${safe(item.top_model_name || '-')}</span>
@@ -3334,13 +3341,13 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                         <div class="ptx-filter-row">
                             <label class="ptx-field">
                                 <span>İl seç</span>
-                                <select id="provTopBrandProvinceSelect" onchange="loadProvTopBrandPage(this.value, '')">
+                                <select id="provTopBrandProvinceSelect" data-on-change="loadProvTopBrandPage(this.value, '')">
                                     ${provinceOptions}
                                 </select>
                             </label>
                             <label class="ptx-field">
                                 <span>Marka seç</span>
-                                <select id="provTopBrandBrandSelect" onchange="loadProvTopBrandPage(document.getElementById('provTopBrandProvinceSelect').value, this.value)">
+                                <select id="provTopBrandBrandSelect" data-on-change="loadProvTopBrandPage(document.getElementById('provTopBrandProvinceSelect').value, this.value)">
                                     ${brandOptions}
                                 </select>
                             </label>
@@ -3704,19 +3711,19 @@ async function loadMapFullPage() {
     document.getElementById('pageContent').innerHTML = `
         <div class="mf-container">
             <div class="mf-filters">
-                <select id="mfBrand" onchange="onMapFilterChange()">
+                <select id="mfBrand" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Markalar</option>${brandOpts}
                 </select>
-                <select id="mfCabin" onchange="onMapFilterChange()">
+                <select id="mfCabin" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Kabin</option>
                 </select>
-                <select id="mfDrive" onchange="onMapFilterChange()">
+                <select id="mfDrive" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Çekiş</option>
                 </select>
-                <select id="mfGear" onchange="onMapFilterChange()">
+                <select id="mfGear" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Şanzıman</option>
                 </select>
-                <select id="mfHp" onchange="onMapFilterChange()">
+                <select id="mfHp" data-on-change="onMapFilterChange()">
                     <option value="">Tüm HP</option>
                 </select>
             </div>
@@ -4292,7 +4299,7 @@ async function loadTotalMarketPage() {
                         <h2>Toplam Traktör Pazarı (${prevYear} - ${currYear})</h2>
                         <p>İlk ${maxMonth} ay karşılaştırması</p>
                     </div>
-                    <select id="tmBrandFilter" class="year-select" onchange="reloadTotalMarket()" style="min-width:200px;">
+                    <select id="tmBrandFilter" class="year-select" data-on-change="reloadTotalMarket()" style="min-width:200px;">
                         ${brandOptions}
                     </select>
                 </div>
@@ -5063,7 +5070,7 @@ function buildBrandStageHtml(brand, options = {}) {
 
     const monogram = dashboardSafe(theme.symbol || theme.monogram || (brandName.slice(0, 2).toUpperCase()));
     const logoHtml = logoSrc
-        ? `<img src="${dashboardSafe(logoSrc)}" alt="${dashboardSafe(brandName)} logo" class="bh-mc-logo" onerror="this.outerHTML='<span class=&quot;bh-mc-monogram&quot;>${monogram}</span>'">`
+        ? `<img src="${dashboardSafe(logoSrc)}" alt="${dashboardSafe(brandName)} logo" class="bh-mc-logo" data-on-error="this.outerHTML='<span class=&quot;bh-mc-monogram&quot;>${monogram}</span>'">`
         : `<span class="bh-mc-monogram">${monogram}</span>`;
 
     const quickLinks = [
@@ -5076,7 +5083,7 @@ function buildBrandStageHtml(brand, options = {}) {
     const quickLinksHtml = quickLinks.map(link => {
         let favHost = '';
         try { favHost = new URL(link.favDomain).hostname; } catch { favHost = ''; }
-        const fav = favHost ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(favHost)}&sz=32" onerror="this.style.display='none'" alt="">` : `<i class="fas ${link.icon}"></i>`;
+        const fav = favHost ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(favHost)}&sz=32" data-on-error="this.style.display='none'" alt="">` : `<i class="fas ${link.icon}"></i>`;
         return `<a class="bh-mc-link" href="${dashboardSafe(link.url)}" target="_blank" rel="noreferrer">${fav}<span>${dashboardSafe(link.label)}</span></a>`;
     }).join('');
 
@@ -5086,7 +5093,7 @@ function buildBrandStageHtml(brand, options = {}) {
 
     const brandSelector = brandOptions
         ? `<label class="bh-mc-brand-select">
-                <select id="brandHubBrandFilter" onchange="onBrandHubBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
+                <select id="brandHubBrandFilter" data-on-change="onBrandHubBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
                     ${brandOptions}
                 </select>
             </label>`
@@ -5095,7 +5102,7 @@ function buildBrandStageHtml(brand, options = {}) {
     const heroTitle = options.heroTitle || '';
     const showFilterToggle = options.showFilterToggle === true;
     const filterToggleHtml = showFilterToggle
-        ? `<button type="button" class="bh-mc-filter-toggle" onclick="togglePageFilterPanel(this)" aria-label="Filtreleri aç/kapat" title="Filtreleri aç/kapat"><i class="fas fa-sliders-h"></i></button>`
+        ? `<button type="button" class="bh-mc-filter-toggle" data-on-click="togglePageFilterPanel(this)" aria-label="Filtreleri aç/kapat" title="Filtreleri aç/kapat"><i class="fas fa-sliders-h"></i></button>`
         : '';
 
     return `
@@ -5221,7 +5228,7 @@ function renderSuperuserPreviewSwitch() {
     div.className = 'superuser-preview-switch';
     div.innerHTML = `
         <span class="sup-pre-label"><i class="fas fa-crown"></i> Önizleme:</span>
-        <select onchange="onSuperuserPreviewChange(this.value)">
+        <select data-on-change="onSuperuserPreviewChange(this.value)">
             <option value="">Tüm yetkiler (admin)</option>
             <option value="starter" ${current === 'starter' ? 'selected' : ''}>Starter</option>
             <option value="growth" ${current === 'growth' ? 'selected' : ''}>Growth</option>
@@ -6245,27 +6252,27 @@ async function loadDashboard() {
                             </div>
                         </div>
                         <div class="tmx-filter-actions">
-                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="resetDashboardFilters()">
+                            <button type="button" class="tmx-btn tmx-btn-ghost" data-on-click="resetDashboardFilters()">
                                 <i class="fas fa-undo-alt"></i><span>Sıfırla</span>
                             </button>
-                            <button type="button" class="tmx-btn tmx-btn-secondary" data-dashboard-collapse onclick="toggleDashboardFilters()"></button>
+                            <button type="button" class="tmx-btn tmx-btn-secondary" data-dashboard-collapse data-on-click="toggleDashboardFilters()"></button>
                         </div>
                     </div>
                     <div class="tmx-filter-body">
                         <div class="tmx-filter-grid dbx-filter-grid">
-                            <select id="dbYearFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbYearFilter" data-on-change="onDashboardFilterChange()">
                                 ${yearOptions}
                             </select>
-                            <select id="dbCabinFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbCabinFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm Kabin</option>
                             </select>
-                            <select id="dbDriveFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbDriveFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm Çekiş</option>
                             </select>
-                            <select id="dbGearFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbGearFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm Şanzıman</option>
                             </select>
-                            <select id="dbHpFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbHpFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm HP</option>
                             </select>
                         </div>
@@ -6654,30 +6661,30 @@ async function loadMapPage() {
                     </div>
                     <div class="tmx-filter-body">
                         <div class="tmx-filter-grid">
-                            <select id="mapBrandFilter" onchange="updateMap()">
+                            <select id="mapBrandFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Markalar</option>
                                 ${brandOptions}
                             </select>
-                            <select id="mapYearFilter" onchange="updateMap()">
+                            <select id="mapYearFilter" data-on-change="updateMap()">
                                 ${yearOptions}
                             </select>
-                            <select id="mapCabinFilter" onchange="updateMap()">
+                            <select id="mapCabinFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Kabin</option>
                                 ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
                             </select>
-                            <select id="mapDriveFilter" onchange="updateMap()">
+                            <select id="mapDriveFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Çekiş</option>
                                 ${selectedOption(currentDriveValue, currentDriveValue)}
                             </select>
-                            <select id="mapGearFilter" onchange="updateMap()">
+                            <select id="mapGearFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Şanzıman</option>
                                 ${selectedOption(currentGearValue, currentGearValue)}
                             </select>
-                            <select id="mapHpFilter" onchange="updateMap()">
+                            <select id="mapHpFilter" data-on-change="updateMap()">
                                 <option value="">Tüm HP</option>
                                 ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
                             </select>
-                            <select id="mapRegionFilter" onchange="updateMap()">
+                            <select id="mapRegionFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Bölgeler</option>
                                 <option value="Marmara">Marmara</option>
                                 <option value="Ege">Ege</option>
@@ -6695,11 +6702,11 @@ async function loadMapPage() {
                     <div class="card-body tmx-map-body">
                         <div class="tmx-map-stage">
                             <div class="tmx-map-toolbar">
-                                <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                                <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse data-on-click="toggleTurkeyMapFilters()"></button>
+                                <button type="button" class="tmx-btn tmx-btn-ghost" data-on-click="fitTurkeyMapBounds()">
                                     <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
                                 </button>
-                                <button type="button" class="tmx-btn tmx-btn-ghost" data-sidebar-toggle onclick="toggleSidebar(event)">
+                                <button type="button" class="tmx-btn tmx-btn-ghost" data-sidebar-toggle data-on-click="toggleSidebar(event)">
                                     <i class="fas fa-bars"></i><span>Menü</span>
                                 </button>
                             </div>
@@ -7050,7 +7057,7 @@ async function loadSalesPage() {
         const content = document.getElementById('pageContent');
         content.innerHTML = `
             <div class="filter-bar">
-                <select id="salesDimension" onchange="updateSalesCharts()">
+                <select id="salesDimension" data-on-change="updateSalesCharts()">
                     <option value="category">Tarla / Bahçe</option>
                     <option value="cabin_type">Kabinli / Rollbar</option>
                     <option value="drive_type">2WD / 4WD</option>
@@ -7061,7 +7068,7 @@ async function loadSalesPage() {
                     <option value="">Tüm Markalar</option>
                     ${allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}
                 </select>
-                <button class="btn-filter" onclick="updateSalesCharts()"><i class="fas fa-filter"></i> Filtrele</button>
+                <button class="btn-filter" data-on-click="updateSalesCharts()"><i class="fas fa-filter"></i> Filtrele</button>
             </div>
 
             <div class="grid-2">
@@ -7197,7 +7204,7 @@ async function loadCompetitorsPage() {
                     <option value="hp_range">Beygir Gücü</option>
                     <option value="gear_config">Şanzıman Tipi</option>
                 </select>
-                <button class="btn-filter" onclick="loadCompetitorAnalysis()"><i class="fas fa-search"></i> Analiz Et</button>
+                <button class="btn-filter" data-on-click="loadCompetitorAnalysis()"><i class="fas fa-search"></i> Analiz Et</button>
             </div>
 
             <div class="grid-2">
@@ -7496,8 +7503,8 @@ async function loadModelsPage() {
                         <span>${m.price_usd ? fmtPrice(m.price_usd) : '-'}</span>
                     </div>
                     <div class="mcx-alt-actions">
-                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('left', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">⟵ Sol'a koy</button>
-                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('right', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">Sağ'a koy ⟶</button>
+                        <button class="mcx-mini-btn" data-on-click="setModelCompareTarget('left', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">⟵ Sol'a koy</button>
+                        <button class="mcx-mini-btn" data-on-click="setModelCompareTarget('right', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">Sağ'a koy ⟶</button>
                     </div>
                 </article>
             `;
@@ -7521,7 +7528,7 @@ async function loadModelsPage() {
                             <span class="mcx-side-label">${dashboardSafe(brand1?.name || 'Marka A')} · Model A</span>
                         </div>
                         <div class="mcx-side-fields mcx-side-fields-single">
-                            <select id="mcxModel1" onchange="onModelCompareModelChange('left', this.value)">${modelOptionsFor(modelCompareState.brand1_id, modelCompareState.model1_key)}</select>
+                            <select id="mcxModel1" data-on-change="onModelCompareModelChange('left', this.value)">${modelOptionsFor(modelCompareState.brand1_id, modelCompareState.model1_key)}</select>
                         </div>
                     </div>
                     <div class="mcx-vs-badge">VS</div>
@@ -7531,8 +7538,8 @@ async function loadModelsPage() {
                             <span class="mcx-side-dot" style="background:${c2}"></span>
                         </div>
                         <div class="mcx-side-fields">
-                            <select id="mcxBrand2" onchange="onModelCompareBrandChange('right', this.value)">${brandOptionsFor(modelCompareState.brand2_id)}</select>
-                            <select id="mcxModel2" onchange="onModelCompareModelChange('right', this.value)">${modelOptionsFor(modelCompareState.brand2_id, modelCompareState.model2_key)}</select>
+                            <select id="mcxBrand2" data-on-change="onModelCompareBrandChange('right', this.value)">${brandOptionsFor(modelCompareState.brand2_id)}</select>
+                            <select id="mcxModel2" data-on-change="onModelCompareModelChange('right', this.value)">${modelOptionsFor(modelCompareState.brand2_id, modelCompareState.model2_key)}</select>
                         </div>
                     </div>
                 </section>
@@ -7541,8 +7548,8 @@ async function loadModelsPage() {
                 <section class="mcx-headline">
                     <h2><span style="color:${c1}">${dashboardSafe(brand1?.name || '')} ${dashboardSafe(m1.model_name)}</span> <em>vs</em> <span style="color:${c2}">${dashboardSafe(brand2?.name || '')} ${dashboardSafe(m2.model_name)}</span></h2>
                     <div class="mcx-quick-actions">
-                        <button class="mcx-action-btn" onclick="openModelCompareXray('left')"><i class="fas fa-x-ray"></i>Model A Röntgeni</button>
-                        <button class="mcx-action-btn" onclick="openModelCompareXray('right')"><i class="fas fa-x-ray"></i>Model B Röntgeni</button>
+                        <button class="mcx-action-btn" data-on-click="openModelCompareXray('left')"><i class="fas fa-x-ray"></i>Model A Röntgeni</button>
+                        <button class="mcx-action-btn" data-on-click="openModelCompareXray('right')"><i class="fas fa-x-ray"></i>Model B Röntgeni</button>
                     </div>
                 </section>
 
@@ -7734,7 +7741,7 @@ async function searchModels() {
                         <td>${m.gear_config || '-'}</td>
                         <td>${m.weight_kg ? m.weight_kg + ' kg' : '-'}</td>
                         <td>
-                            <button type="button" class="mi-row-btn" onclick="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
+                            <button type="button" class="mi-row-btn" data-on-click="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
                                 <i class="fas fa-x-ray"></i><span>Röntgen</span>
                             </button>
                         </td>
@@ -7867,7 +7874,7 @@ async function loadModelIntelPage() {
                         <input id="miModelSearch" type="search" value="${dashboardSafe(modelIntelState.q || '')}" placeholder="örn. Arion 450, 5S, TD...">
                     </label>
                     <div class="mi-filter-actions">
-                        <button type="button" class="mi-action-btn" onclick="refreshModelIntelDirectory()"><i class="fas fa-search"></i><span>Listele</span></button>
+                        <button type="button" class="mi-action-btn" data-on-click="refreshModelIntelDirectory()"><i class="fas fa-search"></i><span>Listele</span></button>
                     </div>
                 </div>
             </section>
@@ -7937,7 +7944,7 @@ function renderModelIntelDirectory(models = []) {
                         <span>${dashboardSafe(model.gear_config || '-')}</span>
                     </div>
                     <div class="mi-model-price">${model.price_usd ? fmtPrice(Number(model.price_usd)) : 'Fiyat kaydı yok'}</div>
-                    <button type="button" class="mi-card-btn" onclick="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
+                    <button type="button" class="mi-card-btn" data-on-click="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
                         <i class="fas fa-x-ray"></i><span>Röntgen</span>
                     </button>
                 </article>
@@ -7963,14 +7970,14 @@ function ensureModelIntelModal() {
 
     document.body.insertAdjacentHTML('beforeend', `
         <div class="mi-modal" id="modelIntelModal" aria-hidden="true">
-            <div class="mi-modal-backdrop" onclick="closeModelIntelModal()"></div>
+            <div class="mi-modal-backdrop" data-on-click="closeModelIntelModal()"></div>
             <section class="mi-modal-panel" role="dialog" aria-modal="true" aria-labelledby="modelIntelTitle">
                 <div class="mi-modal-head">
                     <div>
                         <span class="mi-kicker">Model röntgeni</span>
                         <h2 id="modelIntelTitle">Teknik dosya</h2>
                     </div>
-                    <button type="button" class="mi-close-btn" onclick="closeModelIntelModal()" aria-label="Kapat"><i class="fas fa-times"></i></button>
+                    <button type="button" class="mi-close-btn" data-on-click="closeModelIntelModal()" aria-label="Kapat"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="mi-modal-body" id="modelIntelBody"></div>
             </section>
@@ -8089,7 +8096,7 @@ function renderModelIntelGallery(gallery = [], displayName = '', data = {}) {
         ? 'n8n ile resmi kaynaklardan yeni fotoğraf ara'
         : 'n8n webhook bağlantısı yapılandırılınca otomatik tarama yapılır';
     const syncButton = `
-        <button class="mi-gallery-sync-btn" type="button" data-mi-gallery-sync onclick="syncModelIntelGalleryFromModal()" title="${dashboardSafe(syncTitle)}">
+        <button class="mi-gallery-sync-btn" type="button" data-mi-gallery-sync data-on-click="syncModelIntelGalleryFromModal()" title="${dashboardSafe(syncTitle)}">
             <i class="fas fa-sync-alt"></i><span>${syncLabel}</span>
         </button>
     `;
@@ -8112,12 +8119,12 @@ function renderModelIntelGallery(gallery = [], displayName = '', data = {}) {
         : '<span id="miGallerySourceLink" class="mi-gallery-source is-muted"><i class="fas fa-link"></i><span>Kaynak bekliyor</span></span>';
     const navButtons = normalized.length > 1
         ? `
-            <button class="mi-gallery-nav mi-gallery-prev" type="button" onclick="setModelIntelGalleryImage(${activeIndex - 1})" title="Önceki görsel"><i class="fas fa-chevron-left"></i></button>
-            <button class="mi-gallery-nav mi-gallery-next" type="button" onclick="setModelIntelGalleryImage(${activeIndex + 1})" title="Sonraki görsel"><i class="fas fa-chevron-right"></i></button>
+            <button class="mi-gallery-nav mi-gallery-prev" type="button" data-on-click="setModelIntelGalleryImage(${activeIndex - 1})" title="Önceki görsel"><i class="fas fa-chevron-left"></i></button>
+            <button class="mi-gallery-nav mi-gallery-next" type="button" data-on-click="setModelIntelGalleryImage(${activeIndex + 1})" title="Sonraki görsel"><i class="fas fa-chevron-right"></i></button>
         `
         : '';
     const thumbs = normalized.map((item, index) => `
-        <button class="mi-gallery-thumb ${index === activeIndex ? 'is-active' : ''}" type="button" onclick="setModelIntelGalleryImage(${index})" title="${dashboardSafe(item.angle_label || item.label || displayName)}">
+        <button class="mi-gallery-thumb ${index === activeIndex ? 'is-active' : ''}" type="button" data-on-click="setModelIntelGalleryImage(${index})" title="${dashboardSafe(item.angle_label || item.label || displayName)}">
             <img src="${dashboardSafe(item.url)}" alt="${dashboardSafe(item.label || displayName)}" loading="lazy">
             <span>${dashboardSafe(item.angle_label || `Görsel ${index + 1}`)}</span>
         </button>
@@ -8175,8 +8182,8 @@ function setModelIntelGalleryImage(index = 0) {
     document.querySelectorAll('.mi-gallery-thumb').forEach((button, buttonIndex) => {
         button.classList.toggle('is-active', buttonIndex === nextIndex);
     });
-    document.querySelectorAll('.mi-gallery-prev').forEach(button => button.setAttribute('onclick', `setModelIntelGalleryImage(${nextIndex - 1})`));
-    document.querySelectorAll('.mi-gallery-next').forEach(button => button.setAttribute('onclick', `setModelIntelGalleryImage(${nextIndex + 1})`));
+    document.querySelectorAll('.mi-gallery-prev').forEach(button => button.setAttribute('data-on-click', `setModelIntelGalleryImage(${nextIndex - 1})`));
+    document.querySelectorAll('.mi-gallery-next').forEach(button => button.setAttribute('data-on-click', `setModelIntelGalleryImage(${nextIndex + 1})`));
 }
 
 async function syncModelIntelGalleryFromModal() {
@@ -8575,7 +8582,7 @@ const ModelImagesAdmin = {
         return `
             <article class="mig-pending-item" data-id="${item.id}">
                 <div class="mig-thumb">
-                    <img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.caption || '')}" loading="lazy" onerror="this.src=''; this.style.background='#1e293b';">
+                    <img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.caption || '')}" loading="lazy" data-on-error="this.src=''; this.style.background='#1e293b';">
                 </div>
                 <div class="mig-meta">
                     <div class="mig-meta-head">
@@ -8775,7 +8782,7 @@ const ModelImagesAdmin = {
         panel.innerHTML = `
             <div class="mig-trace-head">
                 <strong>${escapeHtml(title)}</strong>
-                <button class="btn btn-sm btn-ghost" onclick="document.getElementById('migTracePanel').style.display='none'">
+                <button class="btn btn-sm btn-ghost" data-on-click="document.getElementById('migTracePanel').style.display='none'">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -9893,7 +9900,7 @@ async function loadAIInsightsPage() {
         // Sayfa-içi sekme şeridi: 4 odaklı katman
         const activeTab = AIX_TABS.find(t => t.key === aiInsightsState.tab) ? aiInsightsState.tab : 'briefing';
         const tabStripHtml = AIX_TABS.map(t => `
-            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" onclick="onAiInsightsTabChange(${jsArg(t.key)})">
+            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" data-on-click="onAiInsightsTabChange(${jsArg(t.key)})">
                 <i class="fas ${t.icon}"></i>
                 <span>${dashboardSafe(t.label)}</span>
             </button>
@@ -9986,7 +9993,7 @@ async function loadAIInsightsPage() {
             <section class="aix-rival-toolbar">
                 <label class="aix-field">
                     <span><i class="fas fa-arrows-left-right-to-line"></i> Rakip seçimi</span>
-                    <select id="aiInsightsRivalFilter" onchange="onAiInsightsRivalChange()">
+                    <select id="aiInsightsRivalFilter" data-on-change="onAiInsightsRivalChange()">
                         <option value="">Rakip seç (otomatik en yakın)</option>
                         ${rivalOptionsHtml}
                     </select>
@@ -11087,7 +11094,7 @@ async function loadMediaWatchPage(silent = false) {
             const count = counts[cat.key] || 0;
             const active = state.category === cat.key;
             return `
-                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" onclick="onMwxCategoryClick(${jsArg(cat.key)})" style="--cat-color:${cat.color}">
+                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" data-on-click="onMwxCategoryClick(${jsArg(cat.key)})" style="--cat-color:${cat.color}">
                     <i class="fas ${cat.icon}"></i>
                     <span>${dashboardSafe(cat.label)}</span>
                     <em>${formatNumber(count)}</em>
@@ -11118,7 +11125,7 @@ async function loadMediaWatchPage(silent = false) {
                                 ${isForeign ? `<span class="mwx-feed-lang" title="Orijinal dil">${dashboardSafe(lang.toUpperCase())}</span>` : ''}
                                 <span class="mwx-feed-sent ${sentMeta.tone}">${dashboardSafe(sentMeta.label)}</span>
                                 <span class="mwx-feed-time">${formatMediaWatchRelative(item.published_at || item.created_at)}</span>
-                                ${isForeign && !item.translated_title ? `<button class="mwx-feed-translate" onclick="onMwxTranslate(${item.id || 0}, this)" title="Türkçe'ye çevir"><i class="fas fa-language"></i></button>` : ''}
+                                ${isForeign && !item.translated_title ? `<button class="mwx-feed-translate" data-on-click="onMwxTranslate(${item.id || 0}, this)" title="Türkçe'ye çevir"><i class="fas fa-language"></i></button>` : ''}
                                 ${item.translated_title ? `<span class="mwx-feed-translated" title="AI çevrildi"><i class="fas fa-check-double"></i> TR</span>` : ''}
                             </div>
                             <h3 class="mwx-feed-title"><a href="${dashboardSafe(sourceUrl)}" target="_blank" rel="noreferrer">${mediaWatchSafe(displayTitle)}</a></h3>
@@ -11221,8 +11228,8 @@ async function loadMediaWatchPage(silent = false) {
                     </div>
                 </div>
                 <div class="mwx-n8n-actions">
-                    <button class="mwx-mini-btn" onclick="runMediaWatchCollection()"><i class="fas fa-satellite-dish"></i> Tarama başlat</button>
-                    <button class="mwx-mini-btn" onclick="refreshMediaWatchBrief()"><i class="fas fa-brain"></i> AI brif üret</button>
+                    <button class="mwx-mini-btn" data-on-click="runMediaWatchCollection()"><i class="fas fa-satellite-dish"></i> Tarama başlat</button>
+                    <button class="mwx-mini-btn" data-on-click="refreshMediaWatchBrief()"><i class="fas fa-brain"></i> AI brif üret</button>
                 </div>
                 <small class="mwx-n8n-tip">Sayfa 60 saniyede bir otomatik tazelenir.</small>
             </article>
@@ -11271,7 +11278,7 @@ async function loadMediaWatchPage(silent = false) {
                         <i class="fas fa-globe"></i>
                         ${sources ? `${formatNumber(sources.total || 0)} kaynak · ${(sources.languages || []).length} dil · ${(sources.countries || []).length} ülke kapsamı taranıyor` : 'Kaynak listesi yükleniyor...'}
                     </div>
-                    <button class="mwx-mini-btn" onclick="onMwxRunNow()" title="Yeni kayıtları manuel çek (Enterprise)">
+                    <button class="mwx-mini-btn" data-on-click="onMwxRunNow()" title="Yeni kayıtları manuel çek (Enterprise)">
                         <i class="fas fa-satellite-dish"></i> Şimdi Tara
                     </button>
                 </section>
@@ -11434,8 +11441,8 @@ async function loadSubscriptionPage() {
 
         const periodSwitchHtml = `
             <div class="sub-period-switch">
-                <button class="sub-period-btn ${period === 'monthly' ? 'is-active' : ''}" onclick="subSetPeriod('monthly')">Aylık</button>
-                <button class="sub-period-btn ${period === 'yearly' ? 'is-active' : ''}" onclick="subSetPeriod('yearly')">Yıllık <small>2 ay hediye</small></button>
+                <button class="sub-period-btn ${period === 'monthly' ? 'is-active' : ''}" data-on-click="subSetPeriod('monthly')">Aylık</button>
+                <button class="sub-period-btn ${period === 'yearly' ? 'is-active' : ''}" data-on-click="subSetPeriod('yearly')">Yıllık <small>2 ay hediye</small></button>
             </div>
         `;
 
@@ -11445,7 +11452,7 @@ async function loadSubscriptionPage() {
             const isCurrent = subscription?.plan_slug === plan.slug && (subscription?.status === 'active' || subscription?.status === 'trialing');
             const isSelected = subscriptionState.selectedPlan === plan.slug;
             return `
-                <div class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan(${jsArg(plan.slug)})">
+                <div class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" data-on-click="subSelectPlan(${jsArg(plan.slug)})">
                     ${plan.tier_rank === 2 ? '<div class="sub-plan-badge">EN POPÜLER</div>' : ''}
                     ${isCurrent ? '<div class="sub-plan-current">MEVCUT PLAN</div>' : ''}
                     <div class="sub-plan-tier">Tier ${plan.tier_rank || 1}</div>
@@ -11469,7 +11476,7 @@ async function loadSubscriptionPage() {
         const providerHtml = safeProviders.map(p => {
             const isSelected = subscriptionState.selectedProvider === p.code;
             return `
-                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" onclick="subSelectProvider(${jsArg(p.code)})">
+                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" data-on-click="subSelectProvider(${jsArg(p.code)})">
                     <i class="fas ${p.icon || 'fa-credit-card'}"></i>
                     <div>
                         <strong>${subEscape(p.name)}</strong>
@@ -11503,7 +11510,7 @@ async function loadSubscriptionPage() {
                 <div class="sub-active-actions">
                     ${subscription.cancel_at_period_end
                         ? '<span class="sub-flag is-warn">Dönem sonunda iptal edilecek</span>'
-                        : `<button class="sub-btn-secondary" onclick="subCancelSubscription()"><i class="fas fa-ban"></i> Aboneliği iptal et</button>`
+                        : `<button class="sub-btn-secondary" data-on-click="subCancelSubscription()"><i class="fas fa-ban"></i> Aboneliği iptal et</button>`
                     }
                 </div>
             </section>
@@ -11555,7 +11562,7 @@ async function loadSubscriptionPage() {
                         <div class="sub-summary-row sub-summary-total">
                             <span>Toplam</span><strong>₺${formatNumber(checkoutPrice)}</strong>
                         </div>
-                        <button class="sub-btn-primary" id="subCheckoutBtn" onclick="subStartCheckout()" ${!selectedPlan || !selectedProvider ? 'disabled' : ''}>
+                        <button class="sub-btn-primary" id="subCheckoutBtn" data-on-click="subStartCheckout()" ${!selectedPlan || !selectedProvider ? 'disabled' : ''}>
                             <i class="fas fa-arrow-right"></i>
                             ${selectedProvider?.instant ? 'Ödemeyi tamamla' : 'IBAN bilgilerini al'}
                         </button>
@@ -11642,7 +11649,7 @@ async function loadSubscriptionPage() {
                         <i class="fas fa-triangle-exclamation"></i>
                         Abonelik verileri yüklenemedi: ${subEscape(err?.message || 'Bilinmeyen hata')}
                     </div>
-                    <button class="sub-btn-primary" onclick="loadSubscriptionPage()">
+                    <button class="sub-btn-primary" data-on-click="loadSubscriptionPage()">
                         <i class="fas fa-rotate"></i> Yeniden dene
                     </button>
                 </div>
@@ -11736,10 +11743,10 @@ function renderPaywallOverlay(featureKeys, pageLabel) {
                 <p>${subEscape(pageLabel || 'Bu özellik')} için planınızı yükseltmeniz gerekiyor.</p>
                 <small class="paywall-keys">Gerekli özellik: <code>${subEscape(featureNames)}</code></small>
                 <div class="paywall-actions">
-                    <button class="sub-btn-primary" onclick="navigateTo('subscription')">
+                    <button class="sub-btn-primary" data-on-click="navigateTo('subscription')">
                         <i class="fas fa-arrow-up-right-from-square"></i> Paketi yükselt
                     </button>
-                    <button class="sub-btn-secondary" onclick="navigateTo('dashboard')">
+                    <button class="sub-btn-secondary" data-on-click="navigateTo('dashboard')">
                         <i class="fas fa-house"></i> Dashboard'a dön
                     </button>
                 </div>
@@ -11811,10 +11818,10 @@ async function loadSettingsPage() {
                             <div id="deployStatusBadge" style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#64748b22;color: #8f9fb7;border:1px solid #64748b55;">Hazır</div>
                         </div>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                            <button class="btn-filter" id="deployRailwayBtn" onclick="triggerRailwayDeploy()" style="background:#22c55e;">
+                            <button class="btn-filter" id="deployRailwayBtn" data-on-click="triggerRailwayDeploy()" style="background:#22c55e;">
                                 <i class="fas fa-rocket"></i> Railway'e Güncelle
                             </button>
-                            <button class="btn-filter" onclick="refreshDeployStatus()" style="background:var(--bg-card-hover);color:var(--text-primary);">
+                            <button class="btn-filter" data-on-click="refreshDeployStatus()" style="background:var(--bg-card-hover);color:var(--text-primary);">
                                 <i class="fas fa-rotate-right"></i> Durumu Yenile
                             </button>
                         </div>
@@ -11853,7 +11860,7 @@ async function loadNotifications() {
         const list = document.getElementById('notifList');
         list.innerHTML = (notifs || []).length > 0
             ? notifs.map(n => `
-                <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="API.markNotificationRead(${n.id})">
+                <div class="notif-item ${n.is_read ? '' : 'unread'}" data-on-click="API.markNotificationRead(${n.id})">
                     <div class="notif-title">${escapeHtml(n.title)}</div>
                     <div class="notif-body">${escapeHtml(n.body || '')}</div>
                     <div class="notif-time">${new Date(n.created_at).toLocaleString('tr-TR')}</div>
@@ -12517,7 +12524,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
                         <div class="rix-control-row">
                             <label class="rix-field">
                                 <span>İl seçimi</span>
-                                <select id="regionalIndexProvinceSelect" onchange="loadRegionalIndexProvinceDetail()">
+                                <select id="regionalIndexProvinceSelect" data-on-change="loadRegionalIndexProvinceDetail()">
                                     ${provinceOptionsHtml}
                                 </select>
                             </label>
@@ -12734,7 +12741,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
             </section>
 
             <section class="ai-action-bar rix-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('regional-province', window._regionalProvinceAiContext, 'rixAiPanel')">
+                <button class="ai-btn" data-on-click="requestAiAnalysis('regional-province', window._regionalProvinceAiContext, 'rixAiPanel')">
                     <i class="fas fa-brain"></i>
                     <span>AI il saha strateji raporu</span>
                 </button>
@@ -12843,27 +12850,27 @@ async function loadRegionalIndexPage() {
                             </div>
                             <div class="tmx-filter-body">
                                 <div class="tmx-filter-grid">
-                                    <select id="mapBrandFilter" onchange="updateMap()">
+                                    <select id="mapBrandFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Markalar</option>
                                         ${brandOptions}
                                     </select>
-                                    <select id="mapCabinFilter" onchange="updateMap()">
+                                    <select id="mapCabinFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Kabin</option>
                                         ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
                                     </select>
-                                    <select id="mapDriveFilter" onchange="updateMap()">
+                                    <select id="mapDriveFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Çekiş</option>
                                         ${selectedOption(currentDriveValue, currentDriveValue)}
                                     </select>
-                                    <select id="mapGearFilter" onchange="updateMap()">
+                                    <select id="mapGearFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Şanzıman</option>
                                         ${selectedOption(currentGearValue, currentGearValue)}
                                     </select>
-                                    <select id="mapHpFilter" onchange="updateMap()">
+                                    <select id="mapHpFilter" data-on-change="updateMap()">
                                         <option value="">Tüm HP</option>
                                         ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
                                     </select>
-                                    <select id="mapRegionFilter" onchange="updateMap()">
+                                    <select id="mapRegionFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Bölgeler</option>
                                         <option value="Marmara">Marmara</option>
                                         <option value="Ege">Ege</option>
@@ -12881,8 +12888,8 @@ async function loadRegionalIndexPage() {
                             <div class="card-body tmx-map-body">
                                 <div class="tmx-map-stage">
                                     <div class="tmx-map-toolbar">
-                                        <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                                        <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                        <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse data-on-click="toggleTurkeyMapFilters()"></button>
+                                        <button type="button" class="tmx-btn tmx-btn-ghost" data-on-click="fitTurkeyMapBounds()">
                                             <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
                                         </button>
                                     </div>
@@ -13355,7 +13362,7 @@ async function loadModelRegionPage() {
                     <div class="mrx-filter-grid">
                         <label class="mrx-field" style="grid-column: 1 / -1">
                             <span>Model</span>
-                            <select id="modelRegionModelFilter" onchange="onModelRegionModelChange()">
+                            <select id="modelRegionModelFilter" data-on-change="onModelRegionModelChange()">
                                 ${modelOptionsHtml}
                             </select>
                         </label>
@@ -13467,7 +13474,7 @@ async function loadModelRegionPage() {
                 </section>
 
                 <section class="ai-action-bar mrx-action-bar">
-                    <button class="ai-btn" onclick="requestAiAnalysis('model-region', window._mrxAiContext, 'mrxAiPanel')">
+                    <button class="ai-btn" data-on-click="requestAiAnalysis('model-region', window._mrxAiContext, 'mrxAiPanel')">
                         <i class="fas fa-brain"></i>
                         <span>AI model-bölge saha planı</span>
                     </button>
@@ -13775,11 +13782,11 @@ async function loadBenchmarkPage() {
             <div class="bm-header">
                 <div class="bm-sel" style="border-color:${c1}">
                     <div class="bm-badge" style="background:${c1}"><i class="fas fa-tractor"></i></div>
-                    <select class="bm-select" onchange="window._bm_brand1=parseInt(this.value);loadBenchmarkPage()">${b1Opts}</select>
+                    <select class="bm-select" data-on-change="window._bm_brand1=parseInt(this.value);loadBenchmarkPage()">${b1Opts}</select>
                 </div>
                 <div class="bm-vs-badge"><span>VS</span></div>
                 <div class="bm-sel" style="border-color:${c2}">
-                    <select class="bm-select" onchange="window._bm_brand2=parseInt(this.value);loadBenchmarkPage()">${b2Opts}</select>
+                    <select class="bm-select" data-on-change="window._bm_brand2=parseInt(this.value);loadBenchmarkPage()">${b2Opts}</select>
                     <div class="bm-badge" style="background:${c2}"><i class="fas fa-tractor"></i></div>
                 </div>
             </div>
@@ -13894,7 +13901,7 @@ async function loadBenchmarkPage() {
             </div>
 
             <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('benchmark',{b1:${jsArg(brand1.name)},b2:${jsArg(brand2.name)},d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
+                <button class="ai-btn" data-on-click="requestAiAnalysis('benchmark',{b1:${jsArg(brand1.name)},b2:${jsArg(brand2.name)},d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
                     <i class="fas fa-robot"></i> AI Benchmark Raporu
                 </button>
                 <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
@@ -14436,7 +14443,7 @@ async function loadBrandComparePage() {
                             </div>
                             <div class="bcx-vs">VS</div>
                             <div class="bcx-selector" style="border-color:${c2}">
-                                <select class="bc-select" onchange="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
+                                <select class="bc-select" data-on-change="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
                                 <div class="bcx-brand-dot" style="background:${c2}"></div>
                             </div>
                         </div>
@@ -15048,7 +15055,7 @@ async function loadBrandComparePage() {
                 </div>
                 <div class="bc-vs">VS</div>
                 <div class="bc-sel-right">
-                    <select class="bc-select" onchange="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
+                    <select class="bc-select" data-on-change="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
                     <div class="bc-brand-badge" style="background:${brand2.primary_color}"><i class="fas fa-tractor"></i></div>
                 </div>
             </div>
@@ -15176,7 +15183,7 @@ async function loadBrandComparePage() {
             </div>
 
             <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('brand-compare', {brand1:${jsArg(brand1.name)},brand2:${jsArg(brand2.name)},data1:${escapeHtml(JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models}))},data2:${escapeHtml(JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models}))},maxYear:${max_year}}, 'bcAiPanel')">
+                <button class="ai-btn" data-on-click="requestAiAnalysis('brand-compare', {brand1:${jsArg(brand1.name)},brand2:${jsArg(brand2.name)},data1:${escapeHtml(JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models}))},data2:${escapeHtml(JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models}))},maxYear:${max_year}}, 'bcAiPanel')">
                     <i class="fas fa-robot"></i> AI Karşılaştırma Raporu
                 </button>
                 <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
@@ -15884,7 +15891,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
     });
 
     const topProvinceChips = (provinceSales || []).slice(0, 6).map(item => `
-        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadWeatherDetail(${jsArg(item.province_id)})">
+        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" data-on-click="loadWeatherDetail(${jsArg(item.province_id)})">
             <strong>${dashboardSafe(item.province_name)}</strong>
             <small>${fmtNum(item.total_sales)} adet</small>
         </button>
@@ -16052,7 +16059,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                         <div class="wcx-control-row">
                             <label class="wcx-field">
                                 <span>İl seçimi</span>
-                                <select id="weatherProvinceSelect" onchange="loadWeatherDetail()">
+                                <select id="weatherProvinceSelect" data-on-change="loadWeatherDetail()">
                                     ${provinceOptionsHtml}
                                 </select>
                             </label>
@@ -17004,7 +17011,7 @@ async function renderProvinceIntelligenceCenter(provinceId, provinceSales = []) 
         .filter(item => item.province_id)
         .slice(0, 8)
         .map(item => `
-            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadProvinceDetail(${jsArg(item.province_id)})">
+            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" data-on-click="loadProvinceDetail(${jsArg(item.province_id)})">
                 <strong>${dashboardSafe(item.province_name || '-')}</strong>
                 <small>${focusBrandId ? `${fmtNum(item.total_sales || 0)} adet / ${fmtPct(item.share_pct || 0, 1)} pay` : `${fmtNum(item.total_sales || 0)} adet toplam`}</small>
             </button>
@@ -17167,7 +17174,7 @@ async function renderProvinceIntelligenceCenter(provinceId, provinceSales = []) 
                     <div class="pdx-control-row">
                         <label class="pdx-field">
                             <span>İl seçimi</span>
-                            <select id="provinceIntelSelect" onchange="loadProvinceDetail()">
+                            <select id="provinceIntelSelect" data-on-change="loadProvinceDetail()">
                                 ${provinceOptionsHtml}
                             </select>
                         </label>
@@ -17953,7 +17960,7 @@ async function loadTarmakBirPage() {
                             <div class="tbx-control-row">
                                 <label class="tbx-field">
                                     <span>Veri yili</span>
-                                    <select id="tarmakCommandYearFilter" onchange="reloadTarmakCommand(this.value)">
+                                    <select id="tarmakCommandYearFilter" data-on-change="reloadTarmakCommand(this.value)">
                                         ${yearOptionsHtml}
                                     </select>
                                 </label>
@@ -18120,7 +18127,7 @@ async function loadTarmakBirPage() {
                 </section>
 
                 <section class="ai-action-bar tbx-action-bar">
-                    <button class="ai-btn" onclick="requestAiAnalysis('tarmakbir-command', window._tarmakAiContext, 'tbxAiPanel')">
+                    <button class="ai-btn" data-on-click="requestAiAnalysis('tarmakbir-command', window._tarmakAiContext, 'tbxAiPanel')">
                         <i class="fas fa-brain"></i>
                         <span>AI TarmakBir strateji brifi</span>
                     </button>
@@ -18192,7 +18199,7 @@ function showError(err) {
             <i class="fas fa-exclamation-circle" style="color:var(--danger)"></i>
             <h3>Bir hata oluştu</h3>
             <p>${escapeHtml(err.message || 'Bilinmeyen hata')}</p>
-            <button class="btn-filter" onclick="navigateTo(currentPage)" style="margin-top:16px">Tekrar Dene</button>
+            <button class="btn-filter" data-on-click="retryCurrentPage()" style="margin-top:16px">Tekrar Dene</button>
         </div>
     `;
 }

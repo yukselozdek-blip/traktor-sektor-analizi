@@ -15,7 +15,12 @@ describe('güvenlik başlıkları ve dış kaynaklar', { skip: SKIP_DB && SKIP_R
         const csp = r.headers.get('content-security-policy');
         assert.ok(csp, 'content-security-policy yok');
         assert.match(csp, /default-src 'self'/);
-        assert.match(csp, /script-src 'self' 'unsafe-inline' https:\/\/accounts\.google\.com\/gsi\/client/);
+        assert.match(csp, /script-src 'self' https:\/\/accounts\.google\.com\/gsi\/client(;|$)/);
+        const scriptSrc = (csp.match(/(?:^|;)\s*script-src ([^;]*)/) || [])[1] || '';
+        assert.doesNotMatch(scriptSrc, /unsafe-inline|unsafe-eval/, 'script-src unsafe-inline/unsafe-eval içermemeli');
+        assert.match(csp, /script-src-attr 'none'/, 'satır içi olay öznitelikleri kapalı olmalı');
+        // stil için 'unsafe-inline' kalır (Google GSI düğmesi satır içi stil kullanır)
+        assert.match(csp, /style-src 'self' 'unsafe-inline' https:\/\/accounts\.google\.com\/gsi\/style/);
         assert.match(csp, /object-src 'none'/);
         assert.match(csp, /base-uri 'self'/);
         assert.match(csp, /frame-ancestors 'none'/);

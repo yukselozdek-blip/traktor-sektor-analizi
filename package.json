@@ -16,7 +16,8 @@
     "e2e:xss": "node e2e/xss-crawl.js",
     "e2e:a11y": "node e2e/a11y.js",
     "e2e:contrast": "node e2e/brand-contrast.js",
-    "e2e:mobile": "node e2e/mobile-overflow.js"
+    "e2e:mobile": "node e2e/mobile-overflow.js",
+    "e2e:click": "node e2e/click-through.js"
   },
   "dependencies": {
     "axios": "^1.6.7",

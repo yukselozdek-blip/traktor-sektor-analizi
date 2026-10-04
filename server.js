@@ -75,7 +75,9 @@ app.use(cors({
 const CSP_MODE = (process.env.CSP_MODE || 'enforce').toLowerCase();
 const cspDirectives = {
     defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/client'],
+    scriptSrc: ["'self'", 'https://accounts.google.com/gsi/client'],
+    // Satır içi olay öznitelikleri (onclick=...) tümden kapalı; etkileşimler data-on-* + public/inline-actions.js ile
+    scriptSrcAttr: ["'none'"],
     styleSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/style'],
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
     fontSrc: ["'self'", 'data:'],
@@ -117,7 +119,7 @@ app.use((req, res, next) => {
 // under the original URLs so HTML and ?v= cache-busting keep working.
 const MINIFIED_ASSETS = new Map();
 if (process.env.NODE_ENV === 'production' || process.env.SERVE_MINIFIED === '1') {
-    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'style.css', 'billing.css', 'media-watch.css']) {
+    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js', 'style.css', 'billing.css', 'media-watch.css']) {
         const min = f.replace(/\.(js|css)$/, '.min.$1');
         if (fs.existsSync(path.join(__dirname, 'public', 'dist', min))) MINIFIED_ASSETS.set('/' + f, '/dist/' + min);
     }

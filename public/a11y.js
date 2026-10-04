@@ -4,6 +4,9 @@
 (function () {
     'use strict';
 
+    // Eski satır içi (onclick) ve CSP uyumlu (data-on-click, bkz. inline-actions.js) tıklama eylemlerini birlikte tanır
+    function hasClickAction(el) { return el.hasAttribute('onclick') || el.hasAttribute('data-on-click'); }
+
     var ICON_LABELS = {
         'fa-sign-out-alt': 'Çıkış yap', 'fa-right-from-bracket': 'Çıkış yap', 'fa-bars': 'Menüyü aç/kapat', 'fa-bell': 'Bildirimler',
         'fa-sync-alt': 'Yenile', 'fa-rotate': 'Yenile', 'fa-times': 'Kapat', 'fa-xmark': 'Kapat', 'fa-search': 'Ara',
@@ -60,7 +63,7 @@
     function fixControl(el) {
         if (el.dataset.a11yDone === '1') return;
         var tag = el.tagName;
-        if ((tag === 'BUTTON' || (tag === 'A' && el.hasAttribute('onclick'))) && !hasName(el)) {
+        if ((tag === 'BUTTON' || (tag === 'A' && hasClickAction(el))) && !hasName(el)) {
             var l = iconLabel(el);
             if (l) el.setAttribute('aria-label', l);
         } else if (tag === 'SELECT' && !hasName(el)) {
@@ -79,7 +82,7 @@
             if (n) el.setAttribute('aria-label', n);
         }
         // Tıklanabilir ama doğal olarak odaklanamayan öğeler: klavye ile erişilebilir yap
-        if (el.hasAttribute('onclick') && !/^(BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY|OPTION)$/.test(tag) && !(tag === 'A' && el.hasAttribute('href'))) {
+        if (hasClickAction(el) && !/^(BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY|OPTION)$/.test(tag) && !(tag === 'A' && el.hasAttribute('href'))) {
             if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
             if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
         }
@@ -114,7 +117,7 @@
 
     function scan(root) {
         var scope = root && root.querySelectorAll ? root : document;
-        var controls = scope.querySelectorAll('button, select, input, textarea, [onclick]');
+        var controls = scope.querySelectorAll('button, select, input, textarea, [onclick], [data-on-click]');
         for (var i = 0; i < controls.length; i++) fixControl(controls[i]);
         if (root.nodeType === 1) fixControl(root);
         var cands = scope.querySelectorAll('.sidebar-menu, .notif-list, [class*="scroll"], [class*="table"], [class*="wrap"], [style*="overflow"]');
@@ -125,10 +128,10 @@
     document.addEventListener('keydown', function (e) {
         var el = e.target;
         if (!el || el.nodeType !== 1) return;
-        if ((e.key === 'Enter' || e.key === ' ') && el.getAttribute('role') === 'button' && el.hasAttribute('onclick') && !/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(el.tagName)) {
+        if ((e.key === 'Enter' || e.key === ' ') && el.getAttribute('role') === 'button' && hasClickAction(el) && !/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(el.tagName)) {
             e.preventDefault();
             el.click();
-        } else if (e.key === 'Enter' && el.tagName === 'A' && !el.hasAttribute('href') && el.hasAttribute('onclick')) {
+        } else if (e.key === 'Enter' && el.tagName === 'A' && !el.hasAttribute('href') && hasClickAction(el)) {
             e.preventDefault();
             el.click();
         }

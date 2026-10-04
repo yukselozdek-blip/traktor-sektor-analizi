@@ -10,6 +10,8 @@ const ok = (c, m) => { console.log((c ? 'OK   ' : 'FAIL ') + m); if (!c) { fails
 // Dış ağ/CDN/Google/Wikimedia kaynaklı (sandbox'ta erişilemeyen) hatalar test dışı
 // Bilinen, dönüşümden bağımsız (önceden var olan) aralıklı Leaflet yarışı: harita sayfasından çıkarken animasyon
 const KNOWN_FLAKY = /_leaflet_pos/;
+// Bilinen, önceden var olan: yerel dağıtım köprüsü (api_v3.js deployBridgePort 3010) connect-src'e aykırı; script-src ile ilgisiz
+const KNOWN_CSP = /connect-src \| https?:\/\/[^|]*:3010\/api\/deploy/;
 const EXTERNAL = /ERR_CERT|ERR_TUNNEL|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_INTERNET|ERR_PROXY|Failed to load resource|google|gstatic|wikimedia|wikipedia|googleapis/i;
 
 (async () => {
@@ -32,12 +34,12 @@ const EXTERNAL = /ERR_CERT|ERR_TUNNEL|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_I
     const page = await ctx.newPage();
     const errs = [];
     const csp = [];
-    let flaky = 0;
+    let flaky = 0, knownCsp = 0;
     page.on('pageerror', e => { if (KNOWN_FLAKY.test(e.message)) { flaky++; return; } errs.push('pageerror: ' + e.message); });
     page.on('console', m => {
         const t = m.text();
-        if (t.startsWith('__CSPV__')) { csp.push(t); return; }
-        if (m.type() === 'error' && !EXTERNAL.test(t)) errs.push('console.error: ' + t);
+        if (t.startsWith('__CSPV__')) { if (KNOWN_CSP.test(t)) knownCsp++; else csp.push(t); return; }
+        if (m.type() === 'error' && !EXTERNAL.test(t) && !/api\/deploy\/status/.test(t)) errs.push('console.error: ' + t);
     });
     // Dış kaynaklı istekler sandbox'ta takılmasın
     await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
@@ -178,7 +180,7 @@ const EXTERNAL = /ERR_CERT|ERR_TUNNEL|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_I
     page.on('dialog', d => d.accept().catch(() => {}));
     let clicked = 0;
     for (const b of adminBtns) {
-        if (/sil|kaldır|iptal|çıkış|delete|remove|deploy|sıfırla|purge|temizle/i.test(b.t + ' ' + b.a)) continue;
+        if (/sil|kaldır|iptal|çıkış|delete|remove|triggerRailwayDeploy|sıfırla|purge|temizle/i.test(b.t + ' ' + b.a)) continue;
         const h = (await page.$$('#content button, .main-content button'))[b.i];
         if (!h) continue;
         await h.click({ timeout: 2000 }).catch(() => {});
@@ -205,7 +207,24 @@ const EXTERNAL = /ERR_CERT|ERR_TUNNEL|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_I
     ok(/login|giris/.test(page.url()), 'çıkış düğmesi çalıştı: ' + page.url());
     clean('çıkış');
 
-    console.log(`Toplam CSP ihlali: ${csp.length}, toplam konsol/sayfa hatası: ${errs.length} (bilinen aralıklı Leaflet yarışı, sayılmadı: ${flaky})`);
+    // ---- CSP gerçekten uygulanıyor mu? (olumsuz kanıt: satır içi yönetici ve satır içi betik engellenmeli) ----
+    const hdr = (await page.request.get(s.baseUrl + '/login.html')).headers()['content-security-policy'] || '';
+    ok(/script-src 'self'/.test(hdr) && !/script-src[^;]*unsafe-inline/.test(hdr) && /script-src-attr 'none'/.test(hdr), 'CSP başlığı: script-src unsafe-inline yok, script-src-attr none');
+    const before = csp.length, errBefore = errs.length;
+    await page.evaluate(() => {
+        window.__probe = 0;
+        const b = document.createElement('button'); b.id = '__probe';
+        b.setAttribute('onclick', 'window.__probe = 1');
+        document.body.appendChild(b); b.click();
+        const sc = document.createElement('script'); sc.textContent = 'window.__probe = 2'; document.body.appendChild(sc);
+    });
+    await page.waitForTimeout(300);
+    ok(await page.evaluate(() => window.__probe) === 0, 'olumsuz kanıt: satır içi onclick ve satır içi <script> ÇALIŞMADI');
+    const probed = csp.splice(before);
+    errs.splice(errBefore); // sınama kaynaklı beklenen konsol hataları
+    ok(probed.some(x => /script-src-attr/.test(x)) && probed.some(x => /script-src-elem|script-src/.test(x)), `olumsuz kanıt: CSP ihlal olayları üretildi (${probed.length})`);
+
+    console.log(`Toplam CSP ihlali: ${csp.length}, toplam konsol/sayfa hatası: ${errs.length} (bilinen aralıklı Leaflet yarışı, sayılmadı: ${flaky}; bilinen deploy-köprüsü connect-src ihlali, sayılmadı: ${knownCsp})`);
     csp.slice(0, 10).forEach(c => console.log('  CSP:', c));
     errs.slice(0, 10).forEach(e => console.log('  ERR:', e.slice(0, 250)));
     await browser.close(); await s.stop();
