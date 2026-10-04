@@ -3,7 +3,7 @@
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
 module.exports = function registerForecast(app, ctx) {
-    const { fs, pool, authMiddleware, adminOnly, normalizeSearchText, getCanonicalBrandPortalSlug, requireFeature, requireAiQuota, errMsg } = ctx;
+    const { fs, pool, authMiddleware, adminOnly, normalizeSearchText, getCanonicalBrandPortalSlug, requireFeature, requireAiQuota, recordAiUsage, errMsg } = ctx;
 
     async function ensureBrandPortalSeeded() {
         const curatedPortalSeed = require('../../database/brand-portal-seed');
@@ -1595,6 +1595,7 @@ module.exports = function registerForecast(app, ctx) {
                 provinceId: req.query.province_id,
                 brandId: req.query.brand_id
             });
+            await recordAiUsage(req.user.id, 'forecast_executive', 'forecast', 0, 0, req);
             res.json(payload);
         } catch (err) {
             res.status(500).json({ error: 'Forecast executive ozeti okunamadi', detail: errMsg(err) });

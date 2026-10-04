@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const { generateInviteCode, hashInviteCode, inviteHint } = require('../src/lib/invites');
 
 const BASE_DB_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || '';
 const SKIP_DB = !BASE_DB_URL;
@@ -113,12 +114,12 @@ async function startServer({ env = {} } = {}) {
         return { status: res.status, headers: res.headers, text, json };
     }
 
-    async function createUser({ role = 'brand_user', email, password = TEST_PASSWORD, active = true } = {}) {
+    async function createUser({ role = 'brand_user', email, password = TEST_PASSWORD, active = true, verified = true } = {}) {
         email = (email || `u_${crypto.randomBytes(5).toString('hex')}@test.local`).toLowerCase();
         const hash = await bcrypt.hash(password, 4);
         const r = await pool.query(
-            `INSERT INTO users (email, password_hash, full_name, role, is_active) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-            [email, hash, 'Test User', role, active]
+            `INSERT INTO users (email, password_hash, full_name, role, is_active, email_verified) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+            [email, hash, 'Test User', role, active, verified]
         );
         return { id: r.rows[0].id, email, password, role };
     }
@@ -131,7 +132,17 @@ async function startServer({ env = {} } = {}) {
         return { ...user, token: res.json.token };
     }
 
-    return { baseUrl, port, pool, api, stop, createUser, createUserWithToken, logs: () => logs, child };
+    // Davet kodu: DB'ye yalnızca özet yazılır; düz metin kodu döner. Kayıt testlerinde hız sınırına takılmamak için.
+    async function createInvite({ brandId, maxUses = 1, expiresAt = null, active = true } = {}) {
+        const code = generateInviteCode();
+        const r = await pool.query(
+            `INSERT INTO invite_codes (code_hash, code_hint, brand_id, max_uses, expires_at, is_active) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+            [hashInviteCode(code), inviteHint(code), brandId, maxUses, expiresAt, active]
+        );
+        return { id: r.rows[0].id, code };
+    }
+
+    return { baseUrl, port, pool, api, stop, createUser, createInvite, createUserWithToken, logs: () => logs, child };
 }
 
 module.exports = { startServer, createDatabase, SKIP_DB, SKIP_REASON, TEST_PASSWORD, INSIGHTS_API_KEY, JWT_SECRET, BASE_DB_URL };

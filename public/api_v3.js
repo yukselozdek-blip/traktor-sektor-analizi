@@ -50,7 +50,9 @@ const API = {
         }
         if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bilinmeyen hata' }));
-            throw new Error(err.error || `HTTP ${res.status}`);
+            const apiErr = new Error(err.error || `HTTP ${res.status}`);
+            if (err.code) apiErr.code = err.code;
+            throw apiErr;
         }
 
         const data = await res.json();
@@ -325,12 +327,13 @@ const API = {
     async getPaymentProviders() { return this.get('/api/billing/payment-providers'); },
     async getInvoices() { return this.get('/api/billing/invoices'); },
     async signup(payload) {
-        const data = await this.post('/api/auth/signup', payload);
-        if (data?.session || data?.token) {
-            localStorage.setItem('user_data', JSON.stringify(data.user));
-        }
-        return data;
+        // Kayıt oturum VERMEZ: e-posta doğrulaması sonrası giriş yapılır.
+        return this.post('/api/auth/signup', payload);
     },
+    async resendVerification(email) { return this.post('/api/auth/resend-verification', { email }); },
+    async createInvite(payload) { return this.post('/api/admin/invites', payload); },
+    async listInvites() { return this.get('/api/admin/invites'); },
+    async revokeInvite(id) { return this.post(`/api/admin/invites/${encodeURIComponent(id)}/revoke`, {}); },
     async startCheckout(payload) { return this.post('/api/billing/checkout', payload); },
     async cancelSubscription() { return this.post('/api/billing/cancel', {}); },
     async confirmBankPayment(payload) { return this.post('/api/billing/bank-confirm', payload); },

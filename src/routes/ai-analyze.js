@@ -7,7 +7,7 @@ const MAX_QUESTION_CHARS = 2000;
 const LLM_TIMEOUT_MS = 30000;
 
 module.exports = function registerAiAnalyze(app, ctx) {
-    const { authMiddleware, requireFeature, requireAiQuota, MINIMAX_API_KEY, MINIMAX_MODEL, errMsg } = ctx;
+    const { authMiddleware, requireFeature, requireAiQuota, recordAiUsage, MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL, errMsg } = ctx;
 
     app.post('/api/ai/analyze', authMiddleware, requireFeature('ai_insights', 'ai_insights_limited', 'model_region_analysis'), requireAiQuota(), async (req, res) => {
         let llmCalled = false;
@@ -322,7 +322,7 @@ module.exports = function registerAiAnalyze(app, ctx) {
 
             llmCalled = true;
             // Call Groq API
-            const groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
+            const groqRes = await fetch(`${MINIMAX_BASE_URL || 'https://api.minimax.io/v1'}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -349,6 +349,7 @@ module.exports = function registerAiAnalyze(app, ctx) {
             const groqData = await groqRes.json();
             const aiResponse = groqData.choices?.[0]?.message?.content || 'AI yanıtı alınamadı';
 
+            await recordAiUsage(req.user.id, 'ai_analyze:' + type, groqData.model || MINIMAX_MODEL, groqData.usage?.prompt_tokens || 0, groqData.usage?.completion_tokens || 0, req);
             res.json({
                 analysis: aiResponse,
                 model: groqData.model,

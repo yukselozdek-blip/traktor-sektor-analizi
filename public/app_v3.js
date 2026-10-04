@@ -11830,8 +11830,12 @@ async function loadSettingsPage() {
                 </div>
             </div>
         ` : ''}
+        <div id="whatsappApprovalsHost"></div>
+        <div id="inviteCodesHost"></div>
     `;
 
+    if (currentUser?.role === 'admin') renderWhatsappApprovalsCard();
+    if (currentUser?.role === 'admin') renderInviteCodesCard();
     if (showDeployTools) {
         refreshDeployStatus(true);
     }
@@ -18200,3 +18204,117 @@ document.addEventListener('DOMContentLoaded', () => {
     initTurkishCopyGuard();
     init();
 });
+
+// ============================================
+// ADMIN: WHATSAPP NUMARA ONAYLARI
+// ============================================
+async function renderWhatsappApprovalsCard() {
+    const host = document.getElementById('whatsappApprovalsHost');
+    if (!host || currentUser?.role !== 'admin') return;
+    host.innerHTML = `
+        <div class="card" style="margin-top:24px;">
+            <div class="card-header"><h3><i class="fas fa-phone"></i> WhatsApp Numara Onayları</h3></div>
+            <div class="card-body" id="whatsappApprovalsBody" role="region" aria-label="WhatsApp numara onayları" aria-live="polite">Yükleniyor...</div>
+        </div>`;
+    const body = document.getElementById('whatsappApprovalsBody');
+    try {
+        const data = await API.get('/api/admin/whatsapp-phones?status=pending&_=' + Date.now());
+        const rows = (data && data.phones) || [];
+        if (!rows.length) { body.innerHTML = '<p style="color:var(--text-muted)">Onay bekleyen numara yok.</p>'; return; }
+        body.innerHTML = rows.map(p => `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--border-color,#33415555);">
+                <div>
+                    <div style="font-weight:600">${escapeHtml(p.user_email || '-')}${p.brand ? ' · ' + escapeHtml(p.brand) : ''}</div>
+                    <div style="font-size:13px;color:var(--text-muted)">${escapeHtml(p.phone_e164 || p.phone_masked || '')} · <span>Onay bekliyor</span></div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" class="btn-filter" aria-label="${escapeHtml((p.user_email || '') + ' numarasını onayla')}" data-wa-id="${escapeHtml(String(p.id))}" data-wa-action="approve">Onayla</button>
+                    <button type="button" class="btn-filter" style="background:var(--bg-card-hover);color:var(--text-primary);" aria-label="${escapeHtml((p.user_email || '') + ' numarasını reddet')}" data-wa-id="${escapeHtml(String(p.id))}" data-wa-action="reject">Reddet</button>
+                </div>
+            </div>`).join('');
+        body.querySelectorAll('button[data-wa-action]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    await API.post(`/api/admin/whatsapp-phones/${encodeURIComponent(btn.dataset.waId)}/${btn.dataset.waAction}`, {});
+                } catch (e) { alert(e.message || 'İşlem başarısız'); }
+                renderWhatsappApprovalsCard();
+            });
+        });
+    } catch (e) {
+        body.innerHTML = `<p style="color:var(--danger)">${escapeHtml(e.message || 'Yüklenemedi')}</p>`;
+    }
+}
+
+// ============================================
+// ADMIN: DAVET KODLARI
+// ============================================
+async function renderInviteCodesCard(createdCode) {
+    const host = document.getElementById('inviteCodesHost');
+    if (!host || currentUser?.role !== 'admin') return;
+    host.innerHTML = `
+        <div class="card" style="margin-top:24px;">
+            <div class="card-header"><h3><i class="fas fa-ticket"></i> Davet Kodları</h3></div>
+            <div class="card-body" role="region" aria-label="Davet kodları">
+                <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px">Kayıt için gerekli kodlar markaya bağlıdır. Kod yalnızca oluşturulduğunda bir kez gösterilir.</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+                    <div><label for="inviteBrandSel" style="font-size:12px;color:var(--text-muted);display:block">Marka</label>
+                        <select id="inviteBrandSel" aria-label="Davet kodu markası"><option value="">Yükleniyor...</option></select></div>
+                    <div><label for="inviteMaxUses" style="font-size:12px;color:var(--text-muted);display:block">Kullanım</label>
+                        <input id="inviteMaxUses" type="number" min="1" max="1000" value="1" style="width:80px" aria-label="Azami kullanım sayısı"></div>
+                    <div><label for="inviteDays" style="font-size:12px;color:var(--text-muted);display:block">Geçerlilik (gün)</label>
+                        <input id="inviteDays" type="number" min="1" max="3650" value="14" style="width:90px" aria-label="Geçerlilik süresi (gün)"></div>
+                    <div><label for="inviteNote" style="font-size:12px;color:var(--text-muted);display:block">Not</label>
+                        <input id="inviteNote" type="text" maxlength="200" style="width:180px" aria-label="Not"></div>
+                    <button type="button" class="btn-filter" id="inviteCreateBtn">Kod oluştur</button>
+                </div>
+                <div id="inviteCreatedBox" role="status" aria-live="polite"></div>
+                <div id="inviteListBox" style="overflow-x:auto">Yükleniyor...</div>
+            </div>
+        </div>`;
+    const box = document.getElementById('inviteCreatedBox');
+    if (createdCode) {
+        box.innerHTML = `<div style="padding:10px 12px;border-radius:10px;background:#22c55e22;border:1px solid #22c55e66;margin-bottom:12px">
+            <div style="font-size:12px;color:var(--text-muted)">Yeni kod (bir daha gösterilmeyecek)</div>
+            <code id="inviteCodeValue" style="font-size:16px;font-weight:700">${escapeHtml(createdCode)}</code>
+            <button type="button" class="btn-filter" id="inviteCopyBtn" style="margin-left:8px">Kopyala</button></div>`;
+        document.getElementById('inviteCopyBtn').addEventListener('click', async (ev) => {
+            try { await navigator.clipboard.writeText(createdCode); ev.target.textContent = 'Kopyalandı'; } catch (_) { ev.target.textContent = 'Kopyalanamadı'; }
+        });
+    }
+    API.getBrands().then(brands => {
+        const sel = document.getElementById('inviteBrandSel');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Marka seçin...</option>' + (brands || []).map(b => `<option value="${escapeHtml(String(b.id))}">${escapeHtml(b.name)}</option>`).join('');
+    }).catch(() => {});
+    document.getElementById('inviteCreateBtn').addEventListener('click', async (ev) => {
+        const brandId = Number(document.getElementById('inviteBrandSel').value);
+        if (!brandId) { box.textContent = 'Önce bir marka seçin.'; return; }
+        ev.target.disabled = true;
+        try {
+            const r = await API.createInvite({
+                brand_id: brandId,
+                max_uses: Number(document.getElementById('inviteMaxUses').value) || 1,
+                expires_in_days: Number(document.getElementById('inviteDays').value) || undefined,
+                note: document.getElementById('inviteNote').value.trim() || undefined
+            });
+            renderInviteCodesCard(r.code);
+        } catch (e) { box.textContent = e.message || 'Oluşturulamadı'; ev.target.disabled = false; }
+    });
+    const list = document.getElementById('inviteListBox');
+    try {
+        const rows = await API.get('/api/admin/invites?_=' + Date.now());
+        if (!rows || !rows.length) { list.innerHTML = '<p style="color:var(--text-muted)">Henüz davet kodu yok.</p>'; return; }
+        list.innerHTML = `<table class="data-table"><thead><tr><th>Marka</th><th>Kod</th><th>Kullanım</th><th>Son kullanma</th><th>Durum</th><th>Not</th><th></th></tr></thead><tbody>${rows.map(i => {
+            const exp = i.expires_at ? new Date(i.expires_at) : null;
+            const expired = exp && exp < new Date();
+            const state = !i.is_active ? 'İptal' : expired ? 'Süresi doldu' : (i.used_count >= i.max_uses ? 'Tükendi' : 'Aktif');
+            return `<tr><td>${escapeHtml(i.brand_name || '-')}</td><td>TSA-…${escapeHtml(i.code_hint)}</td><td>${escapeHtml(String(i.used_count))}/${escapeHtml(String(i.max_uses))}</td><td>${exp ? escapeHtml(exp.toLocaleDateString('tr-TR')) : '-'}</td><td>${escapeHtml(state)}</td><td>${escapeHtml(i.note || '')}</td><td>${i.is_active ? `<button type="button" class="btn-filter" data-invite-revoke="${escapeHtml(String(i.id))}" aria-label="${escapeHtml('Kodu iptal et: ' + (i.brand_name || '') + ' …' + i.code_hint)}">İptal</button>` : ''}</td></tr>`;
+        }).join('')}</tbody></table>`;
+        list.querySelectorAll('button[data-invite-revoke]').forEach(btn => btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try { await API.revokeInvite(btn.dataset.inviteRevoke); } catch (e) { alert(e.message || 'İptal edilemedi'); }
+            renderInviteCodesCard();
+        }));
+    } catch (e) { list.innerHTML = `<p style="color:var(--danger)">${escapeHtml(e.message || 'Yüklenemedi')}</p>`; }
+}

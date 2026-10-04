@@ -246,7 +246,11 @@
                     </div>
                 </div>
                 <div class="field">
-                    <label>Marka</label>
+                    <label for="inviteCodeInput">Davet kodu</label>
+                    <input type="text" name="invite_code" id="inviteCodeInput" required autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="TSA-XXXX-XXXX-XXXX" aria-label="Davet kodu">
+                </div>
+                <div class="field">
+                    <label for="brandSelect">Marka</label>
                     <select name="brand_id" id="brandSelect" required>
                         <option value="">Marka seçin...</option>
                     </select>
@@ -260,6 +264,12 @@
                     <span>Aboneliği Başlat</span>
                 </button>
             </form>
+            <div id="verifyPanel" style="display:none" role="status">
+                <h2><i class="fas fa-envelope-circle-check"></i> Doğrulama e-postası gönderildi</h2>
+                <p style="color:var(--muted);font-size:14px;line-height:1.6"><strong id="verifyEmailLabel"></strong> adresine gönderdiğimiz bağlantıya tıklayarak hesabınızı doğrulayın (24 saat geçerlidir). Doğruladıktan sonra giriş yapıp abonelik adımına geçebilirsiniz.</p>
+                <button type="button" class="signup-btn" id="btnResend"><i class="fas fa-paper-plane"></i><span>Tekrar gönder</span></button>
+                <div class="signup-foot"><a href="/login.html">Giriş sayfasına git</a></div>
+            </div>
             <div class="signup-foot">Zaten üye misiniz? <a href="/login.html">Giriş yapın</a></div>
         </section>
     </div>
@@ -332,8 +342,15 @@
 
         function showError(msg) {
             const el = document.getElementById('errorMsg');
+            el.style.color = '';
             el.textContent = msg;
             el.style.display = 'block';
+        }
+        function showInfoMsg(msg) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            el.style.color = '#86efac';
         }
 
         document.getElementById('signupForm').addEventListener('submit', async (event) => {
@@ -351,6 +368,7 @@
                 password: fd.get('password'),
                 full_name: fd.get('full_name').trim(),
                 brand_id: Number(fd.get('brand_id')),
+                invite_code: String(fd.get('invite_code') || '').trim(),
                 phone: fd.get('phone') || null,
                 company_name: fd.get('company_name') || null,
                 city: fd.get('city') || null,
@@ -359,11 +377,20 @@
 
             try {
                 const data = await API.signup(payload);
-                if (data?.session || data?.token) {
-                    // Yönlendirme: ödeme sayfasına geç (Subscription tab'ı checkout başlatır)
-                    window.location.href = `/?page=subscription&plan=${selectedPlanSlug}&billing=start`;
+                if (data?.email_verify_required) {
+                    // Oturum açılmaz; e-posta doğrulandıktan sonra giriş yapılır ve abonelik sayfasına gidilir.
+                    try { localStorage.setItem('post_login_plan', selectedPlanSlug); } catch (_) { /* noop */ }
+                    document.getElementById('signupForm').style.display = 'none';
+                    document.getElementById('verifyEmailLabel').textContent = payload.email;
+                    document.getElementById('verifyPanel').style.display = 'block';
+                    document.getElementById('btnResend').onclick = async function () {
+                        this.disabled = true;
+                        try { const r = await API.resendVerification(payload.email); showInfoMsg(r?.message || 'Gönderildi'); }
+                        catch (e2) { showError(e2.message || 'Gönderilemedi'); }
+                        setTimeout(() => { this.disabled = false; }, 5000);
+                    };
                 } else {
-                    showError('Kayıt yapıldı ancak oturum açılamadı. Giriş yapmayı deneyin.');
+                    showError('Kayıt tamamlanamadı. Lütfen tekrar deneyin.');
                     btn.disabled = false;
                 }
             } catch (err) {

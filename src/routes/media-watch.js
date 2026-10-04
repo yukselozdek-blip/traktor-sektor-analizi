@@ -138,6 +138,10 @@ module.exports = function registerMediaWatch(app, ctx) {
                 windowDays: req.body.window_days || req.query.window_days || 14,
                 createdBy: req.user?.role || 'user'
             });
+            // Yalnızca gerçekten LLM kullanıldıysa say (kural tabanlı yedek özet kota harcamaz)
+            if (brief && brief.ai_model && brief.ai_model !== 'rule-based') {
+                await recordAiUsage(req.user.id, 'media_watch_brief', String(brief.ai_model).slice(0, 50), 0, 0, req);
+            }
             res.json(brief);
         } catch (err) {
             console.error('Media watch brief generate error:', err);
@@ -349,7 +353,7 @@ module.exports = function registerMediaWatch(app, ctx) {
     });
 
     // AI çeviri (Türkçe olmayan haberleri TR'ye çevirip özet üret)
-    app.post('/api/media-watch/translate', authMiddleware, requireFeature('ai_brief', 'media_watch'), async (req, res) => {
+    app.post('/api/media-watch/translate', authMiddleware, requireFeature('ai_brief', 'media_watch'), requireAiQuota(), async (req, res) => {
         try {
             const { item_id } = req.body || {};
             if (!item_id) return res.status(400).json({ error: 'item_id zorunlu' });
@@ -393,7 +397,7 @@ module.exports = function registerMediaWatch(app, ctx) {
                 // AI usage record (Enterprise/Growth kotası)
                 try {
                     if (typeof recordAiUsage === 'function') {
-                        await recordAiUsage(req.user.id, 'media_watch_translate', 'llama-3.3-70b-versatile', aiJson?.usage?.prompt_tokens || 0, aiJson?.usage?.completion_tokens || 0);
+                        await recordAiUsage(req.user.id, 'media_watch_translate', 'llama-3.3-70b-versatile', aiJson?.usage?.prompt_tokens || 0, aiJson?.usage?.completion_tokens || 0, req);
                     }
                 } catch (e) {}
             }

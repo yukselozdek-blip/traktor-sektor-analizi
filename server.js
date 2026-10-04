@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const { normalizePhoneE164, maskPhone } = require('./src/lib/whatsapp-approval');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -214,7 +215,7 @@ app.use('/api/', limiter);
 // AUTH MIDDLEWARE
 // ============================================
 const { authMiddleware, adminOnly } = require('./src/middleware/auth');
-const { LOGIN_LIMITER, SIGNUP_LIMITER, FORGOT_LIMITER, RESET_LIMITER } = require('./src/middleware/limiters');
+const { LOGIN_LIMITER, SIGNUP_LIMITER, FORGOT_LIMITER, RESET_LIMITER, RESEND_LIMITER } = require('./src/middleware/limiters');
 
 app.get('/api/auth/diagnostic', authMiddleware, adminOnly, async (req, res) => {
     try {
@@ -3856,7 +3857,7 @@ async function sendWhatsAppTextMessage(to, body) {
         throw new Error('WhatsApp credentials tanimli degil');
     }
 
-    const response = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+    const response = await fetch(`${process.env.WHATSAPP_GRAPH_API_BASE || 'https://graph.facebook.com/v21.0'}/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -4738,6 +4739,12 @@ app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
             return res.status(401).json({ error: LOGIN_FAIL_MESSAGE });
         }
 
+        // E-posta doğrulaması zorunlu (şifre doğru olduktan sonra söylenir: numaralandırma yok). Süper kullanıcı e-postaları muaf.
+        if (user.email_verified !== true && !SUPERUSER_EMAILS.has(email)) {
+            await logAuthAudit(user.id, 'login_blocked_unverified', req);
+            return res.status(403).json({ code: 'EMAIL_NOT_VERIFIED', error: 'E-posta adresinizi doğrulayın. Gelen kutunuzdaki bağlantıya tıklayın.' });
+        }
+
         // Başarılı login: sayaçları sıfırla, last_login güncelle
         await pool.query(
             `UPDATE users SET last_login = NOW(), failed_login_count = 0, locked_until = NULL WHERE id = $1`,
@@ -4763,20 +4770,23 @@ require('./src/routes/signup-google')(app, {
     buildUserPayload, escapeMailHtml
 });
 
-// Email verify
+// Email verify: tek kullanımlık (token doğrulamada silinir), 24 saat geçerli; sonucu giriş sayfasına yönlendirir.
 app.get('/api/auth/verify-email', async (req, res) => {
     try {
-        const token = String(req.query.token || '');
-        if (!token) return res.status(400).json({ error: 'token gerekli' });
+        const token = typeof req.query.token === 'string' ? req.query.token : '';
+        if (!/^[0-9a-f]{48}$/.test(token)) return res.redirect(302, '/login.html?verified=0');
         const r = await pool.query(
             `UPDATE users SET email_verified = true, email_verify_token = NULL, email_verify_expires = NULL
-             WHERE email_verify_token = $1 AND email_verify_expires > NOW() RETURNING id, email`,
+             WHERE email_verify_token = $1 AND email_verify_expires > NOW() RETURNING id`,
             [token]
         );
-        if (r.rows.length === 0) return res.status(400).send('<h2>Token geçersiz veya süresi doldu</h2>');
-        res.send(`<h2>E-postanız doğrulandı: ${r.rows[0].email}</h2><p><a href="/login.html">Giriş yap</a></p>`);
+        if (r.rows.length === 0) return res.redirect(302, '/login.html?verified=0');
+        await logAuthAudit(r.rows[0].id, 'email_verified', req);
+        res.redirect(302, '/login.html?verified=1');
     } catch (err) { res.status(500).send('Hata'); }
 });
+
+require('./src/routes/invites')(app, { pool, authMiddleware, adminOnly, RESEND_LIMITER, logAuthAudit, escapeMailHtml });
 
 require('./src/routes/password-reset')(app, { pool, logAuthAudit, FORGOT_LIMITER, RESET_LIMITER });
 
@@ -6261,6 +6271,7 @@ app.get('/api/insights', authMiddleware, requireFeature('ai_insights', 'ai_insig
         if (type) { params.push(type); query += ` AND ai.insight_type = $${params.length}`; }
         query += ' ORDER BY ai.created_at DESC LIMIT 50';
         const result = await pool.query(query, params);
+        await recordAiUsage(req.user.id, 'insights', 'ai_insights', 0, 0, req);
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
@@ -6321,17 +6332,40 @@ async function getPlanFeatureKeys(planId) {
     return keys;
 }
 
-async function getUserActiveSubscription(userId) {
-    if (!userId) return null;
-    const r = await pool.query(`
+const SUBSCRIPTION_SELECT = `
         SELECT s.*, sp.name as plan_name, sp.slug as plan_slug, sp.tier_rank, sp.feature_keys,
                sp.features, sp.has_ai_insights, sp.has_competitor_analysis, sp.has_weather_data, sp.has_export
         FROM subscriptions s
-        JOIN subscription_plans sp ON s.plan_id = sp.id
+        JOIN subscription_plans sp ON s.plan_id = sp.id`;
+
+// Plan limitleri / özellik kapıları İÇİN: yalnızca ödemesi onaylanmış (active/trialing)
+// ve dönemi dolmamış abonelik. current_period_end NULL ise (süresiz/tanımsız) dolmuş sayılmaz.
+async function getUserActiveSubscription(userId) {
+    if (!userId) return null;
+    const r = await pool.query(`${SUBSCRIPTION_SELECT}
+        WHERE s.user_id = $1 AND s.status IN ('active', 'trialing')
+          AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
+        ORDER BY s.created_at DESC LIMIT 1
+    `, [userId]);
+    return r.rows[0] || null;
+}
+
+// Görüntüleme/yönetim yolları İÇİN: bekleyen (ödeme onayı beklenen) abonelik dahil.
+// Bu sonuç YETKİ/limit kararında kullanılmaz.
+async function getUserSubscriptionAnyStatus(userId) {
+    if (!userId) return null;
+    const r = await pool.query(`${SUBSCRIPTION_SELECT}
         WHERE s.user_id = $1 AND s.status IN ('active', 'trialing', 'pending')
         ORDER BY s.created_at DESC LIMIT 1
     `, [userId]);
     return r.rows[0] || null;
+}
+
+function isSubscriptionEntitled(sub) {
+    if (!sub) return false;
+    if (sub.status !== 'active' && sub.status !== 'trialing') return false;
+    if (sub.current_period_end && new Date(sub.current_period_end).getTime() <= Date.now()) return false;
+    return true;
 }
 
 async function getPreviewPlanSlug(userId) {
@@ -6424,16 +6458,14 @@ function requireFeature(...featureKeys) {
 
 require('./src/routes/billing')(app, {
     pool, authMiddleware, adminOnly, errMsg, JWT_SECRET,
-    getUserActiveSubscription, getPreviewPlanSlug, getPreviewPlanFeatures
+    getUserActiveSubscription, getUserSubscriptionAnyStatus, isSubscriptionEntitled, getPreviewPlanSlug, getPreviewPlanFeatures
 });
 
 // ============================================
 // USAGE METERS — kullanım sayaçları
 // ============================================
 async function getCurrentMonthMeter(userId) {
-    const periodStart = new Date();
-    periodStart.setDate(1);
-    periodStart.setHours(0, 0, 0, 0);
+    const periodStart = currentUsagePeriodStart();
     const r = await pool.query(
         `INSERT INTO usage_meters (user_id, period_start) VALUES ($1, $2)
          ON CONFLICT (user_id, period_start) DO UPDATE SET updated_at = NOW()
@@ -6493,14 +6525,24 @@ function buildUsageWarnings(meter, limits) {
     return w;
 }
 
-// requireAiQuota middleware — AI çağrılarında kota kontrolü
+// Dönem anahtarı: ayın ilk günü (yerel saat). Sayaç her ay yeni satırla sıfırlanır.
+function currentUsagePeriodStart() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
+// requireAiQuota middleware — AI çağrılarında kota kontrolü (FAIL-CLOSED).
+// Kayıt-önce-kontrol: limit > 0 ise kota tek SQL ile atomik olarak REZERVE edilir
+// (aynı anda gelen istekler limiti aşamaz). Rezervasyon, handler başarıdan sonra
+// recordAiUsage(..., req) çağırırsa kalıcı olur; çağırmadan biterse (hata/iptal) iade edilir.
 function requireAiQuota() {
     return async (req, res, next) => {
         try {
-            if (req.user.role === 'admin') return next();
+            if (req.user?.role === 'admin') return next();
             const limits = await getPlanLimits(req.user.id, req.user.role);
-            const limit = limits.ai_queries_monthly;
-            if (limit === 0) {
+            const rawLimit = Number(limits?.ai_queries_monthly);
+            const limit = Number.isFinite(rawLimit) ? rawLimit : 0; // tanımsız/NaN => AI yok
+            if (limit === 0 || limit < -1) {
                 return res.status(402).json({
                     code: 'AI_NOT_INCLUDED',
                     error: 'Mevcut paketinizde AI sorgu yok',
@@ -6508,16 +6550,41 @@ function requireAiQuota() {
                 });
             }
             if (limit > 0) {
-                const meter = await getCurrentMonthMeter(req.user.id);
-                if (meter.ai_queries_count >= limit) {
-                    return res.status(402).json({
-                        code: 'AI_QUOTA_EXHAUSTED',
-                        error: 'Aylık AI sorgu kotanız doldu',
-                        used: meter.ai_queries_count,
+                const periodStart = currentUsagePeriodStart();
+                const r = await pool.query(
+                    `INSERT INTO usage_meters (user_id, period_start, ai_queries_count, updated_at)
+                     VALUES ($1, $2, 1, NOW())
+                     ON CONFLICT (user_id, period_start) DO UPDATE SET
+                        ai_queries_count = COALESCE(usage_meters.ai_queries_count, 0) + 1,
+                        updated_at = NOW()
+                     WHERE COALESCE(usage_meters.ai_queries_count, 0) < $3
+                     RETURNING ai_queries_count`,
+                    [req.user.id, periodStart, limit]
+                );
+                if (r.rows.length === 0) {
+                    const m = await pool.query(
+                        `SELECT ai_queries_count FROM usage_meters WHERE user_id = $1 AND period_start = $2`,
+                        [req.user.id, periodStart]
+                    );
+                    return res.status(429).json({
+                        code: 'AI_QUOTA_EXCEEDED',
+                        error: 'Aylık AI sorgu kotanız doldu. Kota bir sonraki ay başında yenilenir.',
+                        used: m.rows[0]?.ai_queries_count ?? limit,
                         limit,
                         upgrade_url: '/?page=subscription'
                     });
                 }
+                req.aiQuotaReserved = { userId: req.user.id, periodStart };
+                res.on('close', () => {
+                    if (req.aiQuotaReserved && !req.aiUsageRecorded) {
+                        req.aiQuotaReserved = null;
+                        pool.query(
+                            `UPDATE usage_meters SET ai_queries_count = GREATEST(COALESCE(ai_queries_count, 0) - 1, 0), updated_at = NOW()
+                             WHERE user_id = $1 AND period_start = $2`,
+                            [req.user.id, periodStart]
+                        ).catch(e => console.error('AI quota refund error:', e.message));
+                    }
+                });
             } else if (limit === -1) {
                 // Sınırsız ama fair-use: 24 saat içinde 200 sorgu üstü ise yavaşlat
                 const fr = await pool.query(
@@ -6534,28 +6601,34 @@ function requireAiQuota() {
             next();
         } catch (err) {
             console.error('requireAiQuota error:', err);
-            next();
+            // Fail-closed: kota doğrulanamadıysa AI çağrısına izin verme
+            if (!res.headersSent) {
+                res.status(503).json({ code: 'AI_QUOTA_UNAVAILABLE', error: 'AI kotası şu an doğrulanamadı, lütfen tekrar deneyin' });
+            }
         }
     };
 }
 
-async function recordAiUsage(userId, feature, model, inputTokens, outputTokens) {
+// Başarılı AI çağrısından SONRA (yanıt gönderilmeden önce) çağrılmalı. `req` verilirse ve kota
+// requireAiQuota ile rezerve edilmişse sayaç tekrar artırılmaz (yalnızca token + log).
+async function recordAiUsage(userId, feature, model, inputTokens, outputTokens, req) {
+    const reserved = !!(req && req.aiQuotaReserved);
+    if (req) req.aiUsageRecorded = true; // eşzamanlı: 'close' iadesini engeller
     const cost = ((Number(inputTokens) || 0) * 0.0000028) + ((Number(outputTokens) || 0) * 0.0000037);
-    const periodStart = new Date();
-    periodStart.setDate(1);
-    periodStart.setHours(0, 0, 0, 0);
+    const periodStart = reserved ? req.aiQuotaReserved.periodStart : currentUsagePeriodStart();
+    const tokens = (Number(inputTokens) || 0) + (Number(outputTokens) || 0);
     await pool.query(
         `INSERT INTO ai_usage_log (user_id, feature, model, input_tokens, output_tokens, cost_tl) VALUES ($1,$2,$3,$4,$5,$6)`,
         [userId, feature, model, inputTokens || 0, outputTokens || 0, cost.toFixed(4)]
     );
     await pool.query(
         `INSERT INTO usage_meters (user_id, period_start, ai_queries_count, ai_tokens_used)
-         VALUES ($1, $2, 1, $3)
+         VALUES ($1, $2, $4, $3)
          ON CONFLICT (user_id, period_start) DO UPDATE SET
-            ai_queries_count = usage_meters.ai_queries_count + 1,
-            ai_tokens_used = usage_meters.ai_tokens_used + $3,
+            ai_queries_count = COALESCE(usage_meters.ai_queries_count, 0) + $4,
+            ai_tokens_used = COALESCE(usage_meters.ai_tokens_used, 0) + $3,
             updated_at = NOW()`,
-        [userId, periodStart, (Number(inputTokens) || 0) + (Number(outputTokens) || 0)]
+        [userId, periodStart, tokens, reserved ? 0 : 1]
     );
 }
 
@@ -6564,7 +6637,7 @@ async function recordAiUsage(userId, feature, model, inputTokens, outputTokens) 
 // ============================================
 app.get('/api/billing/rivals', authMiddleware, async (req, res) => {
     try {
-        const sub = await getUserActiveSubscription(req.user.id);
+        const sub = await getUserSubscriptionAnyStatus(req.user.id);
         const limits = await getPlanLimits(req.user.id, req.user.role);
         let rivals = [];
         try {
@@ -6584,17 +6657,40 @@ app.put('/api/billing/rivals', authMiddleware, async (req, res) => {
     try {
         const { rival_brand_ids } = req.body || {};
         if (!Array.isArray(rival_brand_ids)) return res.status(400).json({ error: 'rival_brand_ids array olmalı' });
-        const limits = await getPlanLimits(req.user.id, req.user.role);
-        if (limits.max_rivals !== -1 && rival_brand_ids.length > limits.max_rivals) {
-            return res.status(400).json({ error: `Paketiniz en fazla ${limits.max_rivals} rakip seçimine izin veriyor`, max_rivals: limits.max_rivals });
+        if (rival_brand_ids.length > 200) return res.status(400).json({ error: 'Çok fazla marka seçildi' });
+        // Marka id'leri: pozitif tamsayı (sayı ya da tam sayı metni), tekrarsız
+        const ids = [];
+        for (const raw of rival_brand_ids) {
+            const isIntLike = (typeof raw === 'number' && Number.isInteger(raw)) || (typeof raw === 'string' && /^\d{1,9}$/.test(raw.trim()));
+            const n = isIntLike ? Number(raw) : NaN;
+            if (!Number.isInteger(n) || n <= 0 || n > 2147483647) {
+                return res.status(400).json({ error: 'rival_brand_ids yalnızca geçerli marka id (tamsayı) içermeli' });
+            }
+            ids.push(n);
+        }
+        if (new Set(ids).size !== ids.length) return res.status(400).json({ error: 'rival_brand_ids tekrarlı marka içeremez' });
+        if (req.user.brand_id && ids.includes(Number(req.user.brand_id))) {
+            return res.status(400).json({ error: 'Kendi markanızı rakip olarak ekleyemezsiniz' });
         }
         const sub = await getUserActiveSubscription(req.user.id);
         if (!sub) return res.status(404).json({ error: 'Aktif abonelik yok' });
+        const limits = await getPlanLimits(req.user.id, req.user.role);
+        const rawMax = Number(limits?.max_rivals);
+        const maxRivals = Number.isFinite(rawMax) ? rawMax : 0; // tanımsız/NaN => 0; -1 = sınırsız
+        if (maxRivals !== -1 && ids.length > maxRivals) {
+            return res.status(400).json({ error: `Paketiniz en fazla ${maxRivals} rakip seçimine izin veriyor`, max_rivals: maxRivals });
+        }
+        if (ids.length > 0) {
+            const found = await pool.query(`SELECT id FROM brands WHERE id = ANY($1::int[]) AND is_active = true`, [ids]);
+            if (found.rows.length !== ids.length) {
+                return res.status(400).json({ error: 'Seçilen markalardan biri bulunamadı veya aktif değil' });
+            }
+        }
         await pool.query(
             `UPDATE subscriptions SET rivals_selection = $1::jsonb, updated_at = NOW() WHERE id = $2`,
-            [JSON.stringify(rival_brand_ids.map(Number)), sub.id]
+            [JSON.stringify(ids), sub.id]
         );
-        res.json({ success: true, selected: rival_brand_ids });
+        res.json({ success: true, selected: ids });
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
     }
@@ -6614,6 +6710,7 @@ app.get('/api/billing/whatsapp', authMiddleware, async (req, res) => {
              FROM whatsapp_phones WHERE user_id = $1 ORDER BY is_primary DESC, activated_at`,
             [req.user.id]
         );
+        r.rows.forEach(p => { p.approval = p.admin_approved ? 'approved' : 'pending'; });
         res.json({ phones: r.rows, max_phones: limits.whatsapp_phones, used: r.rows.length });
     } catch (err) {
         res.status(500).json({ error: 'Sunucu hatası' });
@@ -6623,10 +6720,10 @@ app.get('/api/billing/whatsapp', authMiddleware, async (req, res) => {
 app.post('/api/billing/whatsapp', authMiddleware, async (req, res) => {
     try {
         const { phone_e164, display_name, role_label, is_primary } = req.body || {};
-        if (!phone_e164 || !/^\+?\d{10,15}$/.test(String(phone_e164).replace(/\s/g, ''))) {
+        const normalized = normalizePhoneE164(phone_e164);
+        if (!normalized) {
             return res.status(400).json({ error: 'Geçerli bir telefon numarası girin (+905xxxxxxxxx)' });
         }
-        const normalized = String(phone_e164).replace(/\s/g, '').startsWith('+') ? String(phone_e164).replace(/\s/g, '') : '+' + String(phone_e164).replace(/\s/g, '');
 
         const limits = await getPlanLimits(req.user.id, req.user.role);
         if (limits.whatsapp_phones === 0 && req.user.role !== 'admin') {
@@ -6645,7 +6742,7 @@ app.post('/api/billing/whatsapp', authMiddleware, async (req, res) => {
              VALUES ($1, $2, $3, $4, $5, $6, false) RETURNING *`,
             [req.user.id, sub?.id || null, normalized, display_name || null, role_label || null, !!is_primary]
         );
-        res.status(201).json({ success: true, phone: ins.rows[0], note: 'Numaranız admin onayından sonra aktif olacaktır.' });
+        res.status(201).json({ success: true, approval: 'pending', phone: ins.rows[0], note: 'Numaranız admin onayından sonra aktif olacaktır.' });
     } catch (err) {
         res.status(500).json({ error: errMsg(err) });
     }
@@ -6673,13 +6770,73 @@ app.post('/api/billing/whatsapp/:id/approve', authMiddleware, adminOnly, async (
     }
 });
 
+// Admin: WhatsApp numara onay kuyruğu (asistan yalnızca onaylı numaralara cevap verir)
+app.get('/api/admin/whatsapp-phones', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const status = String(req.query.status || '');
+        if (status && !['pending', 'approved'].includes(status)) {
+            return res.status(400).json({ error: 'status pending veya approved olmalı' });
+        }
+        const where = status === 'approved' ? 'wp.admin_approved = true'
+            : status === 'pending' ? 'wp.admin_approved IS NOT TRUE' : 'TRUE';
+        const r = await pool.query(
+            `SELECT wp.id, wp.phone_e164, wp.display_name, wp.admin_approved, wp.admin_approved_at, wp.admin_rejected_at,
+                    u.email AS user_email, u.company_name, b.name AS brand_name
+             FROM whatsapp_phones wp
+             JOIN users u ON u.id = wp.user_id
+             LEFT JOIN brands b ON b.id = u.brand_id
+             WHERE ${where}
+             ORDER BY wp.activated_at DESC LIMIT 500`
+        );
+        res.json({
+            phones: r.rows.map(p => ({
+                id: p.id,
+                user_email: p.user_email,
+                brand: p.brand_name || p.company_name || null,
+                phone_masked: maskPhone(p.phone_e164),
+                phone_e164: p.phone_e164,
+                status: p.admin_approved ? 'approved' : (p.admin_rejected_at ? 'rejected' : 'pending'),
+                approved_at: p.admin_approved_at
+            }))
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/admin/whatsapp-phones/:id/approve', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE whatsapp_phones SET admin_approved = true, admin_approved_at = NOW(), admin_approved_by = $1,
+                    admin_rejected_at = NULL, admin_rejected_by = NULL
+             WHERE id = $2 RETURNING id`, [req.user.id, parseInt(req.params.id, 10) || 0]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Telefon bulunamadı' });
+        res.json({ success: true, status: 'approved' });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
+app.post('/api/admin/whatsapp-phones/:id/reject', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE whatsapp_phones SET admin_approved = false, admin_approved_at = NULL, admin_approved_by = NULL,
+                    admin_rejected_at = NOW(), admin_rejected_by = $1
+             WHERE id = $2 RETURNING id`, [req.user.id, parseInt(req.params.id, 10) || 0]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Telefon bulunamadı' });
+        res.json({ success: true, status: 'rejected' });
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası' });
+    }
+});
+
 require('./src/routes/dashboard-admin')(app, { bcrypt, pool, authMiddleware, adminOnly });
 require('./src/routes/sales-analysis')(app, { pool, authMiddleware, formatPeriodLabel, roundMetric, calculateYoY, getBrandSqlAliases, requireFeature });
 // ============================================
 // MINIMAX AI ANALYSIS (OpenAI-compatible API)
 // ============================================
 const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || process.env.GROQ_API_KEY;
-const MINIMAX_BASE_URL = 'https://api.minimax.io/v1';
+const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1';
 const MINIMAX_MODEL = 'MiniMax-M2.7';
 
 // ============================================
@@ -6733,11 +6890,11 @@ function buildConversationContext(history) {
     return `\n\nÖNCEKİ KONUŞMA BAĞLAMI (son ${history.length} mesaj):\n${lines.join('\n')}\n`;
 }
 
-require('./src/routes/ai-analyze')(app, { authMiddleware, requireFeature, requireAiQuota, MINIMAX_API_KEY, MINIMAX_MODEL, errMsg });
+require('./src/routes/ai-analyze')(app, { authMiddleware, requireFeature, requireAiQuota, recordAiUsage, MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL, errMsg });
 
 require('./src/routes/seed-admin')(app, { pool, authMiddleware, adminOnly, errMsg });
 
-Object.assign(seedHelpers, require('./src/routes/forecast')(app, { fs, pool, authMiddleware, adminOnly, normalizeSearchText, getCanonicalBrandPortalSlug, requireFeature, requireAiQuota, errMsg }));
+Object.assign(seedHelpers, require('./src/routes/forecast')(app, { fs, pool, authMiddleware, adminOnly, normalizeSearchText, getCanonicalBrandPortalSlug, requireFeature, requireAiQuota, recordAiUsage, errMsg }));
 // ============================================
 // DB INIT
 // ============================================

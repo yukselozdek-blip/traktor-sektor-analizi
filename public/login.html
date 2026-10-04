@@ -710,6 +710,7 @@
                 </div>
 
                 <button type="submit" class="btn-login-primary"><i class="fas fa-right-to-bracket"></i> Giriş Yap</button>
+                <button type="button" class="btn-google" id="btnResendLogin" style="display:none;" onclick="resendVerification(document.querySelector('#loginForm input[name=email]').value, this)"><i class="fas fa-envelope"></i> Doğrulama e-postasını tekrar gönder</button>
 
                 <button type="button" class="btn-google-strong" onclick="triggerGooglePrompt()">
                     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -797,7 +798,11 @@
                 <!-- ADIM 3: Marka Seçimi -->
                 <div class="wizard-stage" data-stage="3" style="display:none;">
                     <h2 class="wizard-title">3. Marka seçimi</h2>
-                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu).</p>
+                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu). Kayıt için markanızın size verdiği davet kodu gerekir; kod yalnızca ait olduğu marka için geçerlidir.</p>
+                    <div class="field">
+                        <label for="inviteCodeInput">Davet kodu</label>
+                        <input type="text" name="invite_code" id="inviteCodeInput" required autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="TSA-XXXX-XXXX-XXXX" aria-label="Davet kodu">
+                    </div>
                     <div class="field">
                         <input type="text" id="brandSearch" placeholder="Marka ara..." onkeyup="filterBrands(this.value)">
                     </div>
@@ -869,6 +874,14 @@
                     </div>
                 </div>
             </form>
+
+            <!-- E-POSTA DOĞRULAMA BİLGİ EKRANI (kayıttan sonra) -->
+            <div id="verifyPanel" style="display:none; flex-direction:column; gap:12px;" role="status">
+                <h2 class="wizard-title"><i class="fas fa-envelope-circle-check"></i> Doğrulama e-postası gönderildi</h2>
+                <p class="wizard-step-label">Hesabınızı etkinleştirmek için <strong id="verifyEmailLabel"></strong> adresine gönderdiğimiz bağlantıya tıklayın (24 saat geçerlidir). Doğrulamadan sonra giriş yaparak abonelik adımına geçebilirsiniz.</p>
+                <button type="button" class="btn-google" id="btnResendSignup"><i class="fas fa-paper-plane"></i> Tekrar gönder</button>
+                <div class="auth-foot"><a href="/login.html" onclick="window.location.href='/login.html'; return false;">Giriş sayfasına dön</a></div>
+            </div>
         </section>
     </div>
 
@@ -961,6 +974,7 @@
             if (currentStage === 3) {
                 const brandId = document.getElementById('brandIdHidden').value;
                 if (!brandId) { showError('Marka seçimi zorunludur'); return; }
+                if (!document.getElementById('inviteCodeInput').value.trim()) { showError('Davet kodu zorunludur'); return; }
             }
             wizardGoTo(currentStage + 1);
         }
@@ -1096,12 +1110,37 @@
                     if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
                     if (remember) localStorage.setItem('remember_email', email);
                     else localStorage.removeItem('remember_email');
-                    window.location.href = '/';
+                    let plan = null;
+                    try { plan = localStorage.getItem('post_login_plan'); localStorage.removeItem('post_login_plan'); } catch (_) { /* noop */ }
+                    // Kayıtta plan seçildiyse doğrulama sonrası ilk girişte abonelik sayfasına gidilir.
+                    window.location.href = plan && /^[a-z0-9_-]{1,50}$/i.test(plan) ? `/?page=subscription&plan=${encodeURIComponent(plan)}&billing=start` : '/';
                 }
             } catch (err) {
                 showError(err.message || 'Giriş başarısız');
+                document.getElementById('btnResendLogin').style.display = err.code === 'EMAIL_NOT_VERIFIED' ? 'inline-flex' : 'none';
             }
         });
+
+        async function resendVerification(email, btn) {
+            email = String(email || '').trim().toLowerCase();
+            if (!email) { showError('Önce e-posta adresinizi girin'); return; }
+            if (btn) btn.disabled = true;
+            try {
+                const r = await API.resendVerification(email);
+                showInfo(r?.message || 'Doğrulama e-postası gönderildi.');
+            } catch (err) {
+                showError(err.message || 'Gönderilemedi');
+            } finally {
+                if (btn) setTimeout(() => { btn.disabled = false; }, 5000);
+            }
+        }
+
+        // Doğrulama bağlantısından dönüş
+        (function showVerifiedResult() {
+            const v = new URLSearchParams(window.location.search).get('verified');
+            if (v === '1') showInfo('E-posta adresiniz doğrulandı. Şimdi giriş yapabilirsiniz.');
+            else if (v === '0') showError('Doğrulama bağlantısı geçersiz veya süresi dolmuş. Giriş yapmayı deneyip bağlantıyı tekrar isteyebilirsiniz.');
+        })();
 
         // Beni hatırla — sayfa açılışında doldur
         (function prefillRememberedEmail() {
@@ -1126,6 +1165,7 @@
                 password: fd.get('password'),
                 full_name: fd.get('full_name').trim(),
                 brand_id: Number(document.getElementById('brandIdHidden').value),
+                invite_code: String(fd.get('invite_code') || '').trim(),
                 plan_slug: fd.get('plan_slug') || 'growth',
                 company_name: fd.get('company_name').trim(),
                 company_tax_office: fd.get('company_tax_office') || null,
@@ -1137,9 +1177,16 @@
             };
             try {
                 const data = await API.signup(payload);
-                if (data?.session || data?.token) {
-                    showInfo('Üyeliğiniz oluşturuldu. Ödeme adımına yönlendiriliyorsunuz...');
-                    setTimeout(() => { window.location.href = `/?page=subscription&plan=${payload.plan_slug}&billing=start`; }, 800);
+                if (data?.email_verify_required) {
+                    // Oturum açılmaz; doğrulama sonrası giriş yapılır ve abonelik sayfasına gidilir.
+                    try { localStorage.setItem('post_login_plan', payload.plan_slug); } catch (_) { /* noop */ }
+                    hideMessages();
+                    document.querySelector('.auth-tabs').style.display = 'none';
+                    document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('is-active'));
+                    document.getElementById('verifyEmailLabel').textContent = payload.email;
+                    const vp = document.getElementById('verifyPanel');
+                    vp.style.display = 'flex';
+                    document.getElementById('btnResendSignup').onclick = function () { resendVerification(payload.email, this); };
                 }
             } catch (err) {
                 btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> Üyeliği Tamamla';
@@ -1181,6 +1228,7 @@
                 const payload = {
                     id_token: response.credential,
                     brand_id: document.getElementById('brandIdHidden').value ? Number(document.getElementById('brandIdHidden').value) : null,
+                    invite_code: String(fd.get('invite_code') || '').trim() || null,
                     plan_slug: fd.get('plan_slug') || 'growth',
                     company_name: fd.get('company_name') || null,
                     job_title: fd.get('job_title') || null
@@ -1193,7 +1241,7 @@
                 });
                 const data = await r.json();
                 if (r.status === 202 && data.code === 'GOOGLE_NEEDS_PROFILE') {
-                    showInfo(`Google hesabınız tanımlandı (${data.google_email}). Üye Ol sekmesinde marka ve firma bilgisi girin.`);
+                    showInfo(`Google hesabınız tanımlandı (${data.google_email}). Üye Ol sekmesinde davet kodu, marka ve firma bilgisi girin.`);
                     showTab('signup');
                     return;
                 }

@@ -195,9 +195,10 @@ describe('signup verification mail', { skip: SKIP_DB && SKIP_REASON }, () => {
         try {
             const brand = (await srv.pool.query(`INSERT INTO brands (name, slug, is_active) VALUES ('B','b-${Date.now()}',true) RETURNING id`)).rows[0];
             const email = `s_${crypto.randomBytes(4).toString('hex')}@test.local`;
+            const inv = await srv.createInvite({ brandId: brand.id });
             const r = await srv.api('POST', '/api/auth/signup', {
                 headers: { 'X-Forwarded-For': '10.88.0.1' },
-                body: { email, password: TEST_PASSWORD, full_name: 'A B', brand_id: brand.id, company_name: 'C', job_title: 'J' }
+                body: { invite_code: inv.code, email, password: TEST_PASSWORD, full_name: 'A B', brand_id: brand.id, company_name: 'C', job_title: 'J' }
             });
             assert.equal(r.status, 201, r.text);
             await sleep(300);

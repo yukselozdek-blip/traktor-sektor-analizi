@@ -12,10 +12,15 @@ const { getRequestToken } = require('../lib/session');
 const MOCK_BILLING_ALLOWED = !require('../lib/env').isProduction() || process.env.ALLOW_MOCK_BILLING === '1';
 const escHtml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+function parseMeta(m) {
+    if (typeof m === 'string') { try { m = JSON.parse(m); } catch (e) { m = {}; } }
+    return (m && typeof m === 'object') ? m : {};
+}
+
 module.exports = function registerBilling(app, ctx) {
     const {
         pool, authMiddleware, adminOnly, errMsg, JWT_SECRET,
-        getUserActiveSubscription, getPreviewPlanSlug, getPreviewPlanFeatures
+        getUserActiveSubscription, getUserSubscriptionAnyStatus, isSubscriptionEntitled, getPreviewPlanSlug, getPreviewPlanFeatures
     } = ctx;
 
     // Plan listesi (public)
@@ -39,13 +44,26 @@ module.exports = function registerBilling(app, ctx) {
     // Aktif abonelik (kullanıcıya özel)
     app.get('/api/subscription', authMiddleware, async (req, res) => {
         try {
-            const sub = await getUserActiveSubscription(req.user.id);
+            // Görüntüleme: bekleyen (ödeme onayı beklenen) abonelik de gösterilir; yetki için is_entitled kullanın
+            const sub = await getUserSubscriptionAnyStatus(req.user.id);
             if (!sub) return res.json(null);
             let keys = [];
             try {
                 keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
             } catch (e) { keys = []; }
-            res.json({ ...sub, feature_keys: keys });
+            const entitled = isSubscriptionEntitled(sub);
+            // Entitled kullanıcının onay bekleyen plan değişikliği (abonelik satırı değişmez; yalnızca payments'ta tutulur)
+            let pending_change = null;
+            if (entitled) {
+                const pc = await pool.query(
+                    `SELECT metadata FROM payments WHERE user_id = $1 AND status = 'pending' AND metadata->>'plan_slug' IS NOT NULL
+                     ORDER BY created_at DESC, id DESC LIMIT 1`, [req.user.id]);
+                if (pc.rows.length) {
+                    const m = parseMeta(pc.rows[0].metadata);
+                    if (m.plan_slug) pending_change = { plan_slug: m.plan_slug, period: m.period === 'yearly' ? 'yearly' : 'monthly' };
+                }
+            }
+            res.json({ ...sub, feature_keys: keys, is_entitled: entitled, payment_pending: sub.status === 'pending', pending_change });
         } catch (err) {
             res.status(500).json({ error: 'Sunucu hatası' });
         }
@@ -75,9 +93,10 @@ module.exports = function registerBilling(app, ctx) {
                 } catch (e) { keys = []; }
                 return res.json({ role: 'admin', is_superuser: true, tier_rank: 99, plan_slug: 'admin', feature_keys: keys, has_active_subscription: true });
             }
-            const sub = await getUserActiveSubscription(req.user.id);
+            const sub = await getUserSubscriptionAnyStatus(req.user.id);
+            const entitled = isSubscriptionEntitled(sub);
             let keys = [];
-            if (sub) {
+            if (sub && entitled) {
                 try {
                     keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
                 } catch (e) { keys = []; }
@@ -90,7 +109,8 @@ module.exports = function registerBilling(app, ctx) {
                 status: sub?.status || 'none',
                 current_period_end: sub?.current_period_end || null,
                 feature_keys: keys,
-                has_active_subscription: !!sub && (sub.status === 'active' || sub.status === 'trialing')
+                has_active_subscription: entitled,
+                payment_pending: !!sub && sub.status === 'pending'
             });
         } catch (err) {
             console.error('GET /api/me/features error', err);
@@ -138,25 +158,32 @@ module.exports = function registerBilling(app, ctx) {
                 user: req.user, plan, period: periodNorm, returnUrl, cancelUrl, baseUrl
             });
 
-            // Pending subscription oluştur veya güncelle
-            const existing = await pool.query(
-                `SELECT id FROM subscriptions WHERE user_id = $1 AND status IN ('pending', 'active', 'trialing') ORDER BY created_at DESC LIMIT 1`,
-                [req.user.id]
-            );
+            // Entitled (active/trialing, süresi dolmamış) aboneliği olan kullanıcının aboneliği DEĞİŞTİRİLMEZ:
+            // erişim ödeme onaylanana kadar eski planla sürer, bekleyen değişiklik yalnızca payments kaydında tutulur.
+            // Entitled olmayanlar (yeni/pending/past_due/cancelled/süresi dolmuş) için pending abonelik oluşturulur/güncellenir.
+            const entitledSub = await getUserActiveSubscription(req.user.id);
             let subscriptionId;
-            if (existing.rows.length > 0) {
-                subscriptionId = existing.rows[0].id;
-                await pool.query(
-                    `UPDATE subscriptions SET plan_id = $1, status = 'pending', provider = $2, updated_at = NOW() WHERE id = $3`,
-                    [plan.id, providerImpl.code, subscriptionId]
-                );
+            if (entitledSub) {
+                subscriptionId = entitledSub.id;
             } else {
-                const ins = await pool.query(
-                    `INSERT INTO subscriptions (user_id, plan_id, status, provider, current_period_start)
-                 VALUES ($1, $2, 'pending', $3, NOW()) RETURNING id`,
-                    [req.user.id, plan.id, providerImpl.code]
+                const existing = await pool.query(
+                    `SELECT id FROM subscriptions WHERE user_id = $1 AND status IN ('pending', 'active', 'trialing') ORDER BY created_at DESC LIMIT 1`,
+                    [req.user.id]
                 );
-                subscriptionId = ins.rows[0].id;
+                if (existing.rows.length > 0) {
+                    subscriptionId = existing.rows[0].id;
+                    await pool.query(
+                        `UPDATE subscriptions SET plan_id = $1, status = 'pending', provider = $2, updated_at = NOW() WHERE id = $3`,
+                        [plan.id, providerImpl.code, subscriptionId]
+                    );
+                } else {
+                    const ins = await pool.query(
+                        `INSERT INTO subscriptions (user_id, plan_id, status, provider, current_period_start)
+                     VALUES ($1, $2, 'pending', $3, NOW()) RETURNING id`,
+                        [req.user.id, plan.id, providerImpl.code]
+                    );
+                    subscriptionId = ins.rows[0].id;
+                }
             }
 
             // Pending payment kaydı
@@ -167,7 +194,7 @@ module.exports = function registerBilling(app, ctx) {
                     req.user.id, subscriptionId, providerImpl.code, session.provider_session_id,
                     session.amount, session.currency || 'TRY',
                     providerImpl.code === 'bank_transfer' ? 'bank_transfer' : 'card',
-                    JSON.stringify({ ...(session.metadata || {}), bank_reference: session.bank_reference || null, period: periodNorm })
+                    JSON.stringify({ ...(session.metadata || {}), plan_slug: plan.slug, bank_reference: session.bank_reference || null, period: periodNorm })
                 ]
             );
 
@@ -207,14 +234,13 @@ module.exports = function registerBilling(app, ctx) {
             if (!userId || !sessionId) return res.redirect('/?page=subscription&billing=error');
 
             const pay = await pool.query(
-                `SELECT metadata FROM payments WHERE provider_payment_id = $1 AND user_id = $2 AND status = 'pending'
+                `SELECT id, metadata FROM payments WHERE provider_payment_id = $1 AND user_id = $2 AND status = 'pending'
                  ORDER BY created_at DESC LIMIT 1`, [sessionId, userId]);
             if (pay.rows.length === 0) return res.redirect('/?page=subscription&billing=error');
-            let meta = pay.rows[0].metadata || {};
-            if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch (e) { meta = {}; } }
+            const meta = parseMeta(pay.rows[0].metadata);
             if (!meta.plan_slug) return res.redirect('/?page=subscription&billing=error');
 
-            await activateUserSubscription(userId, meta.plan_slug, String(req.query.provider || 'mock'), meta.period === 'yearly' ? 'yearly' : 'monthly');
+            await activateUserSubscription(userId, meta.plan_slug, String(req.query.provider || 'mock'), meta.period === 'yearly' ? 'yearly' : 'monthly', pay.rows[0].id);
             res.redirect('/?page=subscription&billing=success');
         } catch (err) {
             console.error('Billing success error:', err);
@@ -243,7 +269,9 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
 </body></html>`);
     });
 
-    async function activateUserSubscription(userId, planSlug, provider, period) {
+    // paymentId: onaylanan ÖDEME kaydı. Yalnızca o kayıt 'completed' olur (aynı kullanıcının diğer bekleyen
+    // ödemeleri etkilenmez); plan/dönem çağıranın ödeme kaydından okuduğu değerlerdir.
+    async function activateUserSubscription(userId, planSlug, provider, period, paymentId) {
         const planRes = await pool.query('SELECT id FROM subscription_plans WHERE slug = $1', [String(planSlug).toLowerCase()]);
         if (planRes.rows.length === 0) throw new Error('Plan bulunamadı');
         const planId = planRes.rows[0].id;
@@ -262,7 +290,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
              WHERE id = $4`,
                 [planId, provider, periodEnd, existing.rows[0].id]
             );
-            await pool.query(`UPDATE payments SET status = 'completed' WHERE subscription_id = $1 AND status = 'pending'`, [existing.rows[0].id]);
+            if (paymentId) await pool.query(`UPDATE payments SET status = 'completed', subscription_id = $2 WHERE id = $1 AND user_id = $3 AND status = 'pending'`, [paymentId, existing.rows[0].id, userId]);
             return existing.rows[0].id;
         }
         const ins = await pool.query(
@@ -270,7 +298,25 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
          VALUES ($1, $2, 'active', $3, NOW(), $4) RETURNING id`,
             [userId, planId, provider, periodEnd]
         );
+        if (paymentId) await pool.query(`UPDATE payments SET status = 'completed', subscription_id = $2 WHERE id = $1 AND user_id = $3 AND status = 'pending'`, [paymentId, ins.rows[0].id, userId]);
         return ins.rows[0].id;
+    }
+
+    // Webhook/banka onayı için ilgili bekleyen ödemeyi bul: önce sağlayıcı referansı, yoksa aynı plan+dönemdeki en yeni bekleyen kayıt.
+    async function findPendingPayment(userId, provider, refs, planSlug, period) {
+        const ids = (refs || []).filter(Boolean).map(String);
+        if (ids.length) {
+            const r = await pool.query(
+                `SELECT id, metadata FROM payments WHERE user_id = $1 AND provider = $2 AND status = 'pending'
+                   AND (provider_payment_id = ANY($3::text[]) OR bank_reference = ANY($3::text[]))
+                 ORDER BY created_at DESC, id DESC LIMIT 1`, [userId, provider, ids]);
+            if (r.rows.length) return r.rows[0];
+        }
+        const r = await pool.query(
+            `SELECT id, metadata FROM payments WHERE user_id = $1 AND provider = $2 AND status = 'pending'
+               AND metadata->>'plan_slug' = $3 AND COALESCE(metadata->>'period', 'monthly') = $4
+             ORDER BY created_at DESC, id DESC LIMIT 1`, [userId, provider, String(planSlug).toLowerCase(), period === 'yearly' ? 'yearly' : 'monthly']);
+        return r.rows[0] || null;
     }
 
     // Stripe webhook (raw body için ayrı parse)
@@ -281,7 +327,8 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
             const parsed = provider.parseWebhookEvent(event);
 
             if (parsed.status === 'completed' && parsed.user_id && parsed.plan_slug) {
-                await activateUserSubscription(parsed.user_id, parsed.plan_slug, 'stripe', parsed.period);
+                const pend = await findPendingPayment(parsed.user_id, 'stripe', [parsed.provider_payment_id, event?.data?.object?.id], parsed.plan_slug, parsed.period);
+                await activateUserSubscription(parsed.user_id, parsed.plan_slug, 'stripe', parsed.period, pend?.id);
             }
             if (parsed.status === 'cancelled' && parsed.user_id) {
                 await pool.query(`UPDATE subscriptions SET status = 'cancelled', cancel_at_period_end = true, updated_at = NOW() WHERE user_id = $1 AND status = 'active'`, [parsed.user_id]);
@@ -306,7 +353,8 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
             const { event } = provider.verifyWebhook(JSON.stringify(req.body), req.headers);
             const parsed = provider.parseWebhookEvent(event);
             if (parsed.status === 'completed' && parsed.user_id && parsed.plan_slug) {
-                await activateUserSubscription(parsed.user_id, parsed.plan_slug, 'iyzico', parsed.period);
+                const pend = await findPendingPayment(parsed.user_id, 'iyzico', [parsed.provider_payment_id], parsed.plan_slug, parsed.period);
+                await activateUserSubscription(parsed.user_id, parsed.plan_slug, 'iyzico', parsed.period, pend?.id);
             }
             await pool.query(
                 `INSERT INTO payments (user_id, provider, provider_payment_id, amount, currency, status, metadata)
@@ -325,10 +373,15 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
         try {
             const { reference, user_id, plan_slug, period } = req.body || {};
             if (!user_id || !plan_slug) return res.status(400).json({ error: 'user_id ve plan_slug zorunlu' });
-            const subId = await activateUserSubscription(Number(user_id), plan_slug, 'bank_transfer', period || 'monthly');
-            await pool.query(`UPDATE payments SET status = 'completed' WHERE subscription_id = $1 AND status = 'pending'`, [subId]);
-            if (reference) {
-                await pool.query(`UPDATE payments SET bank_reference = $1 WHERE subscription_id = $2 AND provider = 'bank_transfer' AND status = 'completed'`, [reference, subId]);
+            const uid = Number(user_id);
+            // Onaylanan ödeme: referans (varsa) ya da aynı plan+dönemdeki bekleyen havale; plan/dönem ödeme kaydından okunur.
+            const pend = await findPendingPayment(uid, 'bank_transfer', [reference], plan_slug, period);
+            const pm = pend ? parseMeta(pend.metadata) : {};
+            const planToApply = pm.plan_slug || plan_slug;
+            const periodToApply = (pend ? pm.period : period) === 'yearly' ? 'yearly' : 'monthly';
+            const subId = await activateUserSubscription(uid, planToApply, 'bank_transfer', periodToApply, pend?.id);
+            if (reference && pend) {
+                await pool.query(`UPDATE payments SET bank_reference = $1 WHERE id = $2`, [reference, pend.id]);
             }
             res.json({ success: true, subscription_id: subId });
         } catch (err) {
@@ -344,8 +397,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
                    u.email, u.full_name, sp.slug AS plan_slug, sp.name AS plan_name
             FROM payments p
             JOIN users u ON p.user_id = u.id
-            LEFT JOIN subscriptions s ON p.subscription_id = s.id
-            LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
+            LEFT JOIN subscription_plans sp ON sp.slug = p.metadata->>'plan_slug'
             WHERE p.provider = 'bank_transfer' AND p.status = 'pending'
             ORDER BY p.created_at DESC LIMIT 200
         `);
@@ -358,7 +410,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
     // Aboneliği iptal et
     app.post('/api/billing/cancel', authMiddleware, async (req, res) => {
         try {
-            const sub = await getUserActiveSubscription(req.user.id);
+            const sub = await getUserSubscriptionAnyStatus(req.user.id);
             if (!sub) return res.status(404).json({ error: 'Aktif abonelik yok' });
             await pool.query(
                 `UPDATE subscriptions SET cancel_at_period_end = true, updated_at = NOW() WHERE id = $1`,
@@ -375,7 +427,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
         try {
             const { plan_slug, provider, period } = req.body || {};
             if (!plan_slug || !provider) return res.status(400).json({ error: 'plan_slug ve provider zorunlu' });
-            // Yeni checkout başlat (mevcut abonelik checkout sırasında pending'e düşer, ödeme onaylanırken active olur)
+            // Yeni checkout başlat (entitled abonelik değişmez, bekleyen değişiklik payments'ta tutulur; entitled değilse pending abonelik oluşur)
             req.body = { plan_slug, provider, period };
             return startCheckout(req, res);
         } catch (err) {

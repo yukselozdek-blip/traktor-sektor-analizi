@@ -31,9 +31,11 @@ describe('kayıt girdi doğrulaması (HTTP)', { skip: SKIP_DB && SKIP_REASON }, 
     before(async () => {
         s = await startServer();
         brandId = (await s.pool.query('SELECT id FROM brands ORDER BY id LIMIT 1')).rows[0].id;
+        invite = await s.createInvite({ brandId });
     });
     after(async () => { if (s) await s.stop(); });
-    const base = () => ({ email: `k_${Math.random().toString(36).slice(2)}@test.local`, password: 'Test-Pass-123!', full_name: 'Ali Veli', brand_id: brandId, company_name: 'Firma', job_title: 'Müdür', plan_slug: 'growth' });
+    let invite;
+    const base = () => ({ invite_code: invite && invite.code, email: `k_${Math.random().toString(36).slice(2)}@test.local`, password: 'Test-Pass-123!', full_name: 'Ali Veli', brand_id: brandId, company_name: 'Firma', job_title: 'Müdür', plan_slug: 'growth' });
 
     it('işaretleme içeren alanlar 400 döner', async () => {
         for (const f of ['company_name', 'city']) { // kayıt hız sınırı: saatte 5

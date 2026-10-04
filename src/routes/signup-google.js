@@ -1,11 +1,13 @@
 'use strict';
 // Password signup and Google OAuth routes, moved verbatim from server.js.
 // Registration order is preserved (called at the original position).
-const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('../config');
 
 const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
+const { INVITE_ERROR, consumeInviteCode } = require('../lib/invites');
+const { newVerifyToken, verifyExpiry, sendVerificationEmail } = require('../lib/verify-email');
+const BRAND_MISMATCH_ERROR = 'Davet kodu seçtiğiniz markaya ait değil';
 
 module.exports = function registerSignupGoogle(app, ctx) {
     const {
@@ -21,13 +23,17 @@ module.exports = function registerSignupGoogle(app, ctx) {
             const {
                 email: rawEmail, password, full_name, brand_id, plan_slug,
                 company_name, company_tax_office, company_tax_number,
-                job_title, dealer_or_distributor, phone, city
+                job_title, dealer_or_distributor, phone, city, invite_code
             } = req.body || {};
 
             const email = String(rawEmail || '').trim().toLowerCase();
-            if (!email || !password || !full_name || !brand_id || !company_name || !job_title) {
-                return res.status(400).json({ error: 'E-posta, şifre, ad-soyad, marka, firma adı ve unvan zorunludur' });
+            const isSuperEmail = SUPERUSER_EMAILS.has(email);
+            const inviteCode = typeof invite_code === 'string' ? invite_code : '';
+            if (!email || !password || !full_name || !company_name || !job_title) {
+                return res.status(400).json({ error: 'E-posta, şifre, ad-soyad, firma adı ve unvan zorunludur' });
             }
+            if (!isSuperEmail && !inviteCode) return res.status(400).json({ error: INVITE_ERROR });
+            if (!brand_id && isSuperEmail) return res.status(400).json({ error: 'Marka seçimi zorunludur' });
             if (!PASSWORD_POLICY.test(String(password))) {
                 return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
             }
@@ -43,71 +49,79 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 return res.status(409).json({ error: 'Bu e-posta zaten kayıtlı' });
             }
 
-            const brandCheck = await pool.query('SELECT id, name FROM brands WHERE id = $1 AND is_active = true', [Number(brand_id)]);
-            if (brandCheck.rows.length === 0) return res.status(400).json({ error: 'Geçersiz marka seçimi' });
-
-            // Superuser e-postaları şifre ile kayıtta otomatik yetki ALMAZ; normal doğrulama akışı izlenir.
-            const isSuperuser = false;
-            const role = 'brand_user';
-            const verifyToken = crypto.randomBytes(24).toString('hex');
-            const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            const verifyToken = newVerifyToken();
+            const verifyExpires = verifyExpiry();
             const hash = await bcrypt.hash(password, 12);
 
-            const userInsert = await pool.query(
-                `INSERT INTO users
+            // Davet kodu tüketimi, kullanıcı/abonelik kayıtlarıyla aynı transaction'da: kayıt başarısız olursa kod harcanmaz.
+            const client = await pool.connect();
+            let newUser, pendingSub = null, effectiveBrandId, effectivePlan = plan_slug, inviteId = null;
+            try {
+                await client.query('BEGIN');
+                effectiveBrandId = brand_id ? Number(brand_id) : null;
+                if (!isSuperEmail) {
+                    const invite = await consumeInviteCode(client, inviteCode);
+                    if (!invite) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
+                    if (effectiveBrandId && effectiveBrandId !== invite.brand_id) {
+                        await client.query('ROLLBACK');
+                        return res.status(400).json({ error: BRAND_MISMATCH_ERROR });
+                    }
+                    effectiveBrandId = invite.brand_id;
+                    inviteId = invite.id;
+                    if (!effectivePlan && invite.plan_slug) effectivePlan = invite.plan_slug;
+                }
+                if (!Number.isInteger(effectiveBrandId)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Geçersiz marka seçimi' }); }
+                const brandCheck = await client.query('SELECT id, name FROM brands WHERE id = $1 AND is_active = true', [effectiveBrandId]);
+                if (brandCheck.rows.length === 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Geçersiz marka seçimi' }); }
+
+                // Superuser e-postaları şifre ile kayıtta otomatik yetki ALMAZ; normal doğrulama akışı izlenir.
+                const userInsert = await client.query(
+                    `INSERT INTO users
                 (email, password_hash, full_name, phone, role, brand_id, company_name, company_tax_office,
                  company_tax_number, job_title, dealer_or_distributor, city, is_active,
                  auth_provider, email_verified, email_verify_token, email_verify_expires, is_superuser)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, 'password', $13, $14, $15, $16)
+             VALUES ($1, $2, $3, $4, 'brand_user', $5, $6, $7, $8, $9, $10, $11, true, 'password', false, $12, $13, false)
              RETURNING id, email, full_name, role, brand_id, company_name, job_title, is_superuser, email_verified`,
-                [
-                    email, hash, full_name, phone || null, role, Number(brand_id),
-                    company_name, company_tax_office || null, company_tax_number || null,
-                    job_title, dealer_or_distributor || 'bayi', city || null,
-                    isSuperuser, // email_verified true if superuser
-                    isSuperuser ? null : verifyToken,
-                    isSuperuser ? null : verifyExpires,
-                    isSuperuser
-                ]
-            );
-            const newUser = userInsert.rows[0];
+                    [
+                        email, hash, full_name, phone || null, effectiveBrandId,
+                        company_name, company_tax_office || null, company_tax_number || null,
+                        job_title, dealer_or_distributor || 'bayi', city || null,
+                        verifyToken, verifyExpires
+                    ]
+                );
+                newUser = userInsert.rows[0];
 
-            // Plan seçimi varsa pending abonelik aç
-            let pendingSub = null;
-            if (plan_slug) {
-                const planRes = await pool.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1 AND is_active = true', [String(plan_slug).toLowerCase()]);
-                if (planRes.rows.length > 0) {
-                    const subInsert = await pool.query(
-                        `INSERT INTO subscriptions (user_id, plan_id, status, current_period_start)
+                // Plan seçimi varsa pending abonelik aç
+                if (effectivePlan) {
+                    const planRes = await client.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1 AND is_active = true', [String(effectivePlan).toLowerCase()]);
+                    if (planRes.rows.length > 0) {
+                        const subInsert = await client.query(
+                            `INSERT INTO subscriptions (user_id, plan_id, status, current_period_start)
                      VALUES ($1, $2, 'pending', NOW()) RETURNING id, plan_id, status`,
-                        [newUser.id, planRes.rows[0].id]
-                    );
-                    pendingSub = { ...subInsert.rows[0], plan_slug: planRes.rows[0].slug, plan_name: planRes.rows[0].name };
+                            [newUser.id, planRes.rows[0].id]
+                        );
+                        pendingSub = { ...subInsert.rows[0], plan_slug: planRes.rows[0].slug, plan_name: planRes.rows[0].name };
+                    }
                 }
+                await client.query('COMMIT');
+            } catch (txErr) {
+                await client.query('ROLLBACK').catch(() => {});
+                if (txErr && txErr.code === '23505') { // aynı anda aynı e-posta ile kayıt
+                    return res.status(409).json({ error: 'Bu e-posta zaten kayıtlı' });
+                }
+                throw txErr;
+            } finally {
+                client.release();
             }
 
-            await logAuthAudit(newUser.id, 'signup_password', req, { brand_id: Number(brand_id), plan: plan_slug || null });
+            await logAuthAudit(newUser.id, 'signup_password', req, { brand_id: effectiveBrandId, plan: effectivePlan || null, invite_id: inviteId });
             // E-posta doğrulama bağlantısı: hata/SMTP yokluğu kayıt akışını asla etkilemez.
-            if (!isSuperuser) {
-                try {
-                    const base = require('../lib/app-url').getBaseUrl(req);
-                    if (base) {
-                        const link = `${base}/api/auth/verify-email?token=${verifyToken}`;
-                        require('../lib/mailer').sendMail({
-                            to: newUser.email,
-                            subject: 'E-posta adresinizi doğrulayın - Traktör Sektör Analizi',
-                            text: `Merhaba ${newUser.full_name || ''},\n\nTraktör Sektör Analizi hesabınızı doğrulamak için aşağıdaki bağlantıya tıklayın (24 saat geçerlidir):\n${link}\n\nBu kaydı siz yapmadıysanız bu e-postayı yok sayabilirsiniz.`,
-                            html: `<p>Merhaba ${escapeMailHtml(newUser.full_name || '')},</p><p>Traktör Sektör Analizi hesabınızı doğrulamak için aşağıdaki bağlantıya tıklayın (24 saat geçerlidir):</p><p><a href="${link}">E-postamı doğrula</a></p><p>Bu kaydı siz yapmadıysanız bu e-postayı yok sayabilirsiniz.</p>`
-                        }).catch(() => {});
-                    }
-                } catch (_) { /* kayıt başarısız olmamalı */ }
-            }
-            const token = issueAuthToken(newUser);
+            sendVerificationEmail(req, newUser, verifyToken, escapeMailHtml);
+            // Oturum/çerez VERİLMEZ: giriş, e-posta doğrulandıktan sonra yapılır.
             res.status(201).json({
-                token,
-                user: buildUserPayload(newUser),
+                message: 'Kayıt alındı. E-posta adresinize doğrulama bağlantısı gönderdik; doğruladıktan sonra giriş yapabilirsiniz.',
+                email_verify_required: true,
                 pending_subscription: pendingSub,
-                email_verify_required: !isSuperuser,
                 verify_token_dev: !require('../lib/env').isProduction() ? verifyToken : undefined
             });
         } catch (err) {
@@ -140,7 +154,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
 
     app.post('/api/auth/google', LOGIN_LIMITER, async (req, res) => {
         try {
-            const { id_token, brand_id, plan_slug, company_name, job_title } = req.body || {};
+            const { id_token, brand_id, plan_slug, company_name, job_title, invite_code } = req.body || {};
             if (!GOOGLE_OAUTH_CLIENT_ID) return res.status(503).json({ error: 'Google ile giriş şu anda yapılandırılmamış' });
             if (!id_token) return res.status(400).json({ error: 'id_token gerekli' });
 
@@ -188,45 +202,72 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 return res.json({ token: issueAuthToken(user), user: buildUserPayload(user), is_new: false });
             }
 
-            // Yeni kullanıcı: marka + firma + unvan zorunlu
+            // Yeni kullanıcı: davet kodu (süper kullanıcı hariç) + firma + unvan zorunlu; marka koddan gelir.
             const textErr = validateProfileText(req.body, ['company_name', 'job_title']);
             if (textErr) return res.status(400).json({ error: textErr });
-            if (!brand_id || !company_name || !job_title) {
+            const isSuperuser = SUPERUSER_EMAILS.has(profile.email);
+            const inviteCode = typeof invite_code === 'string' ? invite_code : '';
+            if (!company_name || !job_title || (isSuperuser ? !brand_id : !inviteCode)) {
                 return res.status(202).json({
                     code: 'GOOGLE_NEEDS_PROFILE',
                     google_email: profile.email,
                     google_name: profile.full_name,
-                    message: 'Google ile kayıt için marka, firma ve unvan bilgisi gerekli'
+                    message: 'Google ile kayıt için davet kodu, firma ve unvan bilgisi gerekli'
                 });
             }
-            const brandCheck = await pool.query('SELECT id FROM brands WHERE id = $1 AND is_active = true', [Number(brand_id)]);
-            if (brandCheck.rows.length === 0) return res.status(400).json({ error: 'Geçersiz marka' });
 
-            const isSuperuser = SUPERUSER_EMAILS.has(profile.email);
-            const ins = await pool.query(
-                `INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name, job_title,
+            const client = await pool.connect();
+            let newUser, pendingSub = null, effectiveBrandId, inviteId = null;
+            try {
+                await client.query('BEGIN');
+                effectiveBrandId = brand_id ? Number(brand_id) : null;
+                let invitePlan = null;
+                if (!isSuperuser) {
+                    const invite = await consumeInviteCode(client, inviteCode);
+                    if (!invite) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
+                    if (effectiveBrandId && effectiveBrandId !== invite.brand_id) {
+                        await client.query('ROLLBACK');
+                        return res.status(400).json({ error: BRAND_MISMATCH_ERROR });
+                    }
+                    effectiveBrandId = invite.brand_id;
+                    inviteId = invite.id;
+                    invitePlan = invite.plan_slug;
+                }
+                if (!Number.isInteger(effectiveBrandId)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Geçersiz marka' }); }
+                const brandCheck = await client.query('SELECT id FROM brands WHERE id = $1 AND is_active = true', [effectiveBrandId]);
+                if (brandCheck.rows.length === 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Geçersiz marka' }); }
+
+                const ins = await client.query(
+                    `INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name, job_title,
                                 auth_provider, google_id, email_verified, is_superuser)
              VALUES ($1, NULL, $2, $3, $4, $5, $6, 'google', $7, true, $8)
              RETURNING *`,
-                [profile.email, profile.full_name, isSuperuser ? 'admin' : 'brand_user',
-                 Number(brand_id), company_name, job_title, profile.google_id, isSuperuser]
-            );
-            const newUser = ins.rows[0];
+                    [profile.email, profile.full_name, isSuperuser ? 'admin' : 'brand_user',
+                     effectiveBrandId, company_name, job_title, profile.google_id, isSuperuser]
+                );
+                newUser = ins.rows[0];
 
-            let pendingSub = null;
-            if (plan_slug) {
-                const planRes = await pool.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1', [String(plan_slug).toLowerCase()]);
-                if (planRes.rows.length > 0) {
-                    const subIns = await pool.query(
-                        `INSERT INTO subscriptions (user_id, plan_id, status, current_period_start)
+                const planSlug = plan_slug || invitePlan;
+                if (planSlug) {
+                    const planRes = await client.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1', [String(planSlug).toLowerCase()]);
+                    if (planRes.rows.length > 0) {
+                        const subIns = await client.query(
+                            `INSERT INTO subscriptions (user_id, plan_id, status, current_period_start)
                      VALUES ($1, $2, 'pending', NOW()) RETURNING id`,
-                        [newUser.id, planRes.rows[0].id]
-                    );
-                    pendingSub = { id: subIns.rows[0].id, plan_slug: planRes.rows[0].slug, plan_name: planRes.rows[0].name };
+                            [newUser.id, planRes.rows[0].id]
+                        );
+                        pendingSub = { id: subIns.rows[0].id, plan_slug: planRes.rows[0].slug, plan_name: planRes.rows[0].name };
+                    }
                 }
+                await client.query('COMMIT');
+            } catch (txErr) {
+                await client.query('ROLLBACK').catch(() => {});
+                throw txErr;
+            } finally {
+                client.release();
             }
 
-            await logAuthAudit(newUser.id, 'signup_google', req, { brand_id: Number(brand_id) });
+            await logAuthAudit(newUser.id, 'signup_google', req, { brand_id: effectiveBrandId, invite_id: inviteId });
             res.status(201).json({
                 token: issueAuthToken(newUser),
                 user: buildUserPayload(newUser),
