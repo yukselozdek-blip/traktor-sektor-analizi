@@ -4718,7 +4718,7 @@ app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
                 [newCount, lockUntil, user.id]
             );
             await logAuthAudit(user.id, 'login_failed', req, { count: newCount });
-            return res.status(401).json({ error: 'Geçersiz kimlik bilgileri', attempts_left: Math.max(0, 5 - newCount) });
+            return res.status(401).json({ error: 'Geçersiz kimlik bilgileri' });
         }
 
         // Başarılı login: sayaçları sıfırla, last_login güncelle
@@ -6225,7 +6225,7 @@ function isMediaWatchWebhookAuthorized(req) {
     const headerKey = String(req.headers['x-media-watch-key'] || req.headers['x-n8n-key'] || '').trim();
     const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     if (!MEDIA_WATCH_WEBHOOK_KEY) return false;
-    return headerKey === MEDIA_WATCH_WEBHOOK_KEY || bearer === MEDIA_WATCH_WEBHOOK_KEY;
+    return safeEqualStr(headerKey, MEDIA_WATCH_WEBHOOK_KEY) || safeEqualStr(bearer, MEDIA_WATCH_WEBHOOK_KEY);
 }
 
 app.get('/api/insights', authMiddleware, requireFeature('ai_insights', 'ai_insights_limited'), requireAiQuota(), async (req, res) => {

@@ -256,8 +256,9 @@ module.exports = function registerPublic(app, ctx) {
         const token = req.query['hub.verify_token'];
         const challenge = req.query['hub.challenge'];
 
-        if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
-            return res.status(200).send(challenge);
+        // Boş yapılandırma boş token ile eşleşmesin; challenge yalnızca düz metin (HTML olarak yansıtılmaz).
+        if (WHATSAPP_VERIFY_TOKEN && mode === 'subscribe' && safeEqualStr(token || '', WHATSAPP_VERIFY_TOKEN)) {
+            return res.status(200).type('text/plain').send(String(challenge ?? '').slice(0, 200));
         }
 
         return res.status(403).send('verify token mismatch');
@@ -270,6 +271,10 @@ module.exports = function registerPublic(app, ctx) {
     }
 
     app.post('/api/public/whatsapp/webhook', async (req, res) => {
+        // Üretimde imza anahtarı yoksa istek kabul edilmez: imzasız webhook, sahte mesajla LLM/SQL zincirini tetiklerdi.
+        if (!WHATSAPP_APP_SECRET && require('../lib/env').isProduction()) {
+            return res.status(503).json({ error: 'WhatsApp webhook yapılandırılmamış (WHATSAPP_APP_SECRET)' });
+        }
         if (WHATSAPP_APP_SECRET) {
             const sigHeader = String(req.headers['x-hub-signature-256'] || '');
             const expected = 'sha256=' + crypto.createHmac('sha256', WHATSAPP_APP_SECRET)

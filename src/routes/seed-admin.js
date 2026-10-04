@@ -8,10 +8,7 @@ module.exports = function registerSeedAdmin(app, ctx) {
     // ============================================
     // SEED MODEL IMAGE GALLERY (admin)
     // ============================================
-    app.post('/api/admin/seed-model-images', authMiddleware, async (req, res) => {
-        if (req.user?.role !== 'admin') {
-            return res.status(403).json({ error: 'Sadece admin bu işlemi yapabilir' });
-        }
+    app.post('/api/admin/seed-model-images', authMiddleware, adminOnly, async (req, res) => {
         try {
             const { seedModelImages } = require('../../scripts/seed-model-images');
             const result = await seedModelImages();

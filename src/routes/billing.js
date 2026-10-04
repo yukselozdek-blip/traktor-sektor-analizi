@@ -9,7 +9,7 @@ const { getRequestToken } = require('../lib/session');
 
 // Sahte (MOCK) ödeme akışı ücretsiz abonelik aktive eder: yalnızca geliştirme ortamında ya da
 // açıkça ALLOW_MOCK_BILLING=1 verildiğinde çalışır. Üretimde gerçek aktivasyon yalnızca imzalı webhook ile yapılır.
-const MOCK_BILLING_ALLOWED = process.env.NODE_ENV !== 'production' || process.env.ALLOW_MOCK_BILLING === '1';
+const MOCK_BILLING_ALLOWED = !require('../lib/env').isProduction() || process.env.ALLOW_MOCK_BILLING === '1';
 const escHtml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 module.exports = function registerBilling(app, ctx) {
@@ -201,7 +201,7 @@ module.exports = function registerBilling(app, ctx) {
             const found = getRequestToken(req);
             let userId = null;
             if (found) {
-                try { userId = jwt.verify(found.token, JWT_SECRET)?.id || null; } catch (e) { /* geçersiz token */ }
+                try { userId = jwt.verify(found.token, JWT_SECRET, { algorithms: ['HS256'] })?.id || null; } catch (e) { /* geçersiz token */ }
             }
             const sessionId = String(req.query.session_id || '');
             if (!userId || !sessionId) return res.redirect('/?page=subscription&billing=error');

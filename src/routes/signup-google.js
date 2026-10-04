@@ -108,7 +108,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 user: buildUserPayload(newUser),
                 pending_subscription: pendingSub,
                 email_verify_required: !isSuperuser,
-                verify_token_dev: process.env.NODE_ENV !== 'production' ? verifyToken : undefined
+                verify_token_dev: !require('../lib/env').isProduction() ? verifyToken : undefined
             });
         } catch (err) {
             console.error('Signup error:', err);
@@ -156,12 +156,29 @@ module.exports = function registerSignupGoogle(app, ctx) {
             )).rows[0];
 
             if (user) {
-                // Mevcut hesabı Google'a bağla (varsa güncelle)
-                if (!user.google_id) {
-                    await pool.query(`UPDATE users SET google_id = $1, auth_provider = 'google', email_verified = true WHERE id = $2`,
-                        [profile.google_id, user.id]);
+                // Pasif hesap Google ile de giremez (şifreli girişle aynı kural).
+                if (user.is_active === false) {
+                    await logAuthAudit(user.id, 'login_google_inactive', req);
+                    return res.status(403).json({ error: 'Hesabınız pasif durumda. Lütfen destek ile iletişime geçin.' });
                 }
-                await pool.query(`UPDATE users SET last_login = NOW(), failed_login_count = 0, locked_until = NULL WHERE id = $1`, [user.id]);
+                // Mevcut hesabı Google'a bağla. E-postası DOĞRULANMAMIŞ şifreli bir hesap devralınıyorsa (önceden
+                // hesap ele geçirme: saldırgan kurbanın e-postasıyla kayıt olmuş olabilir) şifre silinir ve
+                // eski oturumlar geçersiz kılınır.
+                if (!user.google_id) {
+                    const hijackable = user.email_verified !== true && user.password_hash;
+                    await pool.query(
+                        `UPDATE users SET google_id = $1, auth_provider = 'google', email_verified = true,
+                                password_hash = CASE WHEN $3 THEN NULL ELSE password_hash END,
+                                password_changed_at = CASE WHEN $3 THEN NOW() ELSE password_changed_at END
+                         WHERE id = $2`,
+                        [profile.google_id, user.id, !!hijackable]);
+                    if (hijackable) {
+                        require('../middleware/auth').invalidatePasswordChangedCache(user.id);
+                        await logAuthAudit(user.id, 'google_link_cleared_unverified_password', req);
+                    }
+                }
+                // Şifre deneme sayaçları sıfırlanmaz (Google girişi şifre kaba kuvvetini sıfırlamamalı).
+                await pool.query(`UPDATE users SET last_login = NOW() WHERE id = $1`, [user.id]);
                 // Superuser
                 if (SUPERUSER_EMAILS.has(profile.email) && !user.is_superuser) {
                     await pool.query(`UPDATE users SET is_superuser = true, role = 'admin', email_verified = true WHERE id = $1`, [user.id]);

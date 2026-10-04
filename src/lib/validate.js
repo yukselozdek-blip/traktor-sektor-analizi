@@ -15,4 +15,20 @@ function validateProfileText(body, fields = Object.keys(MAX_LEN)) {
     return null;
 }
 
-module.exports = { validateProfileText, SAFE_EMAIL, MAX_LEN };
+// Dahili/özel ağ adresi mi? (SSRF engeli) Ad çözümlemesi yapılmaz; yalnızca açık adres/ad kalıpları.
+function isPrivateHost(hostname = '') {
+    const h = String(hostname).toLowerCase().replace(/^\[|\]$/g, '');
+    if (!h) return true;
+    if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.lan') || h.endsWith('.home')) return true;
+    if (!h.includes('.') && !h.includes(':')) return true; // tek etiketli iç ad (ör. postgres, n8n)
+    const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) {
+        const [a, b] = [Number(m[1]), Number(m[2])];
+        return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+    }
+    if (h.includes(':')) return h === '::1' || h === '::' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80') || h.startsWith('::ffff:');
+    if (/^\d+$/.test(h) || /^0x[0-9a-f]+$/i.test(h)) return true; // ondalık/hex IP biçimleri
+    return false;
+}
+
+module.exports = { validateProfileText, SAFE_EMAIL, MAX_LEN, isPrivateHost };

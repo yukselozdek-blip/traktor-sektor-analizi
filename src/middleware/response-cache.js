@@ -16,7 +16,7 @@ function createResponseCache({ jwtSecret, ttlMs = 60000, maxEntries = 500, pathP
         const found = getRequestToken(req);
         if (!found) return null;
         let p;
-        try { p = jwt.verify(found.token, jwtSecret); } catch { return null; }
+        try { p = jwt.verify(found.token, jwtSecret, { algorithms: ['HS256'] }); } catch { return null; }
         return `${p.id}|${p.role}|${p.brand_id ?? ''}|${req.originalUrl}`;
     }
 

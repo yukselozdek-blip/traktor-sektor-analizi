@@ -417,7 +417,9 @@ module.exports = function registerModels(app, ctx) {
     }
 
     function getModelIntelRuntimeBase(req) {
-        const requestBase = req?.get ? `${req.protocol}://${req.get('host')}` : '';
+        // Üretimde callback adresi yalnızca APP_BASE_URL'den gelir (Host başlığı saldırgan kontrollüdür: webhook anahtarı
+        // sızdırma/SSRF riski). Geliştirmede istek adresine geri düşülür.
+        const requestBase = !require('../lib/env').isProduction() && req?.get ? `${req.protocol}://${req.get('host')}` : '';
         return (APP_BASE_URL || requestBase || '').replace(/\/$/, '');
     }
 
@@ -432,6 +434,8 @@ module.exports = function registerModels(app, ctx) {
         try {
             const parsed = new URL(raw);
             if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+            // n8n/bridge bu adrese istek atabilir: iç ağ, loopback ve bulut metadata adresleri engellenir (SSRF).
+            if (require('../lib/validate').isPrivateHost(parsed.hostname)) return '';
             return parsed.toString();
         } catch {
             return '';
@@ -1716,7 +1720,7 @@ module.exports = function registerModels(app, ctx) {
             if (!MEDIA_WATCH_WEBHOOK_KEY) {
                 return res.status(503).json({ error: 'Webhook anahtarı yapılandırılmadı' });
             }
-            if (webhookKey !== MEDIA_WATCH_WEBHOOK_KEY) {
+            if (!require('../config').safeEqualStr(webhookKey, MEDIA_WATCH_WEBHOOK_KEY)) {
                 return res.status(401).json({ error: 'Yetkisiz webhook' });
             }
 
@@ -2040,7 +2044,7 @@ module.exports = function registerModels(app, ctx) {
     app.post('/api/admin/model-images/log', async (req, res) => {
         try {
             const webhookKey = req.get('x-webhook-key') || req.get('x-media-watch-key') || req.query.key || '';
-            if (!MEDIA_WATCH_WEBHOOK_KEY || webhookKey !== MEDIA_WATCH_WEBHOOK_KEY) {
+            if (!MEDIA_WATCH_WEBHOOK_KEY || !require('../config').safeEqualStr(webhookKey, MEDIA_WATCH_WEBHOOK_KEY)) {
                 return res.status(401).json({ error: 'Yetkisiz' });
             }
             const summary = req.body?.summary || null;

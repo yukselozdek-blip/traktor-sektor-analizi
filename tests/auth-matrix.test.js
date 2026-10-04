@@ -57,12 +57,34 @@ describe('auth matrix (HTTP)', { skip: SKIP_DB && SKIP_REASON }, () => {
     });
 
     it('non-admin token on adminOnly routes -> 403', async () => {
-        const token = jwt.sign({ id: 999999, role: 'brand_user', email: 'x@test.local' }, JWT_SECRET);
+        const { token } = await s.createUserWithToken({ role: 'brand_user' });
         const bad = [];
         for (const r of routes.filter(r => r.chain.includes('adminOnly'))) {
             const res = await s.api(r.method, concrete(r), r.method === 'GET' ? { token } : { token, body: {} });
             if (res.status !== 403) bad.push(`${r.method} ${r.path} -> ${res.status}`);
         }
         assert.deepEqual(bad, []);
+    });
+
+    it('DB\'de olmayan kullanıcı için üretilmiş (imzalı) token -> 401', async () => {
+        const token = jwt.sign({ id: 999999, role: 'admin', email: 'ghost@test.local' }, JWT_SECRET);
+        assert.equal((await s.api('GET', '/api/auth/me', { token })).status, 401);
+    });
+
+    it('pasife alınan kullanıcının mevcut token\'ı reddedilir; rol DB\'den okunur (token\'daki admin iddiası yok sayılır)', async () => {
+        const u = await s.createUserWithToken({ role: 'brand_user' });
+        // Token\'a admin yazılsa bile gerçek rol DB\'den gelir
+        const forged = jwt.sign({ id: u.id, role: 'admin', email: u.email }, JWT_SECRET);
+        const me = await s.api('GET', '/api/auth/me', { token: forged });
+        assert.equal(me.status, 200);
+        assert.notEqual(me.json?.role ?? me.json?.user?.role, 'admin');
+        const adminRoute = await s.api('GET', '/api/auth/diagnostic', { token: forged });
+        assert.equal(adminRoute.status, 403);
+        await s.pool.query('UPDATE users SET is_active = false WHERE id = $1', [u.id]);
+        // Önbellek (60 sn) yüzünden yeni bir kullanıcı ile değil, önbelleği atlayan taze bir id ile deneyelim
+        const u2 = await s.createUserWithToken({ role: 'brand_user' });
+        await s.pool.query('UPDATE users SET is_active = false WHERE id = $1', [u2.id]);
+        const jwtFresh = jwt.sign({ id: u2.id, role: 'brand_user', email: u2.email }, JWT_SECRET);
+        assert.equal((await s.api('GET', '/api/auth/me', { token: jwtFresh })).status, 401);
     });
 });

@@ -482,8 +482,16 @@ module.exports = function registerDashboardAdmin(app, ctx) {
 
     app.post('/api/admin/users', authMiddleware, adminOnly, async (req, res) => {
         try {
-            const { email, password_hash, full_name, role, brand_id, company_name, city } = req.body;
-            const hash = await bcrypt.hash(password_hash, 10);
+            const { password_hash, full_name, role, brand_id, company_name, city } = req.body || {};
+            const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('../config');
+            const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
+            const email = String(req.body?.email || '').trim().toLowerCase();
+            if (!SAFE_EMAIL.test(email)) return res.status(400).json({ error: 'Geçerli bir e-posta girin' });
+            if (!PASSWORD_POLICY.test(String(password_hash || ''))) return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+            if (role !== undefined && !['admin', 'brand_user'].includes(role)) return res.status(400).json({ error: 'Geçersiz rol' });
+            const textErr = validateProfileText(req.body, ['full_name', 'company_name', 'city']);
+            if (textErr) return res.status(400).json({ error: textErr });
+            const hash = await bcrypt.hash(String(password_hash), 12);
             const result = await pool.query(`
                 INSERT INTO users (email, password_hash, full_name, role, brand_id, company_name, city)
                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, full_name, role, brand_id

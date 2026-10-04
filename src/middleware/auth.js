@@ -21,15 +21,27 @@ function invalidatePasswordChangedCache(userId) {
     else pwdChangedCache.delete(Number(userId));
 }
 
-async function getPasswordChangedAt(userId) {
+// Kullanıcının güncel kimlik durumu (en fazla PWD_CHANGED_TTL_MS eski): şifre değişim zamanı, aktiflik, rol, marka.
+// JWT 7 gün geçerlidir; pasife alınan / rolü düşürülen / markası değişen kullanıcı eski token'la erişmesin diye
+// yetki bilgisi her zaman buradan (DB) okunur.
+async function getAuthState(userId) {
     const hit = pwdChangedCache.get(userId);
-    if (hit && hit.exp > Date.now()) return hit.at;
-    const r = await pool.query('SELECT password_changed_at FROM users WHERE id = $1', [userId]);
-    const d = r.rows[0] && r.rows[0].password_changed_at;
-    const at = d ? Math.floor(new Date(d).getTime() / 1000) : 0;
+    if (hit && hit.exp > Date.now()) return hit;
+    const r = await pool.query('SELECT password_changed_at, is_active, role, brand_id, is_superuser FROM users WHERE id = $1', [userId]);
+    const u = r.rows[0];
+    const d = u && u.password_changed_at;
+    const entry = {
+        missing: !u,
+        at: d ? Math.floor(new Date(d).getTime() / 1000) : 0,
+        active: u ? u.is_active !== false : false,
+        role: u ? u.role : null,
+        brand_id: u ? u.brand_id : null,
+        sup: u ? !!u.is_superuser : false,
+        exp: Date.now() + PWD_CHANGED_TTL_MS
+    };
     if (pwdChangedCache.size >= PWD_CHANGED_MAX) pwdChangedCache.clear();
-    pwdChangedCache.set(userId, { at, exp: Date.now() + PWD_CHANGED_TTL_MS });
-    return at;
+    pwdChangedCache.set(userId, entry);
+    return entry;
 }
 
 async function authMiddleware(req, res, next) {
@@ -42,19 +54,21 @@ async function authMiddleware(req, res, next) {
     }
     let payload;
     try {
-        payload = jwt.verify(token, JWT_SECRET);
+        payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
         return res.status(401).json({ error: 'Geçersiz token' });
     }
-    // Şifre değişiminden önce verilmiş token'ı reddet. Yalnızca DB hatasında açık (fail-open) davranır.
-    if (payload && payload.iat && payload.id != null) {
+    // Şifre değişiminden önce verilmiş token'ı, silinmiş/pasif kullanıcıyı reddet; rol/marka DB'den alınır.
+    // Yalnızca DB hatasında açık (fail-open) davranır.
+    if (payload && payload.id != null) {
         try {
-            const changedAt = await getPasswordChangedAt(Number(payload.id));
-            if (changedAt && payload.iat < changedAt) {
+            const st = await getAuthState(Number(payload.id));
+            if (st.missing || !st.active || (st.at && payload.iat && payload.iat < st.at)) {
                 return res.status(401).json({ error: 'Oturum geçersiz. Lütfen tekrar giriş yapın.' });
             }
+            payload = { ...payload, role: st.role, brand_id: st.brand_id, sup: st.sup };
         } catch (err) {
-            console.error('authMiddleware: password_changed_at kontrolü atlandı:', err && err.message);
+            console.error('authMiddleware: kullanıcı durumu kontrolü atlandı:', err && err.message);
         }
     }
     req.user = payload;

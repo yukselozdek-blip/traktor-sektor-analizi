@@ -105,7 +105,7 @@ const StripeProvider = {
     verifyWebhook(rawBody, headers) {
         const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : (typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody));
         if (STRIPE_MOCK) {
-            if (process.env.NODE_ENV === 'production') throw new Error('Webhook mock modda production ortamında reddedildi');
+            if (require('../src/lib/env').isProduction()) throw new Error('Webhook mock modda production ortamında reddedildi');
             return { event: JSON.parse(bodyStr), verified: false };
         }
         const sig = headers['stripe-signature'] || '';
@@ -238,7 +238,7 @@ const IyzicoProvider = {
 
     verifyWebhook(rawBody, headers) {
         if (IYZICO_MOCK) {
-            if (process.env.NODE_ENV === 'production') throw new Error('Webhook mock modda production ortamında reddedildi');
+            if (require('../src/lib/env').isProduction()) throw new Error('Webhook mock modda production ortamında reddedildi');
             const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
             return { event: parsed, verified: false };
         }

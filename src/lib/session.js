@@ -30,7 +30,7 @@ function getRequestToken(req) {
 }
 
 function isSecureRequest(req) {
-    return process.env.NODE_ENV === 'production' || req.secure === true;
+    return require('./env').isProduction() || req.secure === true;
 }
 
 function setSessionCookie(req, res, token) {

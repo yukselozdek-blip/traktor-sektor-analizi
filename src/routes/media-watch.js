@@ -286,7 +286,8 @@ module.exports = function registerMediaWatch(app, ctx) {
     // Coğrafi/dil istatistikleri (DB tabanlı, son 30 gün)
     app.get('/api/media-watch/coverage', authMiddleware, requireFeature('media_watch'), async (req, res) => {
         try {
-            const brandId = req.query.brand_id ? Number(req.query.brand_id) : null;
+            // Marka kullanıcısı yalnızca kendi markasını görür (admin isteğe bağlı brand_id verebilir).
+            const brandId = resolveMediaWatchScopedBrandId(req, req.query.brand_id);
             const params = brandId ? [brandId] : [];
             const where = brandId ? 'WHERE brand_id = $1 AND' : 'WHERE';
             const [byCountry, byLanguage, bySource, totals] = await Promise.all([
@@ -326,7 +327,8 @@ module.exports = function registerMediaWatch(app, ctx) {
             if (!isElite) {
                 return res.status(402).json({ code: 'ENTERPRISE_REQUIRED', error: 'Manuel tarama Enterprise pakette' });
             }
-            const { pack, brand_id } = req.body || {};
+            const { pack } = req.body || {};
+            const brand_id = resolveMediaWatchScopedBrandId(req, (req.body || {}).brand_id);
             const packCode = ['pack-1','pack-2','pack-3','pack-4','pack-5','pack-6'].includes(pack) ? pack : null;
             const url = packCode
                 ? `${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/push-${packCode}`
@@ -351,7 +353,12 @@ module.exports = function registerMediaWatch(app, ctx) {
         try {
             const { item_id } = req.body || {};
             if (!item_id) return res.status(400).json({ error: 'item_id zorunlu' });
-            const r = await pool.query(`SELECT id, language, title, summary, content_text FROM media_watch_items WHERE id = $1`, [item_id]);
+            const scopedBrandId = resolveMediaWatchScopedBrandId(req, null);
+            // Marka kullanıcısı yalnızca kendi markasının kaydını çevirebilir (başkasının kaydı 404 gibi davranır).
+            const r = await pool.query(
+                `SELECT id, language, title, summary, content_text FROM media_watch_items
+                 WHERE id = $1 AND ($2::int IS NULL OR brand_id = $2::int)`,
+                [Number.isInteger(Number(item_id)) ? Number(item_id) : -1, req.user.role === 'admin' ? null : scopedBrandId || -1]);
             if (r.rows.length === 0) return res.status(404).json({ error: 'Kayıt bulunamadı' });
             const item = r.rows[0];
             if ((item.language || 'tr') === 'tr') {
