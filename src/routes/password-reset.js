@@ -59,6 +59,8 @@ module.exports = function registerPasswordReset(app, ctx) {
                             html: `<p>Merhaba ${escapeHtml(user.full_name || '')},</p><p>Traktör Sektör Analizi hesabınız için şifre sıfırlama talebi aldık. Yeni şifre belirlemek için aşağıdaki bağlantıya tıklayın (${TOKEN_TTL_MIN} dakika geçerlidir ve yalnızca bir kez kullanılabilir):</p><p><a href="${link}">Şifremi sıfırla</a></p><p>Bu talebi siz yapmadıysanız bu e-postayı yok sayabilirsiniz; şifreniz değişmeyecektir.</p>`
                         };
                         await logAuthAudit(user.id, 'password_reset_requested', req);
+                    } else {
+                        console.warn('[forgot-password] istek atlandı: saatlik sınır aşıldı veya APP_BASE_URL tanımsız');
                     }
                 } else {
                     // Kullanıcı yoksa/pasifse de benzer sayıda sorgu çalıştır (zamanlama farkını azaltır).
