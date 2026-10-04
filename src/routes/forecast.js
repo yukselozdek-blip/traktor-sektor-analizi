@@ -6,8 +6,8 @@ module.exports = function registerForecast(app, ctx) {
     const { fs, pool, authMiddleware, adminOnly, normalizeSearchText, getCanonicalBrandPortalSlug, requireFeature, requireAiQuota, errMsg } = ctx;
 
     async function ensureBrandPortalSeeded() {
-        const curatedPortalSeed = require('./database/brand-portal-seed');
-        const { brands: seedBrands } = require('./database/seed-data');
+        const curatedPortalSeed = require('../../database/brand-portal-seed');
+        const { brands: seedBrands } = require('../../database/seed-data');
         const brandsRes = await pool.query(`
             SELECT id, name, slug, website, description
             FROM brands
@@ -205,7 +205,7 @@ module.exports = function registerForecast(app, ctx) {
             intelligenceSources = [],
             supportPrograms = [],
             supportApplicationWindows = []
-        } = require('./database/future-intelligence-seed');
+        } = require('../../database/future-intelligence-seed');
 
         const sourceIdMap = new Map();
 
@@ -395,8 +395,8 @@ module.exports = function registerForecast(app, ctx) {
 
     async function ensureReferenceMarketSignalsSeeded(options = {}) {
         const { replaceExisting = false } = options;
-        const { commodityCatalog = [] } = require('./database/future-intelligence-seed');
-        const { commodityYearBase, monthlySeasonality, regionClimateScenarioReference } = require('./database/future-market-reference');
+        const { commodityCatalog = [] } = require('../../database/future-intelligence-seed');
+        const { commodityYearBase, monthlySeasonality, regionClimateScenarioReference } = require('../../database/future-market-reference');
 
         const sourceRes = await pool.query(`
             SELECT source_code, id
@@ -1370,7 +1370,7 @@ module.exports = function registerForecast(app, ctx) {
 
     app.get('/api/meta/future-intelligence-catalog', authMiddleware, async (req, res) => {
         try {
-            const { commodityCatalog = [] } = require('./database/future-intelligence-seed');
+            const { commodityCatalog = [] } = require('../../database/future-intelligence-seed');
 
             const [sourcesRes, programsRes] = await Promise.all([
                 pool.query(`

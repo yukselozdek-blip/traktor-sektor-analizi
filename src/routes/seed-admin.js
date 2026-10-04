@@ -13,7 +13,7 @@ module.exports = function registerSeedAdmin(app, ctx) {
             return res.status(403).json({ error: 'Sadece admin bu işlemi yapabilir' });
         }
         try {
-            const { seedModelImages } = require('./scripts/seed-model-images');
+            const { seedModelImages } = require('../../scripts/seed-model-images');
             const result = await seedModelImages();
             res.json({
                 success: true,
@@ -439,7 +439,7 @@ module.exports = function registerSeedAdmin(app, ctx) {
     app.post('/api/admin/trigger-import', authMiddleware, adminOnly, async (req, res) => {
 
         // Don't await synchronously for 2 minutes and risk HTTP timeout, run asynchronously
-        const { importExcel } = require('./import-tuik.js');
+        const { importExcel } = require('../../import-tuik.js');
 
         importExcel().then(result => {
             console.log('Online import finished:', result);
