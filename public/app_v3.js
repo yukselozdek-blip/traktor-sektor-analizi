@@ -11736,7 +11736,7 @@ async function loadSettingsPage() {
                     </div>
                     <div>
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Şirket</label>
-                        <div style="font-size:15px">${currentUser?.company_name || '-'}</div>
+                        <div style="font-size:15px">${escapeHtml(currentUser?.company_name || '-')}</div>
                     </div>
                 </div>
             </div>

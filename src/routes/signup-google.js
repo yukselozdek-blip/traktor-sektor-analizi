@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('../config');
 
+const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
+
 module.exports = function registerSignupGoogle(app, ctx) {
     const {
         pool, SIGNUP_LIMITER, LOGIN_LIMITER, SUPERUSER_EMAILS, logAuthAudit, issueAuthToken,
@@ -29,9 +31,11 @@ module.exports = function registerSignupGoogle(app, ctx) {
             if (!PASSWORD_POLICY.test(String(password))) {
                 return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
             }
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            if (!SAFE_EMAIL.test(email) || email.length > 254) {
                 return res.status(400).json({ error: 'Geçerli bir e-posta adresi girin' });
             }
+            const textErr = validateProfileText(req.body);
+            if (textErr) return res.status(400).json({ error: textErr });
 
             const exists = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
             if (exists.rows.length > 0) {
@@ -129,7 +133,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
         return {
             email: String(data.email).toLowerCase(),
             google_id: data.sub,
-            full_name: data.name || data.email,
+            full_name: String(data.name || data.email || '').replace(/[<>]/g, '').slice(0, 120),
             picture: data.picture || null
         };
     }
@@ -168,6 +172,8 @@ module.exports = function registerSignupGoogle(app, ctx) {
             }
 
             // Yeni kullanıcı: marka + firma + unvan zorunlu
+            const textErr = validateProfileText(req.body, ['company_name', 'job_title']);
+            if (textErr) return res.status(400).json({ error: textErr });
             if (!brand_id || !company_name || !job_title) {
                 return res.status(202).json({
                     code: 'GOOGLE_NEEDS_PROFILE',
