@@ -32,12 +32,13 @@
             margin: 0 auto;
             padding: 32px 20px;
             display: grid;
-            grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+            grid-template-columns: minmax(0, 1.1fr) minmax(min(360px, 100%), 0.9fr);
             gap: 28px;
         }
         @media (max-width: 980px) {
-            .signup-shell { grid-template-columns: 1fr; }
+            .signup-shell { grid-template-columns: minmax(0, 1fr); padding: 20px 14px; }
         }
+        .signup-shell > * { min-width: 0; }
         .signup-hero {
             padding: 28px;
             border-radius: 22px;
@@ -162,7 +163,9 @@
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.18);
         }
-        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+        .field-row .field, .field input, .field select { min-width: 0; max-width: 100%; }
+        @media (max-width: 520px) { .field-row { grid-template-columns: minmax(0, 1fr); } }
         .signup-btn {
             margin-top: 8px;
             padding: 13px 18px;
@@ -202,7 +205,7 @@
     </style>
 </head>
 <body>
-    <div class="signup-shell">
+    <div class="signup-shell" role="main">
         <section class="signup-hero">
             <span class="signup-pill"><i class="fas fa-bolt"></i> 3 Paket · Anında Aktivasyon</span>
             <h1>Türkiye Traktör Pazarı sizin için saniyeler içinde açılıyor</h1>
@@ -230,7 +233,7 @@
                 </div>
                 <div class="field">
                     <label>Şifre (en az 8 karakter)</label>
-                    <input type="password" name="password" required minlength="8">
+                    <input type="password" name="password" required minlength="8" aria-label="Şifre">
                 </div>
                 <div class="field-row">
                     <div class="field">
@@ -250,7 +253,7 @@
                 </div>
                 <div class="field">
                     <label>Seçili Plan</label>
-                    <input type="text" id="selectedPlanLabel" readonly value="Önce sol panelden bir plan seçin">
+                    <input type="text" id="selectedPlanLabel" readonly value="Önce sol panelden bir plan seçin" aria-label="Seçilen plan">
                 </div>
                 <button type="submit" class="signup-btn" id="btnSignup" disabled>
                     <i class="fas fa-check-circle"></i>
@@ -372,5 +375,6 @@
 
         loadInitialData();
     </script>
+    <script src="/a11y.js?v=1.1"></script>
 </body>
 </html>

@@ -41,7 +41,7 @@
             align-items: start;
         }
         /* Tek sütunda giriş formu önce gelir (hero'yu kaydırmadan giriş yapılabilsin). */
-        @media (max-width: 1080px) { .auth-shell { grid-template-columns: 1fr; } .auth-panel { order: -1; } }
+        @media (max-width: 1080px) { .auth-shell { grid-template-columns: minmax(0, 1fr); } .auth-panel { order: -1; } }
 
         /* SOL: Plan Önizleme Paneli */
         .auth-hero {
@@ -566,7 +566,7 @@
     </style>
 </head>
 <body>
-    <div class="auth-shell">
+    <div class="auth-shell" role="main">
         <!-- SOL: Plan Önizleme Paneli -->
         <section class="auth-hero">
             <span class="auth-pill"><i class="fas fa-sparkles"></i> 3 Paket · Canlı Önizleme</span>
@@ -697,7 +697,7 @@
                     <input type="email" name="email" required autocomplete="email" placeholder="Kurumsal e-posta adresiniz">
                 </div>
                 <div class="field compact password-field">
-                    <input type="password" name="password" required autocomplete="current-password" placeholder="Şifre">
+                    <input type="password" name="password" required autocomplete="current-password" placeholder="Şifre" aria-label="Şifre">
                     <button type="button" class="pw-toggle" aria-label="Şifreyi göster/gizle" onclick="togglePassword(this)"><i class="fas fa-eye"></i></button>
                 </div>
 
@@ -785,7 +785,7 @@
                     </div>
                     <div class="field">
                         <label>Şifre (min 10 karakter, 1 büyük + 1 sayı + 1 özel)</label>
-                        <input type="password" name="password" required minlength="10" autocomplete="new-password" oninput="checkPasswordStrength(this)">
+                        <input type="password" name="password" required minlength="10" autocomplete="new-password" oninput="checkPasswordStrength(this)" aria-label="Şifre (en az 10 karakter, 1 büyük harf, 1 sayı, 1 özel karakter)">
                         <div class="password-strength" id="passwordStrength">Şifre güvenliği değerlendirilecek</div>
                     </div>
                     <div class="field-row">
@@ -1233,5 +1233,6 @@
             })
             .catch(() => { if (typeof updateGoogleButtonState === 'function') updateGoogleButtonState(); });
     </script>
+    <script src="/a11y.js?v=1.1"></script>
 </body>
 </html>

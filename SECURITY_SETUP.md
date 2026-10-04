@@ -81,3 +81,25 @@ Apex/www için Railway'e özel alan adı olarak da eklenmelidir (aksi halde yön
 
 - `axios`, `form-data`, `path-to-regexp`, `body-parser` güncellendi; kullanılmayan `node-cron` kaldırıldı; `qs` için `overrides` ile güvenli sürüm (6.16.0) zorlandı. Üretim bağımlılıklarında `npm audit` yalnızca `xlsx` için uyarı verir.
 - **Kabul edilen risk: `xlsx@0.18.5`** (prototype pollution, ReDoS; npm'de düzeltilmiş sürüm yok, düzeltme yalnızca SheetJS CDN paketinde `0.20.x`). Yalnızca `import-tuik.js` kullanır ve depodaki sabit dosyayı (`EXCEL_PATH`) okur; kullanıcıdan Excel yüklenmez. **Kullanıcı Excel yüklemesi eklenirse önce `xlsx`'i `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` ile yükseltin.**
+
+## Oturum, CSP ve ödeme güvenliği (Ekim 2026)
+
+**Oturum:** Tarayıcı oturumu `tk_session` adlı **httpOnly, SameSite=Lax, Secure (HTTPS)** çerezindedir; JavaScript okuyamaz
+(XSS ile çalınamaz). API istemcileri (n8n vb.) `Authorization: Bearer` kullanmaya devam eder. Çerezle gelen değiştirici
+isteklerde (POST/PUT/PATCH/DELETE) CSRF koruması: `X-Requested-With: XMLHttpRequest` + eşleşen `Origin`. Kullanıcı
+pasife alınırsa/rolü değişirse en geç 60 sn içinde etkili olur (JWT'deki rol değil DB'deki rol esastır).
+
+**Üretim tespiti:** `NODE_ENV=production` **veya** Railway'in kendi ortam değişkenleri (`RAILWAY_ENVIRONMENT*`,
+`RAILWAY_PROJECT_ID`). Üretimde: mock ödeme kapalı, ayrıntılı hata mesajları kapalı, Secure çerez, WhatsApp webhook imzası zorunlu.
+Yine de Railway'de `NODE_ENV=production` tanımlamanız önerilir.
+
+**CSP:** Zorunlu. Betikler yalnızca kendi sunucumuzdan (`/vendor/*`: Chart.js, Leaflet, DOMPurify, Font Awesome, yazı tipleri) ve
+Google ile giriş için `accounts.google.com`. Acil geri alma: `CSP_MODE=report` (yalnızca raporla) ya da `CSP_MODE=off`.
+`'unsafe-inline'` hâlâ açık (satır içi `onclick=` yöneticileri nedeniyle); kalıcı çözüm olay yöneticilerini `addEventListener`'a taşımaktır.
+
+**Ödeme:** Abonelik yalnızca imzalı sağlayıcı webhook'u ile aktive edilir. Sahte (MOCK) ödeme yalnızca geliştirmede veya
+`ALLOW_MOCK_BILLING=1` ile çalışır. Stripe/iyzico anahtarları tanımlı değilse üretimde kart ödemesi `503` döner; banka havalesi (admin onaylı) çalışır.
+
+**WhatsApp:** Üretimde `WHATSAPP_APP_SECRET` ve `WHATSAPP_VERIFY_TOKEN` tanımlı olmalıdır; aksi hâlde webhook istekleri reddedilir.
+
+**Tarayıcı denetimleri:** `e2e/README.md` (XSS taraması, erişilebilirlik, marka kontrastı, mobil taşma).

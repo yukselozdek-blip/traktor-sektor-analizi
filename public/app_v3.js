@@ -608,6 +608,41 @@ async function init() {
 // ============================================
 // BRAND THEMING
 // ============================================
+
+// WCAG: marka rengi üzerindeki yazı için okunur renk (beyaz ya da koyu) seçer ve CSS değişkenlerine yazar.
+function parseCssColor(value) {
+    const v = String(value || '').trim();
+    let m = v.match(/^#([0-9a-f]{3})$/i);
+    if (m) return m[1].split('').map(c => parseInt(c + c, 16));
+    m = v.match(/^#([0-9a-f]{6})$/i);
+    if (m) return [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+    m = v.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function relativeLuminance(rgb) {
+    const [r, g, b] = rgb.map(c => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrastRatio(a, b) {
+    const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+}
+function applyReadableBrandText() {
+    const root = document.documentElement;
+    const primary = parseCssColor(getComputedStyle(root).getPropertyValue('--brand-primary'));
+    if (!primary) return;
+    const white = [255, 255, 255], dark = [11, 18, 32];
+    // Yarı saydam yüzeylerde de okunur kalması için 5.2 eşiği (WCAG AA 4.5 + pay)
+    const useWhite = contrastRatio(white, primary) >= 5.2 || contrastRatio(white, primary) >= contrastRatio(dark, primary);
+    const on = useWhite ? '255, 255, 255' : '11, 18, 32';
+    root.style.setProperty('--on-brand', `rgb(${on})`);
+    root.style.setProperty('--on-brand-soft', `rgba(${on}, 0.88)`);
+    root.style.setProperty('--on-brand-line', `rgba(${on}, 0.30)`);
+    // Marka metin rengi (--brand-text) marka zemininde yetersiz kontrastlıysa okunur olanla değiştir.
+    const current = parseCssColor(getComputedStyle(root).getPropertyValue('--brand-text'));
+    if (!current || contrastRatio(current, primary) < 4.5) root.style.setProperty('--brand-text', `rgb(${on})`);
+}
+
 function applyBrandTheme(brand) {
     const theme = window.BrandExperience?.applyTheme
         ? window.BrandExperience.applyTheme(document.documentElement, brand || {}, 'brand')
@@ -642,6 +677,8 @@ function applyBrandTheme(brand) {
     if (logoEl && theme.logo_url) {
         logoEl.innerHTML = `<img src="${safeHref(theme.logo_url)}" alt="${escapeHtml(theme.name)}">`;
     }
+
+    applyReadableBrandText();
 }
 
 function updateUserUI() {
@@ -2369,7 +2406,7 @@ async function loadHpTopPage() {
                     </div>
                 </div>
                 <div class="ht-grid">${cards}</div>
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -2443,7 +2480,7 @@ async function loadHpTopModelPage() {
                     </div>
                 </div>
                 ${html}
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -3064,7 +3101,7 @@ async function legacyLoadProvTopBrandPage() {
                     </div>
                 </div>
                 <div class="ht-grid">${cards}</div>
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -3586,7 +3623,7 @@ async function loadHpTopIlCatPage() {
                     </div>
                 </div>
                 ${html}
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -3643,7 +3680,7 @@ async function loadHpTopIlPage() {
                     </div>
                 </div>
                 <div class="ht-grid">${cards}</div>
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -11769,7 +11806,7 @@ async function loadSettingsPage() {
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
                         <div>
                             <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">Lokal uygulamadan production deploy tetikleme</div>
-                            <div id="deployStatusBadge" style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#64748b22;color:#64748b;border:1px solid #64748b55;">Hazır</div>
+                            <div id="deployStatusBadge" style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#64748b22;color: #8f9fb7;border:1px solid #64748b55;">Hazır</div>
                         </div>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;">
                             <button class="btn-filter" id="deployRailwayBtn" onclick="triggerRailwayDeploy()" style="background:#22c55e;">
@@ -13834,7 +13871,7 @@ async function loadBenchmarkPage() {
                                     <th>Segment</th>
                                     <th style="color:${c2}">Fiyat</th><th style="color:${c2}">Model</th>
                                 </tr></thead>
-                                <tbody>${priceRows||'<tr><td colspan="5" style="text-align:center;color:#64748b">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
+                                <tbody>${priceRows||'<tr><td colspan="5" style="text-align:center;color: #8f9fb7">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
                             </table>
                         </div>
                     </div>
@@ -13843,7 +13880,7 @@ async function loadBenchmarkPage() {
                         <div style="overflow-y:auto;max-height:350px;">
                             <table class="bm-tbl bm-tbl-venn">
                                 <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${escapeHtml(brand1.name)}</th><th style="color:${c2}">${escapeHtml(brand2.name)}</th></tr></thead>
-                                <tbody>${vennHtml||'<tr><td colspan="3" style="text-align:center;color:#64748b">Veri yok</td></tr>'}</tbody>
+                                <tbody>${vennHtml||'<tr><td colspan="3" style="text-align:center;color: #8f9fb7">Veri yok</td></tr>'}</tbody>
                             </table>
                         </div>
                     </div>

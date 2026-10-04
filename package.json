@@ -11,7 +11,12 @@
     "test": "node --test \"tests/*.test.js\"",
     "lint:undef": "eslint server.js src database billing import-tuik.js",
     "lint:syntax": "node --check server.js && node --check database/migrate.js && node --check import-tuik.js && node --check billing/providers.js && find src -name '*.js' -exec node --check {} \\;",
-    "build": "node scripts/build-assets.js"
+    "build": "node scripts/build-assets.js",
+    "e2e:auth": "node e2e/auth-flow.js",
+    "e2e:xss": "node e2e/xss-crawl.js",
+    "e2e:a11y": "node e2e/a11y.js",
+    "e2e:contrast": "node e2e/brand-contrast.js",
+    "e2e:mobile": "node e2e/mobile-overflow.js"
   },
   "dependencies": {
     "axios": "^1.6.7",
@@ -30,11 +35,13 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "autocannon": "^8.0.0",
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "globals": "^17.13.0",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "playwright-core": "^1.63.0"
   },
   "engines": {
     "node": ">=20.0.0"
