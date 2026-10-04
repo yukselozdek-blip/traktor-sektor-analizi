@@ -68,7 +68,33 @@ app.use(cors({
         return cb(null, CORS_ALLOWED_ORIGINS.has(origin.replace(/\/$/, '')));
     }
 }));
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// İçerik Güvenlik Politikası: betikler yalnızca kendi sunucumuzdan (+ Google ile giriş) yüklenir; nesne/çerçeve/
+// base etiketi kapalı. 'unsafe-inline' mevcut satır içi olay yöneticileri (onclick=...) yüzünden gerekli.
+// CSP_MODE: enforce (varsayılan) | report (yalnızca raporla, engelleme) | off (acil geri alma).
+const CSP_MODE = (process.env.CSP_MODE || 'enforce').toLowerCase();
+const cspDirectives = {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/client'],
+    styleSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/style'],
+    imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+    fontSrc: ["'self'", 'data:'],
+    connectSrc: ["'self'", 'https://accounts.google.com'],
+    frameSrc: ['https://accounts.google.com'],
+    objectSrc: ["'none'"],
+    baseUri: ["'self'"],
+    formAction: ["'self'"],
+    frameAncestors: ["'none'"],
+    ...(IS_PRODUCTION ? { upgradeInsecureRequests: [] } : {})
+};
+app.use(helmet({
+    contentSecurityPolicy: CSP_MODE === 'off' ? false : { useDefaults: false, reportOnly: CSP_MODE === 'report', directives: cspDirectives },
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } // Google ile giriş penceresi için
+}));
+app.use((req, res, next) => {
+    res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    next();
+});
 app.use('/api/billing/webhook/stripe', express.raw({ type: '*/*', limit: '1mb' }));
 app.use(express.json({
     limit: '10mb',
@@ -103,6 +129,11 @@ app.use(express.static(path.join(__dirname, 'public'), {
             res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
             res.set('Pragma', 'no-cache');
             res.set('Expires', '0');
+            return;
+        }
+
+        if (/[\\/]vendor[\\/]/.test(filePath)) {
+            res.set('Cache-Control', 'public, max-age=604800'); // sürümlü üçüncü taraf dosyaları: 7 gün
             return;
         }
 
