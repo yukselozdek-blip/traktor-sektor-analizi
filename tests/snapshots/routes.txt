@@ -3,6 +3,7 @@ MW expressInit /^\/?(?=\/|$)/i
 MW compression /^\/?(?=\/|$)/i
 MW corsMiddleware /^\/?(?=\/|$)/i
 MW helmetMiddleware /^\/?(?=\/|$)/i
+MW <anonymous> /^\/?(?=\/|$)/i
 MW rawParser /^\/api\/billing\/webhook\/stripe\/?(?=\/|$)/i
 MW jsonParser /^\/?(?=\/|$)/i
 MW serveStatic /^\/?(?=\/|$)/i
