@@ -62,3 +62,17 @@ Teslim edilebilirlik: `MAIL_FROM` adresinin alan adı için sağlayıcının ver
 - [ ] Docker Compose'u test et: `docker compose config -q`
 - [ ] Node.js sözdizimini kontrol et: `npm test`
 - [ ] Tüm ortam değişkenleri ayarlanmış mı: `.env` dosyasını gözden geçir
+
+## Cloudflare proxy (turuncu bulut) ve ana alan adı yönlendirmesi
+
+Railway ortam değişkenleri:
+
+| Değişken | Değer | Amaç |
+|---|---|---|
+| `TRUST_PROXY_HOPS` | `1` (varsayılan) → Cloudflare proxy açılınca `2` | `req.ip` ve hız sınırlarının gerçek istemci IP'sini görmesi |
+| `REDIRECT_HOSTS` | `tarimtraktor.com,www.tarimtraktor.com` | Bu alan adlarına gelen istekler `APP_BASE_URL`'e 301 ile yönlenir (`/health` hariç) |
+
+Cloudflare'i "Yalnızca DNS"ten "Proxied"a geçirme sırası: (1) `TRUST_PROXY_HOPS=2` ayarla ve deploy et,
+(2) Cloudflare'de SSL modunu **Full (strict)** yap, (3) kaydı turuncu buluta çevir,
+(4) giriş denemesi sınırının tek bir IP'ye (Cloudflare) düşmediğini logdan doğrula.
+Apex/www için Railway'e özel alan adı olarak da eklenmelidir (aksi halde yönlendirme çalışmaz).

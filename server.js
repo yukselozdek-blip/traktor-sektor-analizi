@@ -25,12 +25,24 @@ process.on('uncaughtException', (err) => {
 });
 
 // Middleware
-app.set('trust proxy', 1);
+// Proxy zinciri: Railway = 1 atlama; Cloudflare turuncu bulut açılınca TRUST_PROXY_HOPS=2
+// (X-Forwarded-For: istemci, Cloudflare). Böylece req.ip / hız sınırları gerçek istemci IP'sini görür.
+const TRUST_PROXY_HOPS = Math.max(0, parseInt(process.env.TRUST_PROXY_HOPS || '1', 10) || 0);
+app.set('trust proxy', TRUST_PROXY_HOPS);
 const CORS_ALLOWED_ORIGINS = new Set(
     [...(process.env.CORS_ORIGINS || '').split(','), APP_BASE_URL]
         .map(o => (o || '').trim().replace(/\/$/, ''))
         .filter(Boolean)
 );
+// Ana alan adı → uygulama alan adı (301). REDIRECT_HOSTS örn: "tarimtraktor.com,www.tarimtraktor.com"
+const REDIRECT_HOSTS = new Set((process.env.REDIRECT_HOSTS || '').split(',').map(h => h.trim().toLowerCase()).filter(Boolean));
+if (REDIRECT_HOSTS.size && APP_BASE_URL) {
+    app.use((req, res, next) => {
+        const host = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+        if (!REDIRECT_HOSTS.has(host) || req.path === '/health') return next();
+        res.redirect(301, APP_BASE_URL + req.originalUrl);
+    });
+}
 const compression = require('compression');
 app.use(compression({
     filter: (req, res) => {
