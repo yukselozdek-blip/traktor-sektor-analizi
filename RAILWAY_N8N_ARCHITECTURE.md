@@ -106,3 +106,13 @@ Kod incelemesiyle bulundu; n8n servisi canlıda çalıştırılarak doğrulanmad
    `whatsapp-sales-assistant` ve `processor-v2`'yi yüklüyor. v3/v4 kopyaları kullanılmıyorsa temizlenmeli.
    `n8n-workflows/whatsapp-sales-assistant.json` ile `railway-services/n8n/` kopyası şu an aynı; ikisini senkron tutun.
 7. **Gömülü n8n yolu** (`RAILWAY_ENABLE_EMBEDDED_N8N`) varsayılan kapalı; kullanılmıyorsa kaldırılabilir.
+
+### Güncelleme (denetim sonrası)
+- Canlı n8n'de 5 akış var; `Processor v4/v3/v2` ve `Assistant` yayında. Her yayında webhook ayrı bir herkese açık adrestir:
+  **kullanılmayan sürümleri yayından kaldırın** (uygulamadaki `N8N_WHATSAPP_PROCESSOR_URL` hangi sürümü gösteriyorsa yalnızca o kalsın).
+- v2/v3'te gelen `x-query-token` kontrolü (`Forward Token Match`) vardı, **v4'te yoktu**: eklendi. Üç sürümde de
+  `WHATSAPP_QUERY_API_KEY` boşsa istek reddedilir (önceden boş anahtar + başlıksız istek geçebilirdi).
+- Repodaki JSON'lar canlıdaki akışı kendiliğinden güncellemez (`start-n8n.sh` yalnızca akış yoksa içe aktarır);
+  değişiklik n8n arayüzünde elle uygulanmalıdır.
+- n8n veritabanı bağlantı şifresi Railway referansına (`${{Postgres.PGPASSWORD}}`) çevrildi; eski elle yazılmış şifre
+  güncel olmadığı için n8n açılamıyordu (Ekim 2026).
