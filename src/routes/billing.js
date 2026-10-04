@@ -108,7 +108,7 @@ module.exports = function registerBilling(app, ctx) {
         }
     });
 
-    app.post('/api/billing/checkout', authMiddleware, async (req, res) => {
+    const startCheckout = async (req, res) => {
         try {
             const { plan_slug, provider, period } = req.body || {};
             if (!plan_slug || !provider) return res.status(400).json({ error: 'plan_slug ve provider zorunlu' });
@@ -177,7 +177,9 @@ module.exports = function registerBilling(app, ctx) {
             console.error('Checkout error:', err);
             res.status(500).json({ error: errMsg(err) || 'Sunucu hatası' });
         }
-    });
+    };
+    // Anonim sarmalayıcı: route envanteri snapshot'ı işleyici adını da içerir.
+    app.post('/api/billing/checkout', authMiddleware, (req, res) => startCheckout(req, res));
 
     // MOCK akış için success endpoint: kullanıcı tarayıcıdan dönerken aboneliği aktive eder.
     // Provider kullanıcıyı redirect ettikten sonra session_id ile pending payment'ı bulup aktive ederiz.
@@ -364,7 +366,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
             if (!plan_slug || !provider) return res.status(400).json({ error: 'plan_slug ve provider zorunlu' });
             // Yeni checkout başlat (mevcut abonelik checkout sırasında pending'e düşer, ödeme onaylanırken active olur)
             req.body = { plan_slug, provider, period };
-            return app._router.handle(req, res, () => {});
+            return startCheckout(req, res);
         } catch (err) {
             res.status(500).json({ error: 'Sunucu hatası' });
         }
