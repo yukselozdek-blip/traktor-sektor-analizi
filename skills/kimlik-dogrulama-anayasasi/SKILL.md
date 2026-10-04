@@ -32,8 +32,10 @@ Marka olmadan kayıt **tamamlanmaz**. Pozisyon (job_title) seçimi olmadan kayı
 
 | Kontrol | Değer |
 |---------|-------|
-| Login rate limit | 5 dk içinde 15 deneme |
-| Signup rate limit | 1 saat içinde 5 deneme |
+| Login rate limit | 5 dk içinde 15 deneme (`LOGIN_LIMITER`, `src/middleware/limiters.js`) |
+| Signup rate limit | 1 saat içinde 5 deneme (`SIGNUP_LIMITER`) |
+| Şifremi unuttum | IP başına 1 saatte 5 istek (`FORGOT_LIMITER`); kullanıcı başına 1 saatte en fazla 3 token |
+| Reset doğrulama/uygulama | 15 dk içinde 30 istek (`RESET_LIMITER`), token tahminini zorlaştırır |
 | Hesap kilidi | 5 başarısız login → 15 dk lock (`users.locked_until`) |
 | Başarılı login | `failed_login_count = 0`, `locked_until = NULL` |
 
@@ -80,7 +82,8 @@ Her kritik kimlik olayı kaydedilir:
 
 ## 8. JWT VE OTURUM
 
-- 30 gün geçerli (`expiresIn: '30d'`)
+- **7 gün** geçerli (`expiresIn: '7d'`); `JWT_SECRET` tanımlı değilse açılışta geçici anahtar üretilir (her yeniden başlatmada oturumlar düşer; production'da `JWT_SECRET` zorunlu)
+- Şifre değişince eski oturumlar **geçersiz** olur: `users.password_changed_at` ile JWT `iat` karşılaştırılır (60 sn önbellek; şifre sıfırlamada önbellek temizlenir)
 - Payload: `{ id, email, role, brand_id, sup }`
 - Frontend `localStorage.auth_token`
 - 401 cevabında otomatik logout
@@ -90,6 +93,15 @@ Her kritik kimlik olayı kaydedilir:
 
 - Aynı markaya 1 yıl içinde 5+ farklı domain'den kayıt → manual review queue (TODO: gelecek sürüm)
 - Şu anda DB seviyesinde unique constraint yok; admin paneli üzerinden manuel onay/red yapılır.
+
+## 9.1 ŞİFRE SIFIRLAMA (CANLI)
+
+- `POST /api/auth/forgot-password` → her zaman aynı genel yanıt (kullanıcı var mı yok mu sızdırılmaz); kullanıcı varsa ve aktifse token üretilir, mail gönderilir. Sınıra takılan istek de aynı yanıtı verir (log'da `[forgot-password] istek atlandı...`).
+- `GET /api/auth/reset-password/validate`, `POST /api/auth/reset-password`: token **sha256 özeti** olarak DB'de (`password_reset_tokens`, migrasyon 004), **tek kullanım**, **30 dk** geçerli, yeni istekte önceki açık tokenlar iptal edilir; yeni şifre politika regex'inden geçer.
+- Bağlantı `APP_BASE_URL` (production'da zorunlu) ile üretilir: `https://app.tarimtraktor.com/reset-password.html?token=...`.
+- Mail: Brevo HTTPS API (`BREVO_API_KEY`, `MAIL_FROM`); Railway SMTP portlarını engellediği için SMTP yedek yoldur. Bkz. `../operasyon-altyapi-anayasasi/SKILL.md` §3.
+- Kod: `src/routes/password-reset.js`, `src/lib/mailer.js`, `src/lib/app-url.js`. Testler: `tests/password-reset.test.js` (`MAIL_OUTBOX_FILE` test kancası yalnızca production dışında çalışır).
+- Google ile kayıtlı kullanıcının `password_hash` değeri boş (NULL) olabilir (migrasyon 005); bu kullanıcılar şifre sıfırlama ile şifre belirleyebilir.
 
 ## 10. ENDPOINT ENVANTERİ
 
@@ -102,6 +114,9 @@ Her kritik kimlik olayı kaydedilir:
 | `/api/auth/me` | GET | auth | Mevcut kullanıcı |
 | `/api/auth/verify-email` | GET | public | Email token doğrulama |
 | `/api/auth/preview-plan` | POST | superuser | Preview paketi seç |
+| `/api/auth/forgot-password` | POST | public + FORGOT_LIMITER | Sıfırlama bağlantısı iste |
+| `/api/auth/reset-password/validate` | GET | public + RESET_LIMITER | Token geçerli mi |
+| `/api/auth/reset-password` | POST | public + RESET_LIMITER | Yeni şifre belirle |
 
 ## 11. UI / UX STANDARTLARI
 
@@ -129,12 +144,12 @@ Her kritik kimlik olayı kaydedilir:
 - [ ] Email format ve şifre policy kontrolü yapıldı mı?
 - [ ] Frontend formu hidden field değil **gerçek input** mu?
 - [ ] Hata mesajları user-friendly Türkçe mi?
-- [ ] `node --check server.js` geçti mi?
+- [ ] `npm run lint:syntax` ve `npm test` geçti mi? (yeni route ise route envanteri snapshot'ı bilinçli güncellendi mi?)
 - [ ] Manuel test: login → wrong password 5x → lock → wait 15 min
 
 ## 13. KAPSAM DIŞI
 
-- Şifre sıfırlama (gelecek sürüm — destek talebiyle manuel)
-- 2FA (gelecek sürüm)
+- ~~Şifre sıfırlama~~ → **canlı** (bkz. §9.1)
+- **2FA (TOTP)**: planlandı, henüz yok. Önerilen tasarım: isteğe bağlı + admin/superuser için zorunlu, kurtarma kodları, login'de ikinci adım. Karar ve ilerleme: `PROJE_DURUMU.md`
 - SSO/SAML kurumsal entegrasyonu (Enterprise+ talebine bağlı)
 - WebAuthn / passkey (uzun vade)

@@ -12,6 +12,7 @@ description: Türkiye Traktör Sektör Analizi uygulamasına (Node.js, PostgreSQ
 - SQL, import, dashboard, raporlama ve veri eslestirme islerinde hangi bilginin `teknik_veri`, `tuik_veri`, `sales_data` veya `sales_view` tablosundan gelecegini bu anayasa ile veri sozlugu birlikte belirler.
 - Projeyi her seferinde yeniden anlatmak yerine bu skill ve veri sozlugu skill'i sabit giris dokumani olarak kabul edilmelidir.
 - Uygulamanin lokal olarak nerede calistigi, hangi dosyanin hangi ortamda etkili oldugu ve Railway deploy akisi icin `references/deployment-runtime.md` dosyasini da oku.
+- Canlı altyapı (Railway, Cloudflare, Brevo, Hetzner, Google OAuth), yayın süreci, alt-ajan kuralları, öğrenilmiş tuzaklar ve `server.js` bölme planı için `../operasyon-altyapi-anayasasi/SKILL.md`; proje durumu, açık işler ve yol haritası için kök dizindeki `PROJE_DURUMU.md` dosyasını oku.
 
 # TRAKTÖR SEKTÖR ANALİZİ - SİSTEM ANAYASASI ("YAPAY ZEKA KURALLARI")
 Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarşisini ve kodlama ilkelerini belirler. Projeye dahil olan tüm yapay zeka asistanlarının (ve geliştiricilerin), projede kod yazmadan veya değişiklik yapmadan önce bu "Anayasa" kurallarını benimsemesi **ZORUNLUDUR.**
@@ -19,8 +20,8 @@ Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarş
 ---
 
 ## 1. MİMARİ VE TEKNOLOJİ YIĞINI (TECH STACK)
-- **Backend:** Node.js (v20+), Express.js - tek dosya (`server.js`)
-- **Veritabanı:** PostgreSQL (v15+), Railway Cloud üzerinde internal bağlantı
+- **Backend:** Node.js (v22, Dockerfile), Express.js. Giriş noktası `server.js`; **kod modüllere bölünmektedir** (`src/config.js`, `src/db.js`, `src/middleware/*`, `src/lib/*`, `src/routes/*`). Bölme sürüyor: ilerleme ve kalıp için `../operasyon-altyapi-anayasasi/SKILL.md` §7. Bölünmemiş bölümler hâlâ `server.js` içindedir
+- **Veritabanı:** PostgreSQL (Railway'de v18; testlerde/CI'da v16), Railway internal bağlantı. Şema değişiklikleri `database/migrations/NNN_*.sql` ile (sıralı, değiştirilmez, yenisi eklenir)
 - **Frontend:** Vanilla JavaScript (ES6+), Vanilla CSS, HTML5
   - `public/app_v3.js` - Ana uygulama (SPA, sayfa yükleyiciler)
   - `public/api_v3.js` - API client (cache destekli)
@@ -29,18 +30,17 @@ Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarş
 - **Grafik:** Chart.js (bar, line, pie, scatter, doughnut)
 - **Harita:** Leaflet.js + GeoJSON (Türkiye il sınırları)
 - **Yapay Zeka:** Groq API (Llama 3.3 70B), n8n otomasyon
-- **Dağıtım:** Railway Cloud, `railway up --detach` ile deploy
+- **Dağıtım:** Railway; `master`'a birleşen her değişiklik **otomatik deploy** edilir (PR → CI → squash). `railway up` kullanılmaz. Ayrıntı: `../operasyon-altyapi-anayasasi/SKILL.md` §5
 
 **YASAK:** React, Vue, Angular, Tailwind CSS, inline style (mevcut CSS sınıfları kullanılmalı).
 
 ## 1.1 CALISMA ORTAMI VE GUNCELLEME GERCEGI
 - Lokal olarak esas uygulama `http://localhost:3002` adresinde calisir.
-- Production uygulama `https://affectionate-blessing-production-f2fe.up.railway.app/` adresindedir.
+- Production uygulama **`https://app.tarimtraktor.com`** adresindedir (eski adres `https://affectionate-blessing-production-f2fe.up.railway.app/` yedek olarak açık).
 - Bu projede `localhost:3000` baska bir uygulamaya ait olabilir; gelistirme ve dogrulama yaparken varsayilan adres olarak daima `localhost:3002` kullan.
 - Frontend dosyalari `public/` altindadir ve lokal Docker uygulamasina bagli volume uzerinden servis edilir; bu nedenle frontend degisiklikleri genelde tarayici yenilemesi ile gorunur.
 - Backend davranislari agirlikla `server.js` icindedir; bu dosyadaki degisikliklerin lokal calisan uygulamaya yansimasi icin runtime yeniden baslatmasi gerekebilir.
-- Lokal Railway deploy butonu hostta calisan `deploy-bridge.js` servisini kullanir; bu servis `http://127.0.0.1:3010` uzerinden calisir ve gerektiginde `npm run deploy-bridge` ile baslatilir.
-- Lokal deploy butonu sadece lokal uygulamada (`localhost:3002`) ve admin oturumunda kullanilmak uzere tasarlanmistir.
+- Eski lokal "Railway'e Güncelle" deploy butonu / `deploy-bridge.js` akışı **artık canlıya çıkış yolu değildir**: canlıya çıkış GitHub PR + CI + `master` birleşmesiyle olur (otomatik deploy). Bu buton/bridge'e güvenme, yeni iş için kullanma.
 
 ---
 
@@ -275,7 +275,7 @@ fmtPct(n)   // 45.67 → "45.7%"
 ## 7. BACKEND API STANDARTLARI
 
 ### 7.1 Endpoint Yapısı
-- Tüm analitik endpoint'ler `server.js` içinde tanımlıdır
+- Analitik endpoint'ler `server.js` ve `src/routes/*` içinde tanımlıdır (bölme sürüyor; yeni route'u, ilgili bölüm hangi dosyadaysa oraya ekle)
 - Güvenlik: `authMiddleware` zorunlu
 - SQL: Parametrik sorgular (`$1, $2, ANY($3)`) - SQL injection koruması
 - Aggregation: Mümkünse `GROUP BY` ve `SUM()` SQL seviyesinde yapılır
@@ -306,39 +306,21 @@ Bu pattern tüm endpoint'lerde tutarlı kullanılır. Sabit yıl yazılmaz, veri
 
 ### 8.0 Gerçek Runtime Adresleri
 - Lokal uygulama: `http://localhost:3002`
-- Lokal deploy bridge: `http://127.0.0.1:3010`
-- Production uygulama: `https://affectionate-blessing-production-f2fe.up.railway.app/`
+- Lokal deploy bridge: `http://127.0.0.1:3010` (eski akış, canlıya çıkış için kullanılmaz; bkz. 8.1)
+- Production uygulama: `https://app.tarimtraktor.com` (eski Railway adresi yedek)
 - Ayrıntılı runtime ve deploy rehberi: `references/deployment-runtime.md`
 
-### 8.1 Railway Deployment Akışı
-```bash
-git add . && git commit -m "mesaj" && git push origin master
-railway up --detach
-```
-GitHub Actions deploy **çalışmıyor** (RAILWAY_TOKEN eksik). Deploy her zaman manuel Railway CLI ile yapılır.
-
-### 8.1.1 Lokal UI Üzerinden Deploy
-- `http://localhost:3002` üzerinden admin olarak giriş yap.
-- `Ayarlar` sayfasındaki `Railway'e Güncelle` butonunu kullan.
-- Bu buton hostta çalışan `deploy-bridge.js` servisine istek gönderir ve `railway up --detach` komutunu repo kökünden çalıştırır.
-- Buton deploy durumunu ve son Railway çıktısını aynı kartta gösterir.
-- Buton çalışmıyorsa önce deploy bridge'in ayakta olduğunu doğrula: `npm run deploy-bridge`
-
-### 8.1.2 Manuel CLI Deploy
-- Repo kök dizininde çalış: `c:\03-PROJELERİM\03-TraktorSektorAnalizi`
-- Host makinede Railway CLI ile `railway up --detach` çalıştır.
-- Deploy komutu Docker container içinden değil, host ortamdan çalıştırılmalıdır.
-
-### 8.1.3 Deploy Öncesi ve Sonrası Kontrol Listesi
-1. Değişikliğin lokal olarak `http://localhost:3002` üzerinde doğru göründüğünü doğrula.
-2. Frontend cache sorunlarında `public/index.html` içindeki script versiyonlarını güncellemeyi düşün.
-3. `server.js` veya backend davranışı değişti ise lokal runtime'in güncel kodla çalıştığından emin ol.
-4. Deploy sonrasında production URL üzerinde ilgili ekranı veya endpoint'i tekrar kontrol et.
-5. Production değişikliğini doğrulamadan "deploy tamam" varsayımı yapma.
+### 8.1 Dağıtım Akışı (GÜNCEL, DEĞİŞMEZ)
+1. Atanmış geliştirme dalında çalış; `npm run lint:syntax` ve `npm test` yerelde geçmeli.
+2. Dalı push et, **PR aç**, **CI (`test`) yeşil** olunca **squash merge** yap.
+3. `master`'a birleşince **Railway otomatik deploy eder.** Elle `railway up` YAPILMAZ; "GitHub Actions deploy çalışmıyor" bilgisi **eskidir** (deploy GitHub Actions ile değil, Railway'in GitHub entegrasyonuyla yapılır).
+4. Deploy sonrası canlıda (`https://app.tarimtraktor.com`) ilgili ekran/endpoint doğrulanır. Doğrulamadan "deploy tamam" varsayımı yapılmaz.
+5. Railway Variables değişikliği "staged" olur; **Deploy** denmeden devreye girmez.
+Tam süreç, tuzaklar, alt-ajan kuralları: `../operasyon-altyapi-anayasasi/SKILL.md`.
 
 ### 8.2 initDB Akışı
 Server başlangıcında `initDB()` şu sırayla çalışır:
-1. Schema yükle (`database/schema.sql`)
+1. **Migrasyonları çalıştır** (`database/migrate.js` → `runMigrations`; `schema_migrations`, advisory lock, dosya başına işlem). Eski "schema.sql + satır içi ALTER" yaklaşımı 001-002 migrasyonlarına taşındı.
 2. `model_year` sütunu ekle (IF NOT EXISTS)
 3. `sales_view` oluştur (CREATE OR REPLACE)
 4. Marka/il/plan seed et (yoksa)
@@ -513,11 +495,17 @@ Groq AI'ya gönderilen prompt, veritabanının tam şemasını (tablolar, sütun
 9. Inline CSS veya Tailwind kullanmak
 10. React/Vue/Angular framework eklemek
 11. Veritabanına elle INSERT atmak (import-tuik.js kullanılmalı)
-12. `railway up` yerine `git push` ile deploy beklemek
+12. `master`'a doğrudan push etmek, CI yeşil olmadan birleştirmek ya da `railway up` ile elle deploy etmek (süreç: PR → CI → squash → otomatik deploy)
 13. WhatsApp Text-to-SQL'de `SELECT` dışında SQL komutu izin vermek
 14. `DB_SCHEMA_PROMPT`'u veritabanı şeması değişince güncellememek
 15. Fiyat sorgularında `price_list_tl` kullanmak (`price_usd` tek kaynak)
 16. TL fiyatını dolara çevirmek veya COALESCE ile TL fallback yapmak
+17. Sırları (anahtar, parola, DB URL, token) koda, commit'e, PR'a, loga ya da sohbete yazmak
+18. Mevcut migrasyon dosyasını değiştirmek (yeni dosya ekle)
+19. Route envanteri snapshot'ını (`tests/snapshots/routes.txt`) route gerçekten eklenip kaldırılmadan yenilemek
+20. Refactor PR'ında davranış değiştirmek (refactor ve düzeltme ayrı PR)
+21. Stripe webhook ham gövde ayarını (`express.raw`, `express.json`'dan ÖNCE) taşımak/bozmak
+22. Railway'de SMTP (25/465/587) ile mail göndermeyi denemek (engelli; Brevo HTTPS API kullan)
 
 ---
 
