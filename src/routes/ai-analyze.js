@@ -2,15 +2,50 @@
 // AI analiz route'u (/api/ai/analyze), server.js'ten olduğu gibi taşındı.
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
+const MAX_CONTEXT_CHARS = 20000;
+const MAX_QUESTION_CHARS = 2000;
+const LLM_TIMEOUT_MS = 30000;
+
 module.exports = function registerAiAnalyze(app, ctx) {
     const { authMiddleware, requireFeature, requireAiQuota, MINIMAX_API_KEY, MINIMAX_MODEL, errMsg } = ctx;
 
     app.post('/api/ai/analyze', authMiddleware, requireFeature('ai_insights', 'ai_insights_limited', 'model_region_analysis'), requireAiQuota(), async (req, res) => {
+        let llmCalled = false;
         try {
             if (!MINIMAX_API_KEY) return res.status(500).json({ error: 'MINIMAX_API_KEY tanımlı değil' });
 
-            const { type, context } = req.body;
+            const { type, context } = req.body || {};
             if (!type) return res.status(400).json({ error: 'Analiz tipi gerekli' });
+            if (typeof type !== 'string' || type.length > 64) return res.status(400).json({ error: 'Geçersiz analiz tipi' });
+            if (context !== undefined && context !== null && (typeof context !== 'object' || Array.isArray(context))) {
+                return res.status(400).json({ error: 'context nesne olmalı' });
+            }
+            let ctxSize = 0;
+            try { ctxSize = JSON.stringify(context ?? {}).length; } catch (_) { ctxSize = Infinity; }
+            if (ctxSize > MAX_CONTEXT_CHARS) return res.status(400).json({ error: `context çok büyük (en fazla ${MAX_CONTEXT_CHARS} karakter)` });
+            // Serbest metin alanları (soru/not vb.) varsa sınırla
+            for (const k of ['question', 'prompt', 'note', 'query']) {
+                const v = req.body[k] ?? (context && context[k]);
+                if (v !== undefined && v !== null && (typeof v !== 'string' || v.length > MAX_QUESTION_CHARS)) {
+                    return res.status(400).json({ error: `${k} metin olmalı ve en fazla ${MAX_QUESTION_CHARS} karakter olabilir` });
+                }
+            }
+            // Dizi bekleyen alanlar dizi değilse .slice/.map 500 üretmesin
+            const ARRAY_KEYS = ['regionLadder', 'whitespaceProvinces', 'provinceArena', 'siblingStack', 'rivalStack', 'provinces', 'models',
+                'topBrands', 'topModels', 'soilMachineRows', 'cropOperationRows', 'climateActions', 'pressureMonths'];
+            for (const k of ARRAY_KEYS) {
+                if (context && context[k] !== undefined && context[k] !== null && !Array.isArray(context[k])) {
+                    return res.status(400).json({ error: `context.${k} dizi olmalı` });
+                }
+            }
+            if (type === 'brand-compare') {
+                const c = context || {};
+                if (!c.data1 || !c.data2 || typeof c.data1 !== 'object' || typeof c.data2 !== 'object') {
+                    return res.status(400).json({ error: 'context.data1 ve context.data2 nesne olmalı' });
+                }
+            } else if (['brand-region', 'regional-index', 'tarmakbir-command'].includes(type) && !context) {
+                return res.status(400).json({ error: 'context gerekli' });
+            }
 
             // Build prompt based on analysis type
             let systemPrompt = `Sen Türkiye traktör sektörü konusunda uzman bir analistsin. Verilen verileri analiz edip Türkçe olarak profesyonel, derinlikli, stratejik öneriler içeren raporlar hazırlıyorsun. Yanıtlarında markdown formatı kullan. Kısa ve öz ol ama derinlikli analiz yap. Sayısal verilerle destekle.`;
@@ -285,6 +320,7 @@ module.exports = function registerAiAnalyze(app, ctx) {
                 return res.status(400).json({ error: 'Bilinmeyen analiz tipi' });
             }
 
+            llmCalled = true;
             // Call Groq API
             const groqRes = await fetch('https://api.minimax.io/v1/chat/completions', {
                 method: 'POST',
@@ -300,7 +336,8 @@ module.exports = function registerAiAnalyze(app, ctx) {
                     ],
                     temperature: 0.7,
                     max_tokens: 2048
-                })
+                }),
+                signal: AbortSignal.timeout(LLM_TIMEOUT_MS)
             });
 
             if (!groqRes.ok) {
@@ -320,6 +357,13 @@ module.exports = function registerAiAnalyze(app, ctx) {
 
         } catch (err) {
             console.error('AI analyze error:', err);
+            if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+                return res.status(504).json({ error: 'AI servisi zaman aşımına uğradı' });
+            }
+            // Prompt oluşturma sırasında beklenmeyen şekilli context (ör. null öğeler) -> 400, 500 değil
+            if (err instanceof TypeError && !llmCalled) {
+                return res.status(400).json({ error: 'Geçersiz context biçimi' });
+            }
             res.status(500).json({ error: 'AI analiz hatası: ' + errMsg(err) });
         }
     });

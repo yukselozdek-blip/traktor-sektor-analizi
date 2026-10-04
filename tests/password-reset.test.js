@@ -134,7 +134,7 @@ describe('password reset', { skip: SKIP_DB && SKIP_REASON }, () => {
     it('reset clears lockout and works for password-less (Google) accounts', async () => {
         const u = await srv.createUser();
         await srv.pool.query(`UPDATE users SET failed_login_count=5, locked_until=NOW()+INTERVAL '15 minutes' WHERE id=$1`, [u.id]);
-        assert.equal((await login(u.email, TEST_PASSWORD)).status, 423);
+        assert.equal((await login(u.email, TEST_PASSWORD)).status, 401); // kilitli hesap artık genel 401
         const token = await freshToken(u.email);
         assert.equal((await reset(token, NEW_PASSWORD)).status, 200);
         const row = (await srv.pool.query('SELECT failed_login_count, locked_until, password_changed_at FROM users WHERE id=$1', [u.id])).rows[0];

@@ -47,6 +47,8 @@ module.exports = function registerSales(app, ctx) {
             // 1. Son veri noktasını bul (en son yıl ve ay)
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ data: [], max_year: null, max_month: null, compare_months: null, pct_diff_market: null, pct_diff_brand: null });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
@@ -125,6 +127,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ min_year: null, max_year: null, prev_year: null, max_month: null, years: [], brands: [], totals: { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 } });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;
@@ -243,6 +247,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ year: null, max_month: null, segments: [] });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
@@ -288,6 +294,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ year: null, max_month: null, segments: [] });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
@@ -330,6 +338,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ year: null, max_month: null, categories: {} });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
@@ -893,6 +903,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ years: [], max_year: null, max_month: null, prev_year: null, segments: [], total_market: { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 } });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;
@@ -972,6 +984,8 @@ module.exports = function registerSales(app, ctx) {
             const brandId = req.query.brand_id || '';
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ brand_id: brandId, brand_name: null, years: [], max_year: null, max_month: null, prev_year: null, segments: [] });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;
@@ -1063,6 +1077,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ min_year: null, max_year: null, prev_year: null, max_month: null, years: [], categories: {} });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;
@@ -1139,6 +1155,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ year: null, max_month: null, categories: { bahce: [], tarla: [] } });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
 
@@ -1187,6 +1205,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ min_year: null, max_year: null, prev_year: null, max_month: null, years: [], segments: [], totals: { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 } });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;
@@ -1250,6 +1270,8 @@ module.exports = function registerSales(app, ctx) {
             const hpOrder = ['1-39', '40-49', '50-54', '55-59', '60-69', '70-79', '80-89', '90-99', '100-109', '110-119', '120+'];
             const latestRes = await pool.query('SELECT MAX(tescil_yil) as max_year FROM tuik_veri');
             const maxYear = parseInt(latestRes.rows[0].max_year, 10);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ min_year: null, max_year: null, prev_year: null, max_month: null, years: [], hp_order: hpOrder, totals: { curr_partial: 0, prev_partial: 0, yoy_pct: null }, concentration: { active_segments: 0, dominant_segment: '', dominant_share_pct: 0, fastest_segment: '', fastest_segment_yoy_pct: null, bahce_share_pct: 0, tarla_share_pct: 0 }, brand_options: [], selected_brand_id: null, segments: [], categories: { bahce: { total: 0, share_pct: 0, segments: [] }, tarla: { total: 0, share_pct: 0, segments: [] } }, brand_spotlight: { brand_id: null, brand_name: '', current_total: 0, previous_total: 0, yoy_pct: null, market_share_pct: 0, dominant_segment: '', dominant_segment_weight_pct: 0, segments: [] }, matrix: { brands: [], segments: [] } });
             const latestMonthRes = await pool.query('SELECT MAX(tescil_ay) as max_month FROM tuik_veri WHERE tescil_yil = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month, 10);
             const prevYear = maxYear - 1;
@@ -1604,6 +1626,8 @@ module.exports = function registerSales(app, ctx) {
             // Son veri noktası
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ min_year: null, max_year: null, prev_year: null, max_month: null, years: [], brands: [], totals: { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 } });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;
@@ -1709,6 +1733,8 @@ module.exports = function registerSales(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year, 10);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ min_year: null, max_year: null, prev_year: null, max_month: null, years: [], totals: { yearly: {}, months: {}, prev_partial: 0, curr_partial: 0 }, concentration: { active_distributors: 0, active_brands: 0, single_brand_channels: 0, top3_distributor_share_pct: 0, top5_brand_share_pct: 0, top_distributor_name: '', top_distributor_share_pct: 0, top_brand_name: '', top_brand_share_pct: 0, fastest_distributor_name: '', fastest_distributor_yoy_pct: null, fastest_brand_name: '', fastest_brand_yoy_pct: null }, distributors: [], brands: [] });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month, 10);
             const prevYear = maxYear - 1;
@@ -1964,6 +1990,8 @@ module.exports = function registerSales(app, ctx) {
             // Son veri noktasını bul
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ prev_year: null, curr_year: null, max_month: null, brand_name: null, months: [], total_prev: 0, total_curr: 0, total_delta: null, brand_prev: 0, brand_curr: 0, brand_delta: null });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const prevYear = maxYear - 1;

@@ -225,6 +225,8 @@ module.exports = function registerPublic(app, ctx) {
         }
     });
 
+    const MAX_QUESTION_LEN = 1000;
+
     app.post('/api/public/assistant/sales-query', async (req, res) => {
         try {
             if (!WHATSAPP_QUERY_API_KEY) {
@@ -234,9 +236,16 @@ module.exports = function registerPublic(app, ctx) {
                 return res.status(401).json({ error: 'Gecersiz sorgu token' });
             }
 
-            const question = (req.body.question || '').toString().trim();
+            const rawQuestion = req.body && req.body.question;
+            if (typeof rawQuestion !== 'string') {
+                return res.status(400).json({ error: 'question alani gerekli (metin)' });
+            }
+            const question = rawQuestion.trim();
             if (!question) {
                 return res.status(400).json({ error: 'question alani gerekli' });
+            }
+            if (question.length > MAX_QUESTION_LEN) {
+                return res.status(400).json({ error: `question en fazla ${MAX_QUESTION_LEN} karakter olabilir` });
             }
 
             const result = await resolveAssistantQuestion(question, null);
@@ -295,11 +304,17 @@ module.exports = function registerPublic(app, ctx) {
             // Eğer mesaj değilse sessizce çık
             if (!message || message.type !== 'text') return;
 
-            const question = message.text?.body?.trim();
+            const rawBody = message.text?.body;
+            if (typeof rawBody !== 'string') return;
+            const question = rawBody.trim();
             const from = message.from;
             const profileName = value.contacts?.[0]?.profile?.name || 'Bilinmiyor';
 
-            if (!question || !from) return;
+            if (!question || !from || typeof from !== 'string') return;
+            if (question.length > MAX_QUESTION_LEN) {
+                console.warn(`WhatsApp mesajı çok uzun (${question.length}); yok sayıldı`);
+                return;
+            }
 
             console.log(`\n🟢 YENİ MESAJ -> Kimden: ${profileName} (${from}) | Soru: "${question}"\n`);
 

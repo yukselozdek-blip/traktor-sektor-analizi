@@ -5,7 +5,7 @@ MW corsMiddleware /^\/?(?=\/|$)/i
 MW helmetMiddleware /^\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
 MW rawParser /^\/api\/billing\/webhook\/stripe\/?(?=\/|$)/i
-MW jsonParser /^\/?(?=\/|$)/i
+MW <anonymous> /^\/?(?=\/|$)/i
 MW serveStatic /^\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
 GET ["/giris/:brandSlug","/login/:brandSlug","/portal/:brandSlug"] [<anonymous>]

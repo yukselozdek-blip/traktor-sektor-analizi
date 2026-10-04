@@ -70,13 +70,13 @@ describe('security (HTTP, child-process server)', { skip: SKIP_DB && SKIP_REASON
         assert.ok(ok.json.token);
     });
 
-    it('login: account locks after repeated failures (423)', async () => {
+    it('login: account locks after repeated failures (generic 401 + Retry-After)', async () => {
         const u = await s.createUser();
         const statuses = [];
         for (let i = 0; i < 6; i++) {
             statuses.push((await s.api('POST', '/api/auth/login', { body: { email: u.email, password: 'bad' } })).status);
         }
-        assert.deepEqual(statuses, [401, 401, 401, 401, 401, 423]);
+        assert.deepEqual(statuses, [401, 401, 401, 401, 401, 401]); // kilit de genel 401 (kullanıcı numaralandırma önlemi)
     });
 
     it('CORS: foreign origin gets no access-control-allow-origin', async () => {

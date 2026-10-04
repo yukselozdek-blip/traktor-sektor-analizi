@@ -96,12 +96,22 @@ app.use((req, res, next) => {
     next();
 });
 app.use('/api/billing/webhook/stripe', express.raw({ type: '*/*', limit: '1mb' }));
-app.use(express.json({
-    limit: '10mb',
-    verify: (req, res, buf) => {
-        if (req.originalUrl && req.originalUrl.startsWith('/api/public/whatsapp/webhook')) req.rawBody = buf;
-    }
-}));
+// JSON gövde sınırı: varsayılan 1mb (DoS azaltma). Yalnızca toplu veri alan
+// webhook/ingest yolları 10mb'lık ayrı ayrıştırıcı kullanır.
+const jsonVerify = (req, res, buf) => {
+    if (req.originalUrl && req.originalUrl.startsWith('/api/public/whatsapp/webhook')) req.rawBody = buf;
+};
+const jsonDefaultParser = express.json({ limit: '1mb', verify: jsonVerify });
+const jsonLargeParser = express.json({ limit: '10mb', verify: jsonVerify });
+const LARGE_JSON_PATHS = new Set([
+    '/api/media-watch/ingest',
+    '/api/model-intelligence/gallery-callback',
+    '/api/insights'
+]);
+app.use((req, res, next) => {
+    const p = (req.originalUrl || req.url || '').split('?')[0];
+    return (req.method === 'POST' && LARGE_JSON_PATHS.has(p) ? jsonLargeParser : jsonDefaultParser)(req, res, next);
+});
 // Production: serve minified builds (public/dist, produced by `npm run build`)
 // under the original URLs so HTML and ?v= cache-busting keep working.
 const MINIFIED_ASSETS = new Map();
@@ -1609,7 +1619,7 @@ async function buildBrandExecutiveReport(brand, options = {}) {
     };
     const resolvedPeriod = latestPeriod.maxYear && latestPeriod.maxMonth
         ? latestPeriod
-        : await getLatestSalesPeriod();
+        : ((await getLatestSalesPeriod()) || {});
 
     if (!resolvedPeriod.maxYear || !resolvedPeriod.maxMonth) {
         return {
@@ -4684,6 +4694,9 @@ function issueAuthToken(user) {
     );
 }
 
+// Tek, genel giriş hatası (hesabın var olup olmadığını/kilitli olduğunu sızdırmaz); kilit ipucunu herkese verir.
+const LOGIN_FAIL_MESSAGE = 'Geçersiz kimlik bilgileri. Çok sayıda hatalı deneme yapıldıysa hesap 15 dakika kilitlenir; lütfen bekleyip tekrar deneyin.';
+const DUMMY_PASSWORD_HASH = '$2b$12$rewj1.khUJffRHRiChaDreyHDM.Ali9OVE6Igi8b7wiehDM91fDwe'; // sabit sahte bcrypt hash (cost 12), zamanlama eşitleme için
 app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
     try {
         const email = String(req.body?.email || '').trim().toLowerCase();
@@ -4697,19 +4710,23 @@ app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
         `, [email]);
 
         if (result.rows.length === 0) {
+            // Zamanlama farkını kapatmak için sahte hash ile karşılaştır
+            await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
             await logAuthAudit(null, 'login_failed_unknown', req, { email });
-            return res.status(401).json({ error: 'Geçersiz kimlik bilgileri' });
+            return res.status(401).json({ error: LOGIN_FAIL_MESSAGE });
         }
 
         const user = result.rows[0];
-        // Hesap kilidi kontrolü
+        // Hesap kilidi kontrolü: kullanıcı numaralandırmayı önlemek için genel 401 (süre gövdede verilmez)
         if (user.locked_until && new Date(user.locked_until) > new Date()) {
+            await bcrypt.compare(password, user.password_hash || DUMMY_PASSWORD_HASH);
             await logAuthAudit(user.id, 'login_blocked_locked', req);
-            const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
-            return res.status(423).json({ error: `Hesabınız ${mins} dakika kilitli. Çok fazla başarısız deneme.` });
+            const secs = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+            res.set('Retry-After', String(Math.max(1, secs)));
+            return res.status(401).json({ error: LOGIN_FAIL_MESSAGE });
         }
 
-        const validPassword = user.password_hash ? await bcrypt.compare(password, user.password_hash) : false;
+        const validPassword = await bcrypt.compare(password, user.password_hash || DUMMY_PASSWORD_HASH) && !!user.password_hash;
         if (!validPassword) {
             const newCount = (user.failed_login_count || 0) + 1;
             const lockUntil = newCount >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null;
@@ -4718,7 +4735,7 @@ app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
                 [newCount, lockUntil, user.id]
             );
             await logAuthAudit(user.id, 'login_failed', req, { count: newCount });
-            return res.status(401).json({ error: 'Geçersiz kimlik bilgileri' });
+            return res.status(401).json({ error: LOGIN_FAIL_MESSAGE });
         }
 
         // Başarılı login: sayaçları sıfırla, last_login güncelle
@@ -5093,7 +5110,7 @@ app.get('/api/brand-portal', authMiddleware, async (req, res) => {
             return res.status(404).json({ error: 'Marka bulunamadı' });
         }
 
-        const { maxYear, maxMonth, prevYear } = await getLatestSalesPeriod();
+        const { maxYear, maxMonth, prevYear } = (await getLatestSalesPeriod()) || {};
         if (!maxYear || !maxMonth) {
             return res.json(normalizeTurkishDisplayObject({
                 ...bundle,

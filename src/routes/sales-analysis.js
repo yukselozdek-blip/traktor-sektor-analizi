@@ -14,6 +14,8 @@ module.exports = function registerSalesAnalysis(app, ctx) {
             const latestRes = await pool.query('SELECT MAX(tescil_yil) as max_year FROM tuik_veri');
             const maxYear = parseInt(latestRes.rows[0].max_year, 10);
             const targetYear = year ? parseInt(year, 10) : maxYear;
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(targetYear)) return res.json({ year: null, maxMonth: null, provinces: [], trendYears: [] });
             const latestMonthRes = await pool.query('SELECT COALESCE(MAX(tescil_ay), 12) as max_month FROM tuik_veri WHERE tescil_yil = $1', [targetYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month || 12, 10);
             const trendYears = [targetYear - 2, targetYear - 1, targetYear].filter(item => item > 0);
@@ -208,6 +210,8 @@ module.exports = function registerSalesAnalysis(app, ctx) {
         try {
             const latestRes = await pool.query('SELECT MAX(year) as max_year FROM sales_view');
             const maxYear = parseInt(latestRes.rows[0].max_year);
+            // Veri yoksa (taze kurulum) NaN SQL parametresine gitmesin: boş yanıt dön
+            if (!Number.isFinite(maxYear)) return res.json({ years: [], max_year: null, max_month: null, brands: [] });
             const latestMonthRes = await pool.query('SELECT MAX(month) as max_month FROM sales_view WHERE year = $1', [maxYear]);
             const maxMonth = parseInt(latestMonthRes.rows[0].max_month);
             const minYearRes = await pool.query('SELECT MIN(year) as min_year FROM sales_view');
