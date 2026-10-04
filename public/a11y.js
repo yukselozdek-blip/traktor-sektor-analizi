@@ -104,7 +104,7 @@
         var last = 1;
         for (var i = 0; i < hs.length; i++) {
             var h = hs[i];
-            if (h.getAttribute('aria-hidden') === 'true' || h.id === 'pageTitleSr') continue;
+            if (h.getAttribute('aria-hidden') === 'true' || h.id === 'pageTitleSr' || !(h.offsetWidth || h.offsetHeight || h.getClientRects().length)) continue;
             var nat = /^H[1-6]$/.test(h.tagName) ? +h.tagName.charAt(1) : (+h.getAttribute('aria-level') || 2);
             var lvl = Math.min(nat, last + 1);
             if (h.dataset.a11yLvl !== '1' && lvl !== nat) { h.setAttribute('aria-level', String(lvl)); h.dataset.a11yLvl = '1'; }
