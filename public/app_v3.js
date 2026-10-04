@@ -1543,7 +1543,7 @@ async function loadBrandEcosystemPage() {
                     <td class="be-strong">${formatNumber(distributor.curr_partial)}</td>
                     <td class="be-strong">${pctText(distributor.share_pct)}</td>
                     <td class="${yoyClass(distributor.yoy_pct)}">${yoyText(distributor.yoy_pct)}</td>
-                    <td>${distributor.top_brand_name}</td>
+                    <td>${escapeHtml(distributor.top_brand_name)}</td>
                 </tr>
             `;
         }).join('');
@@ -1960,7 +1960,7 @@ async function loadHpCommandCenterPage() {
                 <div class="chart-card hpx-panel hpx-span-6">
                     <div class="hpx-panel-head">
                         <div>
-                            <h3>${title}</h3>
+                            <h3>${escapeHtml(title)}</h3>
                             <p>${fmtPct(panel?.share_pct)} pay · ${formatNumber(panel?.total || 0)} adet</p>
                         </div>
                     </div>
@@ -2425,7 +2425,7 @@ async function loadHpTopModelPage() {
             html += `
                 <div class="htm-cat-section">
                     <div class="htm-cat-header">
-                        <div class="htm-cat-label" style="background:${color}">${label}</div>
+                        <div class="htm-cat-label" style="background:${color}">${escapeHtml(label)}</div>
                     </div>
                     <div class="htm-cat-content">
                         <div class="ht-grid htm-grid">${buildCatRow(catKey, segments)}</div>
@@ -2476,13 +2476,13 @@ async function loadObtHpPage() {
             const label = catLabels[catKey];
 
             // Header
-            let header = `<th class="obt-cat-th" style="background:${color}">${label}</th>`;
+            let header = `<th class="obt-cat-th" style="background:${color}">${escapeHtml(label)}</th>`;
             years.forEach(y => { header += `<th>${y}</th>`; });
             for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
             header += `<th>${prev_year} İLK ${max_month} AY</th><th>${max_year} İLK ${max_month} AY</th>`;
 
             // Category total row
-            let totalRow = `<td class="obt-label obt-total-row">${label} Toplam</td>`;
+            let totalRow = `<td class="obt-label obt-total-row">${escapeHtml(label)} Toplam</td>`;
             years.forEach(y => { totalRow += cell(total.yearly[y] || 0, total.yearly[y] || 0); });
             for (let m = 1; m <= max_month; m++) { totalRow += cell(total.months[m] || 0, total.months[m] || 0); }
             totalRow += cell(total.prev_partial, total.prev_partial);
@@ -2560,8 +2560,8 @@ async function loadBrandHpPage() {
         header += `<th>${prev_year} İLK ${max_month} AY</th>`;
         header += `<th>${max_year} İLK ${max_month} AY</th>`;
         header += `<th>Seg.<br>Ağırlık %</th>`;
-        header += `<th>${brand_name}<br>${max_year} P.Payı</th>`;
-        header += `<th>${brand_name}<br>${prev_year} P.Payı</th>`;
+        header += `<th>${escapeHtml(brand_name)}<br>${max_year} P.Payı</th>`;
+        header += `<th>${escapeHtml(brand_name)}<br>${prev_year} P.Payı</th>`;
         header += `<th>P.Payı<br>Değişim</th>`;
 
         // Build rows
@@ -2588,7 +2588,7 @@ async function loadBrandHpPage() {
             rows += `<tr class="bhp-market-row ${isTotal ? 'bhp-total-group' : ''}">${r1}</tr>`;
 
             // Row 2: Brand Adet
-            let r2 = `<td class="bhp-row-label">${brand_name} Adet</td>`;
+            let r2 = `<td class="bhp-row-label">${escapeHtml(brand_name)} Adet</td>`;
             years.forEach(y => { r2 += `<td class="bhp-brand">${(seg.brand.yearly[y] || 0).toLocaleString('tr-TR')}</td>`; });
             for (let m = 1; m <= max_month; m++) { r2 += `<td class="bhp-brand">${(seg.brand.months[m] || 0).toLocaleString('tr-TR')}</td>`; }
             r2 += `<td class="bhp-brand bhp-partial">${seg.brand.prev_partial.toLocaleString('tr-TR')}</td>`;
@@ -2597,7 +2597,7 @@ async function loadBrandHpPage() {
             rows += `<tr class="bhp-brand-row ${isTotal ? 'bhp-total-group' : ''}">${r2}</tr>`;
 
             // Row 3: Brand %
-            let r3 = `<td class="bhp-row-label">${brand_name} %</td>`;
+            let r3 = `<td class="bhp-row-label">${escapeHtml(brand_name)} %</td>`;
             years.forEach(y => {
                 const pct = (seg.market.yearly[y] || 0) > 0 ? ((seg.brand.yearly[y] || 0) / seg.market.yearly[y] * 100).toFixed(1) : '0.0';
                 r3 += `<td class="bhp-pct">${pct}%</td>`;
@@ -3332,7 +3332,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                             ${executiveMemo.map(item => `
                                 <article class="ptx-memo ${item.tone}">
                                     <span>${safe(item.eyebrow)}</span>
-                                    <h4>${item.title}</h4>
+                                    <h4>${escapeHtml(item.title)}</h4>
                                     <p>${item.body}</p>
                                 </article>
                             `).join('')}
@@ -3568,7 +3568,7 @@ async function loadHpTopIlCatPage() {
             html += `
                 <div class="htm-cat-section">
                     <div class="htm-cat-header">
-                        <div class="htm-cat-label" style="background:${color}">${label}</div>
+                        <div class="htm-cat-label" style="background:${color}">${escapeHtml(label)}</div>
                     </div>
                     <div class="htm-cat-content">
                         <div class="ht-grid htm-grid">${buildCatRow(segments)}</div>
@@ -5241,10 +5241,10 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
     });
 
     const quickLinks = [
-        profile.website_url ? `<a class="bh-link-btn" href="${profile.website_url}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
-        profile.dealer_locator_url ? `<a class="bh-link-btn" href="${profile.dealer_locator_url}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
-        profile.portal_url ? `<a class="bh-link-btn" href="${profile.portal_url}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
-        reportDocumentLink ? `<a class="bh-link-btn" href="${reportDocumentLink}" target="_blank" rel="noreferrer"><i class="fas fa-file-lines"></i><span>Rapor / Kaynak</span></a>` : ''
+        profile.website_url ? `<a class="bh-link-btn" href="${safeHref(profile.website_url)}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
+        profile.dealer_locator_url ? `<a class="bh-link-btn" href="${safeHref(profile.dealer_locator_url)}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
+        profile.portal_url ? `<a class="bh-link-btn" href="${safeHref(profile.portal_url)}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
+        reportDocumentLink ? `<a class="bh-link-btn" href="${safeHref(reportDocumentLink)}" target="_blank" rel="noreferrer"><i class="fas fa-file-lines"></i><span>Rapor / Kaynak</span></a>` : ''
     ].filter(Boolean).join('');
 
     const heroStats = (profile.hero_stats || []).map(item => `
@@ -5463,7 +5463,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
         <div class="bhx-watch-card ${item.tone === 'opportunity' ? 'is-positive' : ''}">
             <strong>${dashboardSafe(item.title || '-')}</strong>
             <p>${dashboardSafe(item.text || '')}</p>
-            ${item.source_url ? `<a href="${item.source_url}" target="_blank" rel="noreferrer">Resmi kaynak</a>` : ''}
+            ${item.source_url ? `<a href="${safeHref(item.source_url)}" target="_blank" rel="noreferrer">Resmi kaynak</a>` : ''}
         </div>
     `).join('');
 
@@ -5813,10 +5813,10 @@ async function loadBrandHubPage() {
         });
 
         const quickLinks = [
-            profile.website_url ? `<a class="bh-link-btn" href="${profile.website_url}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
-            profile.dealer_locator_url ? `<a class="bh-link-btn" href="${profile.dealer_locator_url}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
-            profile.portal_url ? `<a class="bh-link-btn" href="${profile.portal_url}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
-            profile.price_list_url ? `<a class="bh-link-btn" href="${profile.price_list_url}" target="_blank" rel="noreferrer"><i class="fas fa-file-invoice-dollar"></i><span>Fiyat / Katalog</span></a>` : ''
+            profile.website_url ? `<a class="bh-link-btn" href="${safeHref(profile.website_url)}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
+            profile.dealer_locator_url ? `<a class="bh-link-btn" href="${safeHref(profile.dealer_locator_url)}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
+            profile.portal_url ? `<a class="bh-link-btn" href="${safeHref(profile.portal_url)}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
+            profile.price_list_url ? `<a class="bh-link-btn" href="${safeHref(profile.price_list_url)}" target="_blank" rel="noreferrer"><i class="fas fa-file-invoice-dollar"></i><span>Fiyat / Katalog</span></a>` : ''
         ].filter(Boolean).join('');
 
         const kpiCards = [
@@ -11565,11 +11565,11 @@ async function loadSubscriptionPage() {
             if (lateUsage && lateUsage.usage) {
                 const u = lateUsage.usage; const lim = lateUsage.limits || {};
                 const fmt = (used, limit, label) => {
-                    if (limit === -1) return `<div class="sub-usage-row"><span>${label}</span><strong>${formatNumber(used)}</strong><small>sınırsız</small></div>`;
-                    if (limit === 0) return `<div class="sub-usage-row is-disabled"><span>${label}</span><strong>—</strong><small>pakette yok</small></div>`;
+                    if (limit === -1) return `<div class="sub-usage-row"><span>${escapeHtml(label)}</span><strong>${formatNumber(used)}</strong><small>sınırsız</small></div>`;
+                    if (limit === 0) return `<div class="sub-usage-row is-disabled"><span>${escapeHtml(label)}</span><strong>—</strong><small>pakette yok</small></div>`;
                     const pct = Math.min(100, Math.round((used / limit) * 100));
                     const tone = pct >= 100 ? 'is-down' : pct >= 80 ? 'is-warn' : 'is-up';
-                    return `<div class="sub-usage-row ${tone}"><span>${label}</span><strong>${formatNumber(used)} / ${formatNumber(limit)}</strong><div class="sub-usage-bar"><span style="width:${pct}%"></span></div></div>`;
+                    return `<div class="sub-usage-row ${tone}"><span>${escapeHtml(label)}</span><strong>${formatNumber(used)} / ${formatNumber(limit)}</strong><div class="sub-usage-bar"><span style="width:${pct}%"></span></div></div>`;
                 };
                 const warningsHtml = (lateUsage.warnings || []).map(w => `
                     <div class="sub-flash sub-flash-${w.level === 'critical' ? 'err' : 'warn'}">
