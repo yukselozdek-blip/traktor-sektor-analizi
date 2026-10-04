@@ -100,6 +100,15 @@ Kayıt (şifre veya Google) **geçerli bir davet koduyla** yapılır; marka kodd
 - Davet kodları admin tarafından markaya özel, sınırlı kullanımlı ve süreli üretilir; iptal edilebilir.
 - Aynı markaya çok sayıda farklı alan adından kayıt için otomatik inceleme kuyruğu yoktur (gelecek sürüm, doğrulanmadı: kodda böyle bir kuyruk bulunmadı).
 
+## 9.1 ŞİFRE SIFIRLAMA (CANLI)
+
+- `POST /api/auth/forgot-password` → her zaman aynı genel yanıt (kullanıcı var mı yok mu sızdırılmaz); kullanıcı varsa ve aktifse token üretilir, mail gönderilir. Sınıra takılan istek de aynı yanıtı verir (log'da `[forgot-password] istek atlandı...`).
+- `GET /api/auth/reset-password/validate`, `POST /api/auth/reset-password`: token **sha256 özeti** olarak DB'de (`password_reset_tokens`, migrasyon 004), **tek kullanım**, **30 dk** geçerli, yeni istekte önceki açık tokenlar iptal edilir; yeni şifre politika regex'inden geçer.
+- Bağlantı `APP_BASE_URL` (production'da zorunlu) ile üretilir: `https://app.tarimtraktor.com/reset-password.html?token=...`.
+- Mail: Brevo HTTPS API (`BREVO_API_KEY`, `MAIL_FROM`); Railway SMTP portlarını engellediği için SMTP yedek yoldur. Bkz. `../operasyon-altyapi-anayasasi/SKILL.md` §3.
+- Kod: `src/routes/password-reset.js`, `src/lib/mailer.js`, `src/lib/app-url.js`. Testler: `tests/password-reset.test.js` (`MAIL_OUTBOX_FILE` test kancası yalnızca production dışında çalışır).
+- Google ile kayıtlı kullanıcının `password_hash` değeri boş (NULL) olabilir (migrasyon 005); bu kullanıcılar şifre sıfırlama ile şifre belirleyebilir.
+
 ## 10. ENDPOINT ENVANTERİ
 
 | Endpoint | Metod | Yetki | Amaç |
@@ -144,12 +153,14 @@ Kayıt (şifre veya Google) **geçerli bir davet koduyla** yapılır; marka kodd
 - [ ] Oturum veren yol `SESSION_ISSUING` kümesine girmeli mi? Çerez değiştirici istekler CSRF başlığı gönderiyor mu?
 - [ ] Yeni giriş yolu e-posta doğrulaması ve davet kodu kurallarını atlamıyor mu (Google dahil)?
 - [ ] Tokenlar (`email_verify_token`, sıfırlama) tek kullanımlık, süreli, tahmin edilemez mi?
+- [ ] Frontend formu hidden field değil **gerçek input** mu? Hata mesajları user-friendly Türkçe mi?
 - [ ] `npm run lint:syntax`, `npm run lint:undef`, `npm test` (DB'li) ve `npm run e2e:auth` geçti mi?
 - [ ] Manuel test: yanlış şifre 5x → kilit → 15 dk bekleme; doğrulanmamış hesapla giriş → 403
 
 ## 13. KAPSAM DIŞI
 
-- 2FA (gelecek sürüm)
+- ~~Şifre sıfırlama~~ → **canlı** (bkz. şifre sıfırlama bölümü)
+- **2FA (TOTP)**: planlandı, henüz yok. Önerilen tasarım: isteğe bağlı + admin/superuser için zorunlu, kurtarma kodları, login'de ikinci adım. Karar ve ilerleme: `PROJE_DURUMU.md`
 - SSO/SAML kurumsal entegrasyonu (Enterprise+ talebine bağlı)
 - WebAuthn / passkey (uzun vade)
 - Marka claim için otomatik inceleme kuyruğu

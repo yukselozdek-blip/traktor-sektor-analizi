@@ -1,74 +1,36 @@
-# Deployment Runtime Rehberi
+# Deployment Runtime Rehberi (GÜNCEL)
+
+> Bu dosya eski "lokal deploy butonu / `railway up`" akışını **emekliye ayırır**. Güncel ve tam süreç: `../../operasyon-altyapi-anayasasi/SKILL.md`.
 
 ## Temel Gerçekler
 
-- Lokal geliştirme adresi: `http://localhost:3002`
-- Production adresi: `https://affectionate-blessing-production-f2fe.up.railway.app/`
-- Lokal deploy bridge adresi: `http://127.0.0.1:3010`
-- Bu projede `localhost:3000` her zaman bu uygulama olmayabilir; test ve ekran doğrulamasında referans adres `localhost:3002` kabul edilmelidir.
+- Production: **`https://app.tarimtraktor.com`** (eski adres `https://affectionate-blessing-production-f2fe.up.railway.app/` yedek).
+- Lokal geliştirme adresi: `http://localhost:3002` (Docker compose servisi `traktor-app`). `localhost:3000` başka bir uygulamaya ait olabilir; referans adres `localhost:3002`.
+- Canlıya çıkış: **GitHub PR → CI yeşil → squash merge → Railway otomatik deploy.**
+- `railway up`, lokal "Railway'e Güncelle" butonu ve `deploy-bridge.js` **canlıya çıkış yolu değildir**, yeni iş için kullanılmaz.
 
 ## Hangi Değişiklik Nereye Yansır
 
-- `public/index.html`
-- `public/app_v3.js`
-- `public/api_v3.js`
-- `public/style.css`
-
-Bu dosyalar frontend tarafıdır. Lokal Docker uygulaması bu klasörü volume olarak kullandığı için değişiklikler genelde tarayıcı yenilemesiyle görünür.
-
-- `server.js`
-- `deploy-bridge.js`
-- `package.json`
-- `database/schema.sql`
-
-Bu dosyalar backend veya runtime davranışını etkiler. Lokal çalışan sürece yansıması için servis veya ilgili process yeniden başlatılmalıdır.
-
-## Lokal Runtime
-
-### Uygulama
-- Docker compose servisi: `traktor-app`
-- Lokal URL: `http://localhost:3002`
-- Veritabanı: Docker içindeki PostgreSQL ve lokal `5432`
-
-### Deploy Bridge
-- Hostta çalışır, Docker içinde değildir
-- Başlatma komutu: `npm run deploy-bridge`
-- Railway CLI'yi host ortamdan çağırır
-- UI'daki deploy butonu bu bridge'e bağlıdır
-
-## Deploy Yöntemleri
-
-### 1. UI Butonu ile Deploy
-1. `http://localhost:3002` üzerinde admin olarak giriş yap.
-2. `Ayarlar` sayfasına git.
-3. `Railway'e Güncelle` butonuna bas.
-4. Kart içindeki durum ve log alanını izle.
-
-Notlar:
-- Bu akışın çalışması için deploy bridge ayakta olmalı.
-- UI butonu sadece lokal kullanıma yöneliktir.
-
-### 2. Manuel CLI ile Deploy
-Repo kökünde şu komutu çalıştır:
-
-```powershell
-railway up --detach
-```
-
-Bu komut host makinede, proje kök dizininde çalıştırılmalıdır.
+- Frontend (`public/index.html`, `app_v3.js`, `api_v3.js`, `style.css`): lokal Docker volume'ünden servis edilir, genelde tarayıcı yenilemesiyle görünür. Canlıda minify + `?v=` sürümleme uygulanır; frontend değişince `public/index.html` içindeki sürüm parametresi artırılır.
+- Backend (`server.js`, `src/**`, `package.json`, `database/migrations/**`): lokal çalışan sürecin yeniden başlatılması gerekir. Canlıda `master` birleşmesiyle yeni imaj derlenir (`Dockerfile`: build aşamasında `npm ci --ignore-scripts` + `npm run build`, son aşamada `npm ci --omit=dev`, `USER node`).
+- Veritabanı: **yalnızca** `database/migrations/NNN_*.sql` ile. Açılışta `initDB()` migrasyonları çalıştırır.
 
 ## Doğrulama Akışı
 
-1. Değişikliği önce `http://localhost:3002` üzerinde kontrol et.
-2. Gerekirse backend değişikliklerinden sonra lokal servisi yeniden başlat.
-3. Deploy başlat.
-4. Production URL üzerinde aynı ekranı veya ilgili endpoint'i kontrol et.
-5. Production doğrulanmadan iş tamamlandı varsayımı yapma.
+1. Yerelde `npm run lint:syntax` ve `npm test` (geçici Postgres + `TEST_DATABASE_URL`).
+2. PR aç, CI `test` işi yeşil olsun.
+3. Squash merge → Railway deploy'u bekle (Deployments sekmesinde "Active").
+4. Canlıda ilgili ekranı/endpoint'i kontrol et. Doğrulanmadan "tamam" deme.
+
+## Railway Notları
+
+- Sağlık kontrolü: `railway.json` → `/health`, zaman aşımı 120 sn.
+- Variables değişikliği "staged" olur, **Deploy** denmeden devreye girmez.
+- Ortam değişkeni adları ve anlamları: operasyon anayasası §2, `.env.example`, `SECURITY_SETUP.md`.
 
 ## Sık Tuzaklar
 
-- `localhost:3000` adresini bu proje sanıyor olmak
-- Frontend değişikliği görünmediğinde cache ihtimalini atlamak
-- `server.js` değişikliğini yapıp lokal runtime'i yeniden başlatmamak
-- Railway deploy'u Docker container içinden çalıştırmaya çalışmak
-- UI deploy butonu çalışmadığında deploy bridge sürecini kontrol etmemek
+- Frontend değişikliği görünmüyorsa önbellek/`?v=` sürümünü kontrol et.
+- Squash merge sonrası eski dal "dirty" görünür: dalı `origin/master`'dan yeniden başlat.
+- Production'da `NODE_ENV=production` iken mock webhook reddedilir (bilinçli).
+- Railway'de SMTP portları engelli: e-posta için Brevo HTTPS API.
