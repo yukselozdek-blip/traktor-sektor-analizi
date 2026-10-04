@@ -11387,6 +11387,8 @@ async function loadSubscriptionPage() {
                 ? `<div class="sub-flash sub-flash-warn"><i class="fas fa-circle-info"></i> Ödeme akışı kullanıcı tarafından iptal edildi.</div>`
                 : flash === 'error'
                     ? `<div class="sub-flash sub-flash-err"><i class="fas fa-triangle-exclamation"></i> Ödeme onaylanırken hata oluştu. Lütfen tekrar deneyin.</div>`
+                    : flash === 'processing'
+                        ? `<div class="sub-flash sub-flash-info"><i class="fas fa-hourglass-half"></i> Ödemeniz alındıysa aboneliğiniz birkaç dakika içinde otomatik aktive edilir. Bu sayfayı yenileyerek durumu kontrol edebilirsiniz.</div>`
                     : flash === 'start'
                         ? `<div class="sub-flash sub-flash-info"><i class="fas fa-bolt"></i> Hesabınız oluşturuldu. Ödeme yöntemini seçip aboneliği başlatın.</div>`
                         : '';

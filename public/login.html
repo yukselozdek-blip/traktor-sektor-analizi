@@ -40,7 +40,8 @@
             gap: 28px;
             align-items: start;
         }
-        @media (max-width: 1080px) { .auth-shell { grid-template-columns: 1fr; } }
+        /* Tek sütunda giriş formu önce gelir (hero'yu kaydırmadan giriş yapılabilsin). */
+        @media (max-width: 1080px) { .auth-shell { grid-template-columns: 1fr; } .auth-panel { order: -1; } }
 
         /* SOL: Plan Önizleme Paneli */
         .auth-hero {
@@ -49,8 +50,10 @@
             border: 1px solid var(--border);
             background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.85));
             box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
-            position: sticky; top: 28px;
+            position: static;
         }
+        /* Yalnızca iki sütunlu masaüstü düzeninde yapışkan; mobilde formun üstüne binip dokunmayı engelliyordu. */
+        @media (min-width: 1081px) { .auth-hero { position: sticky; top: 28px; } }
         .auth-pill {
             display: inline-flex;
             align-items: center;

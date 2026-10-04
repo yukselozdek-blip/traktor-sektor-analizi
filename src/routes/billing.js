@@ -7,6 +7,11 @@ const jwt = require('jsonwebtoken');
 const billingProviders = require('../../billing/providers');
 const { getRequestToken } = require('../lib/session');
 
+// Sahte (MOCK) ödeme akışı ücretsiz abonelik aktive eder: yalnızca geliştirme ortamında ya da
+// açıkça ALLOW_MOCK_BILLING=1 verildiğinde çalışır. Üretimde gerçek aktivasyon yalnızca imzalı webhook ile yapılır.
+const MOCK_BILLING_ALLOWED = process.env.NODE_ENV !== 'production' || process.env.ALLOW_MOCK_BILLING === '1';
+const escHtml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 module.exports = function registerBilling(app, ctx) {
     const {
         pool, authMiddleware, adminOnly, errMsg, JWT_SECRET,
@@ -121,6 +126,9 @@ module.exports = function registerBilling(app, ctx) {
 
             const providerImpl = billingProviders.getProvider(provider);
             if (!providerImpl) return res.status(400).json({ error: 'Geçersiz ödeme sağlayıcısı' });
+            if (providerImpl.is_mock && !MOCK_BILLING_ALLOWED) {
+                return res.status(503).json({ error: 'Bu ödeme yöntemi şu anda kullanılamıyor. Lütfen banka havalesini seçin veya bizimle iletişime geçin.' });
+            }
 
             const baseUrl = `${req.protocol}://${req.get('host')}`;
             const returnUrl = `${baseUrl}/billing/success?provider=${providerImpl.code}&plan=${plan.slug}&period=${periodNorm}`;
@@ -182,30 +190,31 @@ module.exports = function registerBilling(app, ctx) {
     // Anonim sarmalayıcı: route envanteri snapshot'ı işleyici adını da içerir.
     app.post('/api/billing/checkout', authMiddleware, (req, res) => startCheckout(req, res));
 
-    // MOCK akış için success endpoint: kullanıcı tarayıcıdan dönerken aboneliği aktive eder.
-    // Provider kullanıcıyı redirect ettikten sonra session_id ile pending payment'ı bulup aktive ederiz.
+    // Ödeme sonrası dönüş sayfası. Abonelik ASLA buradan (sorgu parametreleriyle) aktive edilmez:
+    // gerçek sağlayıcılarda aktivasyonu imzalı webhook yapar. Yalnızca MOCK akışta (geliştirme ya da
+    // ALLOW_MOCK_BILLING=1) ve yalnızca oturumdaki kullanıcının kendi bekleyen ödemesi için çalışır;
+    // plan/dönem sorgudan değil ödeme kaydından okunur.
     app.get('/billing/success', async (req, res) => {
         try {
-            const { provider, plan, period, session_id } = req.query;
+            if (!MOCK_BILLING_ALLOWED) return res.redirect('/?page=subscription&billing=processing');
+
+            const found = getRequestToken(req);
             let userId = null;
-
-            // 1) Yöntem: session_id'den pending payment kaydını bul
-            if (session_id) {
-                const r = await pool.query(`SELECT user_id FROM payments WHERE provider_payment_id = $1 ORDER BY created_at DESC LIMIT 1`, [session_id]);
-                userId = r.rows[0]?.user_id || null;
+            if (found) {
+                try { userId = jwt.verify(found.token, JWT_SECRET)?.id || null; } catch (e) { /* geçersiz token */ }
             }
-            // 2) Yöntem: Authorization header
-            if (!userId) {
-                try {
-                    const found = getRequestToken(req);
-                    if (!found) throw new Error('no token');
-                    const decoded = jwt.verify(found.token, JWT_SECRET);
-                    userId = decoded?.id || null;
-                } catch (e) {}
-            }
-            if (!userId) return res.redirect('/?page=subscription&billing=error');
+            const sessionId = String(req.query.session_id || '');
+            if (!userId || !sessionId) return res.redirect('/?page=subscription&billing=error');
 
-            await activateUserSubscription(userId, plan, provider || 'mock', period || 'monthly');
+            const pay = await pool.query(
+                `SELECT metadata FROM payments WHERE provider_payment_id = $1 AND user_id = $2 AND status = 'pending'
+                 ORDER BY created_at DESC LIMIT 1`, [sessionId, userId]);
+            if (pay.rows.length === 0) return res.redirect('/?page=subscription&billing=error');
+            let meta = pay.rows[0].metadata || {};
+            if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch (e) { meta = {}; } }
+            if (!meta.plan_slug) return res.redirect('/?page=subscription&billing=error');
+
+            await activateUserSubscription(userId, meta.plan_slug, String(req.query.provider || 'mock'), meta.period === 'yearly' ? 'yearly' : 'monthly');
             res.redirect('/?page=subscription&billing=success');
         } catch (err) {
             console.error('Billing success error:', err);
@@ -224,12 +233,12 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
 .row strong{color:#38bdf8;}a{color:#38bdf8;}</style></head><body>
 <h1>Banka Havalesi ile Abonelik</h1>
 <p>Lütfen aşağıdaki bilgilere göre transfer yapın. <strong>Açıklama alanına referans kodu yazmayı unutmayın</strong>; ödeme onaylandığında aboneliğiniz aktive edilir.</p>
-<div class="row"><span>Plan</span><strong>${plan} (${period === 'yearly' ? 'Yıllık' : 'Aylık'})</strong></div>
-<div class="row"><span>Banka</span><strong>${bank.bank_name}</strong></div>
-<div class="row"><span>Hesap Sahibi</span><strong>${bank.account_holder}</strong></div>
-<div class="row"><span>IBAN</span><strong>${bank.iban}</strong></div>
-<div class="row"><span>SWIFT</span><strong>${bank.swift}</strong></div>
-<div class="row"><span>Referans Kodu</span><strong>${ref}</strong></div>
+<div class="row"><span>Plan</span><strong>${escHtml(plan)} (${period === 'yearly' ? 'Yıllık' : 'Aylık'})</strong></div>
+<div class="row"><span>Banka</span><strong>${escHtml(bank.bank_name)}</strong></div>
+<div class="row"><span>Hesap Sahibi</span><strong>${escHtml(bank.account_holder)}</strong></div>
+<div class="row"><span>IBAN</span><strong>${escHtml(bank.iban)}</strong></div>
+<div class="row"><span>SWIFT</span><strong>${escHtml(bank.swift)}</strong></div>
+<div class="row"><span>Referans Kodu</span><strong>${escHtml(ref)}</strong></div>
 <p style="margin-top:24px;"><a href="/?page=subscription">← Abonelik sayfasına dön</a></p>
 </body></html>`);
     });
