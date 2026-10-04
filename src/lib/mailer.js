@@ -85,9 +85,11 @@ async function sendMail({ to, subject, text, html } = {}) {
         }
         if (hasBrevoApi()) {
             await sendViaBrevoApi({ to, subject, text, html });
+            console.log('[mailer] e-posta Brevo API\'ye teslim edildi');
             return { sent: true };
         }
         await getTransporter().sendMail({ from: process.env.MAIL_FROM, to, subject, text, html });
+        console.log('[mailer] e-posta SMTP ile teslim edildi');
         return { sent: true };
     } catch (err) {
         // Token/link içerebilecek ayrıntıyı loglama; yalnızca hata kodu/mesajı.
