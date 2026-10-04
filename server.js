@@ -30,6 +30,7 @@ const computeModelProvinceCompatibility = (...a) => geoHelpers.computeModelProvi
 const buildModelRegionMission = (...a) => geoHelpers.buildModelRegionMission(...a);
 const parseHpBand = (...a) => geoHelpers.parseHpBand(...a);
 const { isSafeSql } = require('./src/lib/sql-guard');
+const { logRouteError, fiveXxLogger, globalErrorHandler } = require('./src/lib/log-error');
 process.on('unhandledRejection', (reason) => {
     console.error('unhandledRejection:', reason && reason.stack ? reason.stack : reason);
 });
@@ -42,6 +43,8 @@ process.on('uncaughtException', (err) => {
 // (X-Forwarded-For: istemci, Cloudflare). Böylece req.ip / hız sınırları gerçek istemci IP'sini görür.
 const TRUST_PROXY_HOPS = Math.max(0, parseInt(process.env.TRUST_PROXY_HOPS || '1', 10) || 0);
 app.set('trust proxy', TRUST_PROXY_HOPS);
+// 5xx izleme (gövdesiz tek satır; /health hariç) — hata nedenini rota catch'leri / global işleyici ayrıca yazar.
+app.use(fiveXxLogger);
 const CORS_ALLOWED_ORIGINS = new Set(
     [...(process.env.CORS_ORIGINS || '').split(','), APP_BASE_URL]
         .map(o => (o || '').trim().replace(/\/$/, ''))
@@ -229,6 +232,7 @@ app.get('/api/auth/diagnostic', authMiddleware, adminOnly, async (req, res) => {
             database_schema: schema.rows.map(r => r.column_name)
         });
     } catch (err) {
+        logRouteError(req, err, 'GET /api/auth/diagnostic');
         res.status(500).json({ status: '❌ Hata', message: errMsg(err) });
     }
 });
@@ -4794,7 +4798,7 @@ app.get('/api/auth/verify-email', async (req, res) => {
         if (r.rows.length === 0) return res.redirect(302, '/login.html?verified=0');
         await logAuthAudit(r.rows[0].id, 'email_verified', req);
         res.redirect(302, '/login.html?verified=1');
-    } catch (err) { res.status(500).send('Hata'); }
+    } catch (err) { logRouteError(req, err, 'GET /api/auth/verify-email'); res.status(500).send('Hata'); }
 });
 
 require('./src/routes/invites')(app, { pool, authMiddleware, adminOnly, RESEND_LIMITER, logAuthAudit, escapeMailHtml });
@@ -4814,6 +4818,7 @@ app.post('/api/auth/preview-plan', authMiddleware, async (req, res) => {
         await pool.query(`UPDATE users SET preview_plan_slug = $1 WHERE id = $2`, [plan_slug || null, req.user.id]);
         res.json({ success: true, preview_plan_slug: plan_slug || null });
     } catch (err) {
+        logRouteError(req, err, 'POST /api/auth/preview-plan');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -4845,6 +4850,7 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
             } : null
         });
     } catch (err) {
+        logRouteError(req, err, 'GET /api/auth/me');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -4857,6 +4863,7 @@ app.get('/api/gear-configs', authMiddleware, async (req, res) => {
         const result = await pool.query(`SELECT DISTINCT vites_sayisi FROM teknik_veri WHERE vites_sayisi IS NOT NULL AND TRIM(vites_sayisi) != '' ORDER BY vites_sayisi`);
         res.json(result.rows.map(r => r.vites_sayisi));
     } catch (err) {
+        logRouteError(req, err, 'GET /api/gear-configs');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -5329,6 +5336,7 @@ app.get('/api/brands/:slug', authMiddleware, async (req, res) => {
         if (result.rows.length === 0) return res.status(404).json({ error: 'Marka bulunamadı' });
         res.json(result.rows[0]);
     } catch (err) {
+        logRouteError(req, err, 'GET /api/brands/:slug');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6316,6 +6324,7 @@ app.get('/api/insights', authMiddleware, requireFeature('ai_insights', 'ai_insig
         await recordAiUsage(req.user.id, 'insights', 'ai_insights', 0, 0, req);
         res.json(result.rows);
     } catch (err) {
+        logRouteError(req, err, 'GET /api/insights');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6343,6 +6352,7 @@ app.post('/api/insights', insightsWriteAuth, async (req, res) => {
         `, [brand_id, province_id, insight_type, title, content, JSON.stringify(data_json || {}), confidence_score]);
         res.json(result.rows[0]);
     } catch (err) {
+        logRouteError(req, err, 'POST /api/insights');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6552,6 +6562,7 @@ app.get('/api/billing/usage', authMiddleware, async (req, res) => {
             warnings: buildUsageWarnings(meter, limits)
         });
     } catch (err) {
+        logRouteError(req, err, 'GET /api/billing/usage');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6691,6 +6702,7 @@ app.get('/api/billing/rivals', authMiddleware, async (req, res) => {
             available_brands: req.user.role === 'admin' ? null : (await pool.query('SELECT id, name, slug FROM brands ORDER BY name')).rows
         });
     } catch (err) {
+        logRouteError(req, err, 'GET /api/billing/rivals');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6734,6 +6746,7 @@ app.put('/api/billing/rivals', authMiddleware, async (req, res) => {
         );
         res.json({ success: true, selected: ids });
     } catch (err) {
+        logRouteError(req, err, 'PUT /api/billing/rivals');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6755,6 +6768,7 @@ app.get('/api/billing/whatsapp', authMiddleware, async (req, res) => {
         r.rows.forEach(p => { p.approval = p.admin_approved ? 'approved' : 'pending'; });
         res.json({ phones: r.rows, max_phones: limits.whatsapp_phones, used: r.rows.length });
     } catch (err) {
+        logRouteError(req, err, 'GET /api/billing/whatsapp');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6786,6 +6800,7 @@ app.post('/api/billing/whatsapp', authMiddleware, async (req, res) => {
         );
         res.status(201).json({ success: true, approval: 'pending', phone: ins.rows[0], note: 'Numaranız admin onayından sonra aktif olacaktır.' });
     } catch (err) {
+        logRouteError(req, err, 'POST /api/billing/whatsapp');
         res.status(500).json({ error: errMsg(err) });
     }
 });
@@ -6796,6 +6811,7 @@ app.delete('/api/billing/whatsapp/:id', authMiddleware, async (req, res) => {
         if (r.rows.length === 0) return res.status(404).json({ error: 'Telefon bulunamadı' });
         res.json({ success: true });
     } catch (err) {
+        logRouteError(req, err, 'DELETE /api/billing/whatsapp/:id');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6808,6 +6824,7 @@ app.post('/api/billing/whatsapp/:id/approve', authMiddleware, adminOnly, async (
         );
         res.json({ success: true });
     } catch (err) {
+        logRouteError(req, err, 'POST /api/billing/whatsapp/:id/approve');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6842,6 +6859,7 @@ app.get('/api/admin/whatsapp-phones', authMiddleware, adminOnly, async (req, res
             }))
         });
     } catch (err) {
+        logRouteError(req, err, 'GET /api/admin/whatsapp-phones');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6855,6 +6873,7 @@ app.post('/api/admin/whatsapp-phones/:id/approve', authMiddleware, adminOnly, as
         if (!r.rows.length) return res.status(404).json({ error: 'Telefon bulunamadı' });
         res.json({ success: true, status: 'approved' });
     } catch (err) {
+        logRouteError(req, err, 'POST /api/admin/whatsapp-phones/:id/approve');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6868,6 +6887,7 @@ app.post('/api/admin/whatsapp-phones/:id/reject', authMiddleware, adminOnly, asy
         if (!r.rows.length) return res.status(404).json({ error: 'Telefon bulunamadı' });
         res.json({ success: true, status: 'rejected' });
     } catch (err) {
+        logRouteError(req, err, 'POST /api/admin/whatsapp-phones/:id/reject');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -6953,6 +6973,12 @@ app.get('*', (req, res) => {
         res.status(404).json({ error: 'Bulunamadı' });
     }
 });
+
+// ============================================
+// GLOBAL HATA ARA KATMANI — rotalardan ve SPA fallback'ten SONRA, en sonda olmalı.
+// 4xx (JSON ayrıştırma 400 / entity.too.large 413 vb.) Express varsayılan işleyicisine bırakılır.
+// ============================================
+app.use(globalErrorHandler);
 
 // ============================================
 // MEDIA WATCH BRIDGE — opsiyonel child_process otomatik başlat

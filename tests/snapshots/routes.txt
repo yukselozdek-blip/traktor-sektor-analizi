@@ -1,5 +1,6 @@
 MW query /^\/?(?=\/|$)/i
 MW expressInit /^\/?(?=\/|$)/i
+MW fiveXxLogger /^\/?(?=\/|$)/i
 MW compression /^\/?(?=\/|$)/i
 MW corsMiddleware /^\/?(?=\/|$)/i
 MW helmetMiddleware /^\/?(?=\/|$)/i
@@ -162,3 +163,4 @@ GET "/api/forecast/runs" [authMiddleware><anonymous>><anonymous>]
 GET "/api/forecast/latest" [authMiddleware><anonymous>><anonymous>]
 GET "/api/forecast/executive" [authMiddleware><anonymous>><anonymous>><anonymous>]
 GET "*" [<anonymous>]
+MW globalErrorHandler /^\/?(?=\/|$)/i

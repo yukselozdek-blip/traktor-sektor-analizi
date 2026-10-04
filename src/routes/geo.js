@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Weather / climate / soil / crops / province-intelligence routes and their private
 // helpers, moved verbatim from server.js. Registration order is preserved by the
 // caller (server.js calls this at the original position).
@@ -16,6 +17,7 @@ module.exports = function registerGeo(app, ctx) {
             `, [req.params.province_id]);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/weather/:province_id');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -38,6 +40,7 @@ module.exports = function registerGeo(app, ctx) {
             const referenceProfile = getProvinceReferenceArchetype(province);
             return res.json(buildProvinceReferenceForecastRows(province, referenceProfile));
         } catch (err) {
+            logRouteError(req, err, 'GET /api/weather/:province_id/forecast');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -63,6 +66,7 @@ module.exports = function registerGeo(app, ctx) {
             const referenceProfile = getProvinceReferenceArchetype(province);
             return res.json(buildProvinceReferenceClimateRows(referenceProfile, new Date().getFullYear()));
         } catch (err) {
+            logRouteError(req, err, 'GET /api/climate/:province_id');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -91,6 +95,7 @@ module.exports = function registerGeo(app, ctx) {
                 referenceProfile.dominant_drive_type
             ));
         } catch (err) {
+            logRouteError(req, err, 'GET /api/soil/:province_id');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -115,6 +120,7 @@ module.exports = function registerGeo(app, ctx) {
             const referenceProfile = getProvinceReferenceArchetype(province);
             return res.json(buildProvinceFallbackCrops(province, referenceProfile, Number(targetYear)));
         } catch (err) {
+            logRouteError(req, err, 'GET /api/crops/:province_id');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });

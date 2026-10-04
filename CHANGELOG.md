@@ -55,3 +55,9 @@ Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: eskiden yeniye
 - CSP: `script-src 'self'` + Google GSI, `script-src-attr 'none'`; `'unsafe-inline'` yalnızca stil için.
 - Tarayıcı doğrulaması: `e2e/click-through.js` (32 menü sayfası, filtreler, admin kartları, bildirimler, çıkış) iki modda 92 OK, CSP ihlali 0.
 - authMiddleware: kullanıcı durumu DB'den okunamazsa 503 (fail-closed).
+
+## Canlı olay düzeltmeleri
+- `master`'da kopmuş geo yardımcıları (`enrichProvinceWithReference` vb.) Model-Bölge ve `/api/provinces`'i düşürüyordu; Marka Merkezi bu yüzden "marka seçimi bulunamadı" diyordu. Düzeltildi, `lint:undef` CI'da.
+- Panel açılışında marka/il yüklemesi bağımsız; `/api/brands`, `/api/provinces` kısa önbellek + son iyi liste; il tohumlaması tek uçuşta.
+- TÜİK içe aktarma okumaları bloklamaz (DELETE, koşullu ALTER, ANALYZE).
+- 125 hata yakalayıcının tamamı artık günlüğe yazar (`logRouteError`), `[5xx]` izleme ve global hata ara katmanı.

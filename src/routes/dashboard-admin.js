@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Bildirimler, n8n workflow listesi, dashboard ve admin kullanıcı route'ları, server.js'ten olduğu gibi taşındı.
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
@@ -17,6 +18,7 @@ module.exports = function registerDashboardAdmin(app, ctx) {
             `, [req.user.id, req.user.brand_id]);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/notifications');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -26,6 +28,7 @@ module.exports = function registerDashboardAdmin(app, ctx) {
             await pool.query('UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
             res.json({ success: true });
         } catch (err) {
+            logRouteError(req, err, 'PUT /api/notifications/:id/read');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -38,6 +41,7 @@ module.exports = function registerDashboardAdmin(app, ctx) {
             const result = await pool.query('SELECT * FROM n8n_workflows ORDER BY title');
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/workflows');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -476,6 +480,7 @@ module.exports = function registerDashboardAdmin(app, ctx) {
             `);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/admin/users');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -498,6 +503,7 @@ module.exports = function registerDashboardAdmin(app, ctx) {
             `, [email, hash, full_name, role || 'brand_user', brand_id, company_name, city]);
             res.json(result.rows[0]);
         } catch (err) {
+            logRouteError(req, err, 'POST /api/admin/users');
             if (err.code === '23505') return res.status(400).json({ error: 'Bu email zaten kayıtlı' });
             res.status(500).json({ error: 'Sunucu hatası' });
         }

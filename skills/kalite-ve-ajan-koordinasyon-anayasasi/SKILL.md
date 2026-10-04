@@ -206,3 +206,12 @@ Bir değişiklik şu kanıtlar olmadan commit edilmez/birleştirilmez:
 ### 12.6 Belge disiplini
 - Kod değişince ilgili anayasa **aynı iş içinde** güncellenir; belge ve kod çelişirse kod esas alınır ve belge düzeltilir. Skill belgeleri yalnızca `skills/` altında ve kökteki `*.md` dosyalarındadır; kod ajanları belge yazmaz, belge ajanları koda dokunmaz.
 - Belgeye yazılan her somut iddia (yol, env, rota, limit, test adı) yazılmadan önce `grep`/okuma ile doğrulanır.
+
+## HATA GÜNLÜKLEME KURALI (Ekim 2026 canlı olayı dersi)
+
+Canlıda bir 500'ün nedeni, rota hatayı hiç loglamadığı için ancak kullanıcıdan gelen günlük satırıyla bulunabildi. Kural:
+- Bir rota `res.status(500)` döndürüyorsa **catch bloğunda mutlaka** `logRouteError(req, err, 'METHOD /yol')` (`src/lib/log-error.js`) çağrılır. Yeni rotada logsuz 500 YASAKTIR.
+- Yardımcı gövde/başlık/query string loglamaz; bağlantı dizesi, e-posta, JWT, Bearer ve parola/token alanlarını maskeler; aynı etiket+kod dakikada en fazla 20 satır yazar.
+- Global önlemler (`server.js`): `fiveXxLogger` (her 5xx için `[5xx] METHOD yol durum süre user=id`) ve en sonda `globalErrorHandler` (yakalanmayan hata → günlük + JSON 500; 4xx gövde ayrıştırma hataları eski davranışta kalır).
+- Canlıda sorun ararken: Railway → uygulama servisi → Deploy Logs'ta `[route-error]` ve `[5xx]` satırlarını ara. Test: `tests/log-error.test.js`.
+- Gerçek veri hacmi gerektiren hatalar yerelde yeniden üretilir: `data/TuikRapor.xlsx` + `import-tuik.js` ile `repro` veritabanı kurulur (`TUIK_EXCEL_PATH` testlerde geçersiz kılar); import yalnızca DELETE kullanır, okumaları bloklamaz.

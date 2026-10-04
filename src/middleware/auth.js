@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // authMiddleware / adminOnly moved verbatim from server.js.
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../config');
@@ -88,6 +89,7 @@ async function adminOnly(req, res, next) {
         }
         next();
     } catch (err) {
+        logRouteError(req, err, 'authMiddleware');
         return res.status(500).json({ error: 'Sunucu hatası' });
     }
 }

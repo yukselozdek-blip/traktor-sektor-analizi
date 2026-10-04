@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Media Watch routes (overview, sources registry, manual trigger, geo stats, translate),
 // moved verbatim from server.js. Registration order is preserved by the caller.
 module.exports = function registerMediaWatch(app, ctx) {
@@ -283,6 +284,7 @@ module.exports = function registerMediaWatch(app, ctx) {
             if (r && r.ok) return res.json(await r.json());
             res.json({ international: [], sector: [], oem_groups: {}, total: 0, languages: [], countries: [] });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/media-watch/sources');
             res.status(500).json({ error: 'Bridge erişilemedi' });
         }
     });

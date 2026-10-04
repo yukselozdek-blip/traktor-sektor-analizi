@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Marka portalı/gelecek istihbaratı seed fonksiyonları ve tahmin (forecast) route'ları, server.js'ten olduğu gibi taşındı.
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
@@ -1364,6 +1365,7 @@ module.exports = function registerForecast(app, ctx) {
                 layers
             });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/meta/future-intelligence-readiness');
             res.status(500).json({ error: 'Future intelligence readiness okunamadi', detail: errMsg(err) });
         }
     });
@@ -1431,6 +1433,7 @@ module.exports = function registerForecast(app, ctx) {
                 tracked_commodities: commodityCatalog
             });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/meta/future-intelligence-catalog');
             res.status(500).json({ error: 'Future intelligence catalog okunamadi', detail: errMsg(err) });
         }
     });
@@ -1449,6 +1452,7 @@ module.exports = function registerForecast(app, ctx) {
                 climate_reference_rows: parseInt(climateCount.rows[0]?.count || 0, 10)
             });
         } catch (err) {
+            logRouteError(req, err, 'POST /api/admin/future-intelligence/seed-reference-data');
             res.status(500).json({ error: 'Reference market data seed edilemedi', detail: errMsg(err) });
         }
     });
@@ -1462,6 +1466,7 @@ module.exports = function registerForecast(app, ctx) {
             });
             res.json(result);
         } catch (err) {
+            logRouteError(req, err, 'POST /api/admin/forecast/run-baseline');
             res.status(500).json({ error: 'Baseline forecast kosulamadi', detail: errMsg(err) });
         }
     });
@@ -1486,6 +1491,7 @@ module.exports = function registerForecast(app, ctx) {
             `);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/forecast/runs');
             res.status(500).json({ error: 'Forecast run listesi okunamadi', detail: errMsg(err) });
         }
     });
@@ -1584,6 +1590,7 @@ module.exports = function registerForecast(app, ctx) {
                 feature_demand: featureDemandRes.rows
             });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/forecast/latest');
             res.status(500).json({ error: 'Latest forecast okunamadi', detail: errMsg(err) });
         }
     });
@@ -1598,6 +1605,7 @@ module.exports = function registerForecast(app, ctx) {
             await recordAiUsage(req.user.id, 'forecast_executive', 'forecast', 0, 0, req);
             res.json(payload);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/forecast/executive');
             res.status(500).json({ error: 'Forecast executive ozeti okunamadi', detail: errMsg(err) });
         }
     });

@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Health check, public legal pages, public reports, debug and WhatsApp/assistant endpoints,
 // moved verbatim from server.js. Registration order is preserved (called at the original position).
 const crypto = require('crypto');
@@ -221,6 +222,7 @@ module.exports = function registerPublic(app, ctx) {
                 brands_error: brandsCheck.error || null
             });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/debug/ciro-test');
             clearTimeout(timer);
             if (!res.headersSent) res.status(500).json({ error: errMsg(err) });
         }

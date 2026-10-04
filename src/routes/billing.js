@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Subscription plans, billing checkout/webhooks and plan management routes,
 // moved verbatim from server.js. Registration order is preserved (called at the
 // original position). Plan/feature helpers used by other sections stay in server.js.
@@ -65,6 +66,7 @@ module.exports = function registerBilling(app, ctx) {
             }
             res.json({ ...sub, feature_keys: keys, is_entitled: entitled, payment_pending: sub.status === 'pending', pending_change });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/subscription');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -130,6 +132,7 @@ module.exports = function registerBilling(app, ctx) {
         try {
             res.json(billingProviders.listProviders());
         } catch (err) {
+            logRouteError(req, err, 'GET /api/billing/payment-providers');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -385,6 +388,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
             }
             res.json({ success: true, subscription_id: subId });
         } catch (err) {
+            logRouteError(req, err, 'POST /api/billing/bank-confirm');
             res.status(500).json({ error: errMsg(err) });
         }
     });
@@ -403,6 +407,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
         `);
             res.json(r.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/billing/bank-pending');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -418,6 +423,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
             );
             res.json({ success: true, message: 'Mevcut dönem sonunda iptal edilecek' });
         } catch (err) {
+            logRouteError(req, err, 'POST /api/billing/cancel');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -431,6 +437,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
             req.body = { plan_slug, provider, period };
             return startCheckout(req, res);
         } catch (err) {
+            logRouteError(req, err, 'POST /api/billing/change-plan');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -451,6 +458,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
         `, [req.user.id]);
             res.json(r.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/billing/invoices');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });

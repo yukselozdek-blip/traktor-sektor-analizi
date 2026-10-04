@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Traktör modelleri, model istihbaratı ve görsel galeri yönetimi route'ları, server.js'ten olduğu gibi taşındı.
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
@@ -1147,6 +1148,7 @@ module.exports = function registerModels(app, ctx) {
             `, [ids]);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/models/compare');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });

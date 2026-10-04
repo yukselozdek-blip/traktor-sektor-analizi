@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Satış verisi ve analitik route'ları (/api/sales/*), server.js'ten olduğu gibi taşındı.
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
@@ -34,6 +35,7 @@ module.exports = function registerSales(app, ctx) {
             const result = await pool.query(query, params);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/sales/summary');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -2210,6 +2212,7 @@ module.exports = function registerSales(app, ctx) {
             const result = await pool.query(query, params);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/sales/monthly-trend');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -2236,6 +2239,7 @@ module.exports = function registerSales(app, ctx) {
             const result = await pool.query(query, params);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/sales/market-share');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -2271,6 +2275,7 @@ module.exports = function registerSales(app, ctx) {
             const result = await pool.query(query, params);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/sales/by-category');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -2297,6 +2302,7 @@ module.exports = function registerSales(app, ctx) {
             const result = await pool.query(query, params);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/sales/hp-comparison');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });
@@ -2324,6 +2330,7 @@ module.exports = function registerSales(app, ctx) {
             `, [targetYear, allBrandIds]);
             res.json(result.rows);
         } catch (err) {
+            logRouteError(req, err, 'GET /api/sales/competitor-compare');
             res.status(500).json({ error: 'Sunucu hatası' });
         }
     });

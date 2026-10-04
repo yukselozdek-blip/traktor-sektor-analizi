@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Seed/admin ve TARMAKBİR route'ları, server.js'ten olduğu gibi taşındı.
 // Kayıt sırası korunur (orijinal konumda çağrılır).
 
@@ -429,6 +430,7 @@ module.exports = function registerSeedAdmin(app, ctx) {
             // Forward to seed-sales
             res.redirect(307, '/api/admin/seed-sales');
         } catch (err) {
+            logRouteError(req, err, 'POST /api/admin/reseed-sales');
             res.status(500).json({ error: errMsg(err) });
         }
     });
