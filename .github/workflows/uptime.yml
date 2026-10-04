@@ -1,0 +1,32 @@
+name: Çalışma Süresi Kontrolü
+
+# Her 10 dakikada bir /health uç noktasını yoklar. Yanıt vermezse iş başarısız olur ve
+# GitHub depo sahibine e-posta ile bildirir (Settings → Notifications → Actions).
+# Adres için depo değişkeni APP_HEALTH_URL (Settings → Variables) kullanılabilir.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: /health yokla
+        env:
+          URL: ${{ vars.APP_HEALTH_URL || 'https://app.tarimtraktor.com/health' }}
+        run: |
+          set -u
+          for i in 1 2 3; do
+            code=$(curl -s -o body.txt -w '%{http_code}' --max-time 20 "$URL" || echo 000)
+            if [ "$code" = "200" ] && grep -q '"status":"ok"' body.txt; then
+              echo "OK ($URL)"; exit 0
+            fi
+            echo "Deneme $i: HTTP $code"; sleep 20
+          done
+          echo "::error::Uygulama yanıt vermiyor: $URL (HTTP $code)"
+          exit 1

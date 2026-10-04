@@ -153,3 +153,11 @@ I_UNDERSTAND_THIS_OVERWRITES=yes bash scripts/restore-db.sh ...
 ❌ Yedek dosyalarını git history'ye commit etmeyin  
 ❌ URL sızdıysa veya herkese gösterdiyse, Railway'de yeni bir Postgres servisi oluşturun  
 ❌ Geri yüklemeyi üretim üzerinde test etmeyin — sandbox ortamında test edin  
+
+---
+
+## Geri yükleme tatbikatı ve izleme
+
+- **Aylık tatbikat** (`.github/workflows/restore-drill.yml`, her ayın 1'i): Storage Box'taki en son yedeği indirir, çözer, geçici bir Postgres 18'e geri yükler ve `users`, `brands`, `provinces`, `subscription_plans`, `schema_migrations` tablolarının dolu olduğunu doğrular. Yedek 3 günden eskiyse de başarısız olur (gece yedeği durmuş demektir). Elle çalıştırmak için: Actions → *Yedek Geri Yükleme Tatbikatı* → Run workflow. Aynı secret'ları kullanır; ek kurulum gerekmez.
+- **Elle tatbikat** (kendi bilgisayarınızda): `BACKUP_PASSPHRASE=... bash scripts/restore-drill.sh yedek.dump.gpg postgresql://.../gecici_db` (üretim adresine karşı çalışmayı reddeder).
+- **Çalışma süresi izleme** (`.github/workflows/uptime.yml`, 10 dakikada bir): `/health` yanıt vermezse iş başarısız olur ve GitHub e-posta gönderir. Farklı adres için depo değişkeni `APP_HEALTH_URL` tanımlayın. GitHub, 60 gün boyunca depoda hiç commit/etkinlik olmazsa zamanlanmış iş akışlarını (yedek, tatbikat, izleme) durdurur; Actions sekmesinde ayda bir göz atın.
