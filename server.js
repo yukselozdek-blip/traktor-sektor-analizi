@@ -128,8 +128,24 @@ app.get(['/giris/:brandSlug', '/login/:brandSlug', '/portal/:brandSlug'], (req, 
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300 });
+// Genel API sınırı (IP başına). Bir sayfa yüklemesi onlarca çağrı yapar ve aynı ofisteki kullanıcılar
+// IP paylaşır; bu yüzden dakikalık pencere. Ayar: API_RATE_LIMIT_MAX / API_RATE_LIMIT_WINDOW_MS.
+const limiter = rateLimit({
+    windowMs: parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || '', 10) || 60 * 1000,
+    max: parseInt(process.env.API_RATE_LIMIT_MAX || '', 10) || 600,
+    standardHeaders: true,
+    legacyHeaders: false
+});
 app.use('/api/', limiter);
+// Analitik GET yanıtları için kullanıcıya özel kısa önbellek (RESPONSE_CACHE_TTL_MS, 0 = kapalı).
+{
+    const ttl = parseInt(process.env.RESPONSE_CACHE_TTL_MS || '', 10);
+    app.use('/api/', require('./src/middleware/response-cache').createResponseCache({
+        jwtSecret: JWT_SECRET,
+        ttlMs: Number.isFinite(ttl) ? ttl : 60000,
+        pathPrefixes: ['/api/sales/', '/api/dashboard']
+    }));
+}
 
 // ============================================
 // AUTH MIDDLEWARE
@@ -4913,12 +4929,15 @@ app.get('/api/tuik/years', authMiddleware, async (req, res) => {
     }
 });
 
+let provincesSeededOk = false;
 async function ensureProvincesSeeded() {
+    if (provincesSeededOk) return;
     const { provinces } = require('./database/seed-data');
     const countRes = await pool.query('SELECT COUNT(*)::int AS count FROM provinces');
     const currentCount = parseInt(countRes.rows[0]?.count || 0, 10);
 
     if (currentCount >= provinces.length) {
+        provincesSeededOk = true;
         return;
     }
 

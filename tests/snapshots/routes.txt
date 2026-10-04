@@ -9,6 +9,7 @@ MW serveStatic /^\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
 GET ["/giris/:brandSlug","/login/:brandSlug","/portal/:brandSlug"] [<anonymous>]
 MW <anonymous> /^\/api\/?(?=\/|$)/i
+MW middleware /^\/api\/?(?=\/|$)/i
 GET "/api/auth/diagnostic" [authMiddleware>adminOnly><anonymous>]
 GET "/api/sales/model-region" [authMiddleware><anonymous>]
 GET "/health" [<anonymous>]
