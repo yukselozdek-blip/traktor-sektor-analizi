@@ -636,7 +636,7 @@ function applyReadableBrandText() {
     const useWhite = contrastRatio(white, primary) >= 5.2 || contrastRatio(white, primary) >= contrastRatio(dark, primary);
     const on = useWhite ? '255, 255, 255' : '11, 18, 32';
     root.style.setProperty('--on-brand', `rgb(${on})`);
-    root.style.setProperty('--on-brand-soft', `rgba(${on}, 0.88)`);
+    root.style.setProperty('--on-brand-soft', `rgb(${on})`); // saydamlık kontrastı düşürdüğü için düz renk
     root.style.setProperty('--on-brand-line', `rgba(${on}, 0.30)`);
     // Marka metin rengi (--brand-text) marka zemininde yetersiz kontrastlıysa okunur olanla değiştir.
     const current = parseCssColor(getComputedStyle(root).getPropertyValue('--brand-text'));

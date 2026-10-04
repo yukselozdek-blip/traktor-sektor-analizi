@@ -8667,7 +8667,7 @@ body.is-brand-banner .bcx-hero-copy > p {
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--on-brand-soft, rgba(255, 255, 255, 0.88));
+    color: var(--on-brand, #fff);
 }
 
 .bh-mc-quick {
@@ -8830,7 +8830,7 @@ body.is-brand-banner .ptx-eyebrow {
     font-weight: 500;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--on-brand-soft, rgba(255, 255, 255, 0.88));
+    color: var(--on-brand, #fff);
 }
 
 .bh-mc-brand-select {
