@@ -11,6 +11,12 @@ description: Türkiye Traktör Sektör Analizi uygulamasına (Node.js, PostgreSQ
 - Model fotoğrafı, galeri verisi, n8n görsel otomasyonu veya kullanıcıya görünen traktör görseli değişiyorsa `../model-gorsel-dogruluk-anayasasi/SKILL.md` dosyasını da oku; marka/seri/benzer model görselini ana model fotoğrafı gibi yayınlama.
 - SQL, import, dashboard, raporlama ve veri eslestirme islerinde hangi bilginin `teknik_veri`, `tuik_veri`, `sales_data` veya `sales_view` tablosundan gelecegini bu anayasa ile veri sozlugu birlikte belirler.
 - Projeyi her seferinde yeniden anlatmak yerine bu skill ve veri sozlugu skill'i sabit giris dokumani olarak kabul edilmelidir.
+- **Ana dizin / indeks — diğer anayasalar (işe göre oku):**
+  - Güvenlik (oturum, CSP, XSS, SQL, ödeme/webhook, WhatsApp, IDOR, kontrol listesi): `../guvenlik-anayasasi/SKILL.md`
+  - Erişilebilirlik, kontrast, mobil, marka renkli zeminde okunur yazı, e2e denetimleri: `../erisilebilirlik-tasarim-anayasasi/SKILL.md`
+  - Test, CI, migration, rota envanteri, `server.js` bölme, yedek/yük testi, **çok ajanlı çalışma protokolü**: `../kalite-ve-ajan-koordinasyon-anayasasi/SKILL.md`
+  - Kimlik/kayıt/oturum: `../kimlik-dogrulama-anayasasi/SKILL.md`; abonelik/ödeme/AI kotası: `../abonelik-odeme-anayasasi/SKILL.md`; medya takip: `../medya-takip-anayasasi/SKILL.md`; WhatsApp asistanı: `../stratejikplan-whatsapp-sales-assistant/SKILL.md`
+  - Operasyon belgeleri (kökte): `SECURITY_SETUP.md`, `PERFORMANS.md`, `BACKUP.md`, `RAILWAY_N8N_ARCHITECTURE.md`, `e2e/README.md`, `CHANGELOG.md`
 - Uygulamanin lokal olarak nerede calistigi, hangi dosyanin hangi ortamda etkili oldugu ve Railway deploy akisi icin `references/deployment-runtime.md` dosyasini da oku.
 
 # TRAKTÖR SEKTÖR ANALİZİ - SİSTEM ANAYASASI ("YAPAY ZEKA KURALLARI")
@@ -19,7 +25,7 @@ Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarş
 ---
 
 ## 1. MİMARİ VE TEKNOLOJİ YIĞINI (TECH STACK)
-- **Backend:** Node.js (v20+), Express.js - tek dosya (`server.js`)
+- **Backend:** Node.js (v20+; CI Node 22), Express.js - `server.js` (giriş/ortak yardımcılar) + route modülleri `src/routes/*.js`, ara katmanlar `src/middleware/`, yardımcılar `src/lib/`, şema `database/migrations/*.sql` (bölme kuralları: kalite anayasası §10)
 - **Veritabanı:** PostgreSQL (v15+), Railway Cloud üzerinde internal bağlantı
 - **Frontend:** Vanilla JavaScript (ES6+), Vanilla CSS, HTML5
   - `public/app_v3.js` - Ana uygulama (SPA, sayfa yükleyiciler)
@@ -38,7 +44,7 @@ Bu doküman, Traktör Sektör Analizi uygulamasının mimarisini, veri hiyerarş
 - Production uygulama `https://affectionate-blessing-production-f2fe.up.railway.app/` adresindedir.
 - Bu projede `localhost:3000` baska bir uygulamaya ait olabilir; gelistirme ve dogrulama yaparken varsayilan adres olarak daima `localhost:3002` kullan.
 - Frontend dosyalari `public/` altindadir ve lokal Docker uygulamasina bagli volume uzerinden servis edilir; bu nedenle frontend degisiklikleri genelde tarayici yenilemesi ile gorunur.
-- Backend davranislari agirlikla `server.js` icindedir; bu dosyadaki degisikliklerin lokal calisan uygulamaya yansimasi icin runtime yeniden baslatmasi gerekebilir.
+- Backend davranislari `server.js` ve `src/` altindadir (route modulleri); bu dosyadaki degisikliklerin lokal calisan uygulamaya yansimasi icin runtime yeniden baslatmasi gerekebilir.
 - Lokal Railway deploy butonu hostta calisan `deploy-bridge.js` servisini kullanir; bu servis `http://127.0.0.1:3010` uzerinden calisir ve gerektiginde `npm run deploy-bridge` ile baslatilir.
 - Lokal deploy butonu sadece lokal uygulamada (`localhost:3002`) ve admin oturumunda kullanilmak uzere tasarlanmistir.
 
@@ -275,7 +281,7 @@ fmtPct(n)   // 45.67 → "45.7%"
 ## 7. BACKEND API STANDARTLARI
 
 ### 7.1 Endpoint Yapısı
-- Tüm analitik endpoint'ler `server.js` içinde tanımlıdır
+- Analitik endpoint'ler `server.js` ve `src/routes/*.js` içinde tanımlıdır
 - Güvenlik: `authMiddleware` zorunlu
 - SQL: Parametrik sorgular (`$1, $2, ANY($3)`) - SQL injection koruması
 - Aggregation: Mümkünse `GROUP BY` ve `SUM()` SQL seviyesinde yapılır
@@ -452,23 +458,24 @@ Tüm satış verisini silip yeniden oluşturur. `model_year` dahil (~70% aynı y
 ## 12. WHATSAPP AI ASİSTAN (TEXT-TO-SQL)
 
 ### 12.1 Mimari
-WhatsApp Business API → Webhook (`/webhook/whatsapp`) → Groq AI (Llama 3.3 70B) → PostgreSQL → AI Yorumlama → WhatsApp Yanıt
+WhatsApp Business API → Webhook (`/api/public/whatsapp/webhook`; imza + onaylı numara kapısı) → Groq AI (Llama 3.3 70B) → PostgreSQL → AI Yorumlama → WhatsApp Yanıt
 
 ### 12.2 İşleyiş Zinciri
 1. **Doğal Dil Sorusu** → WhatsApp'tan gelir
 2. **textToSql(question)** → Groq AI, veritabanı şemasını (`DB_SCHEMA_PROMPT`) bilerek SQL üretir
 3. **isSafeSql(sql)** → Güvenlik kontrolü: sadece `SELECT` izinli; `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `TRUNCATE` yasaklı
-4. **executeSafeSql(sql)** → 5 saniye timeout ile çalıştırır, maks 20 satır (`LIMIT 20`)
+4. **executeSafeSql(sql)** → 8 saniye timeout ile çalıştırır, maks 20 satır (`LIMIT 20`)
 5. **interpretResults(question, sql, result)** → Groq AI ham veriyi yorumlar, sektörel analiz ve kısa yorum ekler
 6. **WhatsApp Yanıt** → Kullanıcıya doğal dilde gönderilir
 
 ### 12.3 Güvenlik Katmanları
 | Katman | Kural |
 |--------|-------|
-| SQL Doğrulama | Sadece `SELECT` komutları izinli |
-| Yasaklı Kelimeler | `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `TRUNCATE`, `GRANT`, `REVOKE` |
-| Timeout | 5.000ms (5 saniye) |
-| Satır Limiti | Maksimum 20 satır döner |
+| SQL Doğrulama | `src/lib/sql-guard.js` `isSafeSql`: yalnızca `SELECT`/`WITH`, tablo allow-list'i, fonksiyon allow-list'i (ayrıntı: güvenlik anayasası §5) |
+| Yasaklı Kelimeler | Yazma/DDL/`SET`/`COPY` vb. + hassas tablolar (`users`, ödeme, abonelik, `pg_*` ...) |
+| Çalıştırma | Salt-okunur transaction (`SET TRANSACTION READ ONLY`) |
+| Timeout | 8.000ms (8 saniye, `SET LOCAL statement_timeout`) |
+| Satır Limiti | Prompt'ta `LIMIT 20` talimatı; yorumlamaya ilk 20 satır gönderilir |
 | Hata Yönetimi | SQL hatası kullanıcıya "Teknik hata" olarak döner, detay loglanır |
 
 ### 12.4 Yerleşik Komutlar (Built-in Intents)
@@ -486,14 +493,19 @@ WhatsApp Business API → Webhook (`/webhook/whatsapp`) → Groq AI (Llama 3.3 7
 | `WHATSAPP_ACCESS_TOKEN` | Meta Graph API erişim tokeni |
 | `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp iş telefon numarası ID |
 | `GROQ_API_KEY` | Groq API anahtarı (Llama 3.3 70B) |
-| `WHATSAPP_QUERY_API_KEY` | Dahili sorgu API güvenlik anahtarı |
+| `WHATSAPP_QUERY_API_KEY` | Dahili sorgu API güvenlik anahtarı (`x-query-token`) |
+| `WHATSAPP_APP_SECRET` | Webhook imzası (`X-Hub-Signature-256`); üretimde zorunlu |
+
+Tam ortam değişkeni listesi için bölüm 14.
 
 ### 12.6 Endpoint'ler
 | Yol | Metod | Açıklama |
 |-----|-------|----------|
-| `/webhook/whatsapp` | GET | Meta webhook doğrulama (verify token) |
-| `/webhook/whatsapp` | POST | Gelen mesaj işleme + AI yanıt |
-| `/api/whatsapp/query` | POST | Dahili API (API key ile) - doğrudan soru gönderme |
+| `/api/public/whatsapp/webhook` | GET | Meta webhook doğrulama (verify token) |
+| `/api/public/whatsapp/webhook` | POST | Gelen mesaj işleme + AI yanıt (imza ve onaylı numara zorunlu) |
+| `/api/public/assistant/sales-query` | POST | Dahili API (`x-query-token`) - doğrudan soru gönderme |
+
+> Eski dokümandaki `/webhook/whatsapp` ve `/api/whatsapp/query` yolları kodda yoktur (doğrulandı); güncel yollar yukarıdadır.
 
 ### 12.7 DB_SCHEMA_PROMPT
 Groq AI'ya gönderilen prompt, veritabanının tam şemasını (tablolar, sütunlar, ilişkiler, örnek değerler) içerir. Bu sayede AI doğru SQL üretir. Şema güncellendiğinde `DB_SCHEMA_PROMPT` de güncellenmelidir.
@@ -518,6 +530,47 @@ Groq AI'ya gönderilen prompt, veritabanının tam şemasını (tablolar, sütun
 14. `DB_SCHEMA_PROMPT`'u veritabanı şeması değişince güncellememek
 15. Fiyat sorgularında `price_list_tl` kullanmak (`price_usd` tek kaynak)
 16. TL fiyatını dolara çevirmek veya COALESCE ile TL fallback yapmak
+17. Kullanıcı/DB verisini ön yüzde kaçışsız `innerHTML`'e basmak; yeni satır içi `onclick=` yazmak; CDN'den betik yüklemek (bkz. güvenlik anayasası)
+18. `process.env.NODE_ENV === 'production'` ile üretim tespiti yapmak (`isProduction()` kullanılır)
+19. Doğrulanmamış (DB'siz `skip` olan) testle "yeşil" demek; yapısal şema değişikliğini migration dışında yapmak (bkz. kalite anayasası)
+
+---
+
+## 14. RAILWAY ORTAM DEĞİŞKENLERİ (KODDA OKUNANLAR)
+
+Aşağıdaki değişkenlerin tamamı kodda okunduğu doğrulanmıştır (`grep process.env`). Hepsi isteğe bağlıdır; "üretimde" sütunu önerilen/zorunlu durumu gösterir. Sırlar yalnızca Railway'de tutulur (`SECURITY_SETUP.md`).
+
+| Değişken | Okunduğu yer | Anlamı / varsayılan | Üretimde |
+|----------|--------------|---------------------|----------|
+| `NODE_ENV` | `src/lib/env.js`, `src/db.js`, `server.js` | `production` → üretim (Railway değişkenleri de üretim sayılır) | **`production` ayarla** |
+| `DATABASE_URL` | `src/db.js` | PostgreSQL bağlantısı | zorunlu |
+| `JWT_SECRET` | `src/config.js` | JWT imza anahtarı; yoksa her açılışta rastgele (oturumlar düşer) | zorunlu |
+| `APP_BASE_URL` | `src/config.js` | Mail bağlantıları ve yönlendirme hedefi | zorunlu |
+| `SUPERUSER_EMAILS` | `src/config.js` | Virgüllü superuser e-postaları (varsayılan `yukselozdek@gmail.com`) | ayarla |
+| `CORS_ORIGINS` | `server.js` | İzinli ek origin'ler (CORS + CSRF Origin kontrolü) | ayarla |
+| `TRUST_PROXY_HOPS` | `server.js` | Proxy atlama sayısı; varsayılan `1`, Cloudflare proxy açılınca `2` | duruma göre |
+| `REDIRECT_HOSTS` | `server.js` | Bu host'lardan gelen istekleri `APP_BASE_URL`'e 301 yönlendirir (`/health` hariç) | isteğe bağlı |
+| `PG_POOL_MAX` / `PG_STATEMENT_TIMEOUT_MS` / `PG_CONNECT_TIMEOUT_MS` / `PG_IDLE_TIMEOUT_MS` | `src/db.js` | Havuz üst sınırı 20 / sorgu zaman aşımı 120000 / bağlantı 10000 / boşta 30000 | `PERFORMANS.md` |
+| `API_RATE_LIMIT_MAX` / `API_RATE_LIMIT_WINDOW_MS` | `server.js` | Genel API sınırı; varsayılan 600 / 60000 ms | `PERFORMANS.md` |
+| `RESPONSE_CACHE_TTL_MS` | `server.js` | Kullanıcıya özel yanıt önbelleği; varsayılan 60000 (0 = kapalı) | `PERFORMANS.md` |
+| `CSP_MODE` | `server.js` | `enforce` (varsayılan) \| `report` \| `off` — **yalnızca acil geri alma** | boş bırak |
+| `ALLOW_MOCK_BILLING` | `src/routes/billing.js` | `1` → üretimde de mock ödeme (yalnızca bilinçli test) | **boş bırak** |
+| `GOOGLE_OAUTH_CLIENT_ID` | `src/routes/signup-google.js` | Google girişi (yoksa 503) | Google kullanılıyorsa zorunlu |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `IYZICO_API_KEY` / `IYZICO_SECRET_KEY` / `IYZICO_BASE_URL` | `billing/providers.js` | Ödeme sağlayıcıları; yoksa mock (üretimde kart ödemesi 503) | kart ödemesi için |
+| `BANK_TRANSFER_BANK` / `_HOLDER` / `_IBAN` / `_SWIFT` | `billing/providers.js` | Banka havalesi bilgileri | havale için |
+| `WHATSAPP_APP_SECRET` | `src/routes/public.js` | Webhook imza anahtarı; **yoksa üretimde webhook 503** | zorunlu |
+| `WHATSAPP_VERIFY_TOKEN` | `src/config.js` | Meta GET doğrulaması (boşsa hep 403) | zorunlu |
+| `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` | `src/config.js` | Graph API ile mesaj gönderimi | zorunlu |
+| `WHATSAPP_GRAPH_API_BASE` | `server.js` | Graph API tabanı; varsayılan `https://graph.facebook.com/v21.0` (testlerde sahte sunucu) | boş bırak |
+| `WHATSAPP_QUERY_API_KEY` | `src/config.js` | Dahili `sales-query` anahtarı (`x-query-token`) | zorunlu |
+| `MEDIA_WATCH_WEBHOOK_KEY` | `src/config.js` | Medya/n8n webhook anahtarı (yoksa `WHATSAPP_QUERY_API_KEY`) | zorunlu |
+| `INSIGHTS_API_KEY` | `server.js` | `/api/insights` için `x-api-key` | ayarla |
+| `GROQ_API_KEY` | `server.js`, `src/routes/media-watch.js` | Medya çevirisi (`media-watch`); ayrıca `MINIMAX_API_KEY` tanımsızsa onun yerine kullanılır | AI için |
+| `MINIMAX_API_KEY` / `MINIMAX_BASE_URL` | `server.js`, `src/routes/ai-analyze.js` | AI analiz sağlayıcısı (anahtar yoksa `GROQ_API_KEY`); taban varsayılan `https://api.minimax.io/v1` (testlerde sahte sunucu) | AI için |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` / `BREVO_API_KEY` | `src/lib/mailer.js` | E-posta (Brevo HTTPS API Railway SMTP engeli için tercih edilir) | zorunlu (doğrulama/sıfırlama için) |
+| `SERVE_MINIFIED` | `server.js` | `1` → `public/dist` küçültülmüş varlıklar (`NODE_ENV=production`'da zaten açık) | otomatik |
+
+Ek (yalnızca ilgili özelliklerde): `N8N_WHATSAPP_PROCESSOR_URL`, `RAILWAY_SERVICE_N8N_URL`, `N8N_MODEL_INTEL_WEBHOOK_URL`, `MODEL_IMAGE_BRIDGE_URL`, `MEDIA_WATCH_BRIDGE_*`, `MEDIA_WATCH_APP_BASE_URL`, `MAIL_OUTBOX_FILE` (test). Yeni env değişkeni eklenirse bu tablo ve `SECURITY_SETUP.md` aynı işte güncellenir.
 
 ---
 

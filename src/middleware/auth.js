@@ -68,7 +68,10 @@ async function authMiddleware(req, res, next) {
             }
             payload = { ...payload, role: st.role, brand_id: st.brand_id, sup: st.sup };
         } catch (err) {
-            console.error('authMiddleware: kullanıcı durumu kontrolü atlandı:', err && err.message);
+            // Fail-closed: kullanıcının aktiflik/rol/şifre-değişim durumu doğrulanamıyorsa isteği geçirme
+            // (DB yokken zaten hiçbir rota çalışmaz; "açık geçmek" yalnızca eski/iptal token'a izin verirdi).
+            console.error('authMiddleware: kullanıcı durumu doğrulanamadı:', err && err.message);
+            return res.status(503).json({ error: 'Oturum doğrulanamadı. Lütfen kısa süre sonra tekrar deneyin.' });
         }
     }
     req.user = payload;

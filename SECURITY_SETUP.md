@@ -103,3 +103,10 @@ Google ile giriş için `accounts.google.com`. Acil geri alma: `CSP_MODE=report`
 **WhatsApp:** Üretimde `WHATSAPP_APP_SECRET` ve `WHATSAPP_VERIFY_TOKEN` tanımlı olmalıdır; aksi hâlde webhook istekleri reddedilir.
 
 **Tarayıcı denetimleri:** `e2e/README.md` (XSS taraması, erişilebilirlik, marka kontrastı, mobil taşma).
+
+## Davet kodu, e-posta doğrulaması ve WhatsApp onayı (ilk kurulum sonrası)
+
+- Kayıt **davet kodu** ister: ilk kodları yönetici olarak Ayarlar → Davet Kodları'ndan (API: `POST /api/admin/invites`) oluşturun. Kod yalnızca oluşturulurken bir kez gösterilir; veritabanında yalnızca özeti saklanır.
+- **E-posta doğrulaması zorunludur**: e-posta gönderimi (Brevo veya SMTP, yukarıdaki bölüm) ve `APP_BASE_URL` tanımlı olmalıdır; aksi halde yeni kullanıcılar giriş yapamaz. Önceden kayıtlı kullanıcılar migration ile doğrulanmış sayıldı.
+- WhatsApp asistanı yalnızca **admin onaylı** numaralara cevap verir; mevcut numaralar migration sonrası onaysızdır. Yönetici onayı: `GET/POST /api/admin/whatsapp-phones...` (arayüz: Ayarlar).
+- Ayrıntılı kurallar ve yeni özellik kontrol listesi: `skills/guvenlik-anayasasi/SKILL.md`.

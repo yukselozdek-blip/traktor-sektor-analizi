@@ -11,6 +11,8 @@ description: Traktör Sektör Analizi platformunun 3 katmanlı abonelik (Starter
 - `../traktor_anayasasi/SKILL.md`
 - `../marka-sekme-deneyim-anayasasi/SKILL.md`
 - `../turkce-karakter-anayasasi/SKILL.md`
+- `../guvenlik-anayasasi/SKILL.md` (ödeme/webhook/üretim tespiti güvenliği)
+- `../kimlik-dogrulama-anayasasi/SKILL.md` (kayıt `pending` abonelik açar)
 
 ---
 
@@ -58,10 +60,24 @@ app.get('/api/insights', authMiddleware,
 );
 ```
 
-### 2.3 Fair-Use Mantığı
+### 2.3 Yetki Kuralı: kim "abone" sayılır (KRİTİK)
+- **Yalnızca `active` veya `trialing` durumunda ve dönemi dolmamış** (`current_period_end` NULL ya da gelecekte) abonelik özellik kapısı (`requireFeature`) ve plan limitleri (`getPlanLimits`) için yetki verir (`getUserActiveSubscription`, `isSubscriptionEntitled` — `server.js`).
+- **`pending`** (ödemesi onaylanmamış) abonelik **kısıtlıdır**: tüm limitler 0, özellik kapısı kapalı (`402 NO_ACTIVE_SUBSCRIPTION`). Yalnızca görüntüleme/yönetim yolları (`/api/subscription`, `/api/me/features`, ödeme/iptal) pending'i görür (`getUserSubscriptionAnyStatus`); bu sonuç **yetki kararında kullanılmaz**.
+- Süresi dolmuş `active`, `cancelled`, `past_due`: limitler 0, kapı kapalı. Admin rolü plan sınırından muaftır (superuser preview planı hariç).
+- **Plan değişiminde mevcut erişim korunur:** entitled aboneliği olan kullanıcı plan değiştirmek için checkout başlatınca abonelik satırı DEĞİŞMEZ; erişim eski planla sürer, bekleyen değişiklik yalnızca `payments` kaydında tutulur (`/api/subscription` yanıtında `pending_change`). Ödeme onaylanınca (webhook / banka onayı) plan değişir. Entitled olmayanlar için `pending` abonelik oluşturulur/güncellenir. `POST /api/billing/change-plan` aynı checkout işleyicisini çağırır.
+- Testler: `tests/subscription-limits.test.js`, `tests/billing-plan-change.test.js`, `tests/billing-change-plan.test.js`.
+
+### 2.4 AI Kotası (`requireAiQuota`) — FAIL-CLOSED, ATOMİK
+- Admin muaftır. Diğerleri için `ai_queries_monthly`: `0`/tanımsız/NaN/`< -1` → **`402 AI_NOT_INCLUDED`**; pozitif → aylık kota; `-1` → sınırsız (fair-use).
+- Pozitif limitte kota, handler çalışmadan **tek SQL ile atomik rezerve edilir** (`INSERT ... ON CONFLICT DO UPDATE ... WHERE ai_queries_count < limit`): eşzamanlı istekler limiti aşamaz. Limit dolunca **`429 AI_QUOTA_EXCEEDED`** (`used`, `limit`, `upgrade_url` ile). Dönem anahtarı ayın ilk günüdür (ay başında sıfırlanır).
+- Handler başarılı biçimde `recordAiUsage(..., req)` çağırırsa rezervasyon kalıcılaşır (sayaç ikinci kez artmaz; yalnızca token + `ai_usage_log`). Çağrılmadan biterse (LLM hatası, doğrulama hatası, bağlantı kopması) rezervasyon **iade edilir**. Yeni AI ucu `requireAiQuota()` + `recordAiUsage(userId, feature, model, in, out, req)` kullanır; tüm AI uçları (`/api/ai/analyze`, `/api/insights`, `/api/forecast/executive`, medya brief/çeviri vb.) sayılır.
+- Kota doğrulanamazsa (DB hatası) **fail-closed: `503 AI_QUOTA_UNAVAILABLE`**, LLM çağrılmaz.
+- Test: `tests/ai-quota.test.js`.
+
+### 2.5 Fair-Use Mantığı
 - Enterprise'da AI sorgu sınırsız ama **24 saatte 200 sorgu üstü throttle** (`429 AI_FAIR_USE_THROTTLE`).
-- Growth'ta aylık 50 sorgu, dolarsa `402 AI_QUOTA_EXHAUSTED` → kullanıcı Enterprise'a yükseltir.
-- Frontend'de %80'de uyarı, %100'de "Yükselt" CTA'sı.
+- Growth'ta aylık 50 sorgu, dolarsa `429 AI_QUOTA_EXCEEDED` → kullanıcı Enterprise'a yükseltir (eski dokümandaki `402 AI_QUOTA_EXHAUSTED` **kullanılmıyor**).
+- Frontend'de %80'de uyarı (`buildUsageWarnings`), %100'de "Yükselt" CTA'sı.
 
 ---
 
@@ -74,6 +90,13 @@ app.get('/api/insights', authMiddleware,
 | **Banka Havalesi** | `bank_transfer` | Manuel onay | Yok — admin onaylar |
 
 Her provider `billing/providers.js`'te ortak arabirimle soyutlandı: `createCheckout`, `verifyWebhook`, `parseWebhookEvent`. Anahtar yoksa otomatik **MOCK MODE**.
+
+### 3.1 Aktivasyon ve mock ödeme kuralları (KRİTİK)
+- Abonelik **YALNIZCA** (a) imzalı sağlayıcı webhook'u veya (b) admin onaylı banka havalesi (`POST /api/billing/bank-confirm`, `adminOnly`) ile `active` olur. Ödeme kaydı (`payments`) yalnızca onaylanan kayıt için `completed` olur; webhook/banka onayı bekleyen ödemeyi önce sağlayıcı referansıyla, yoksa aynı plan+dönemle bulur.
+- **Mock (sahte) ödeme** yalnızca geliştirme ortamında veya açıkça `ALLOW_MOCK_BILLING=1` ile çalışır. Üretimde (bkz. `isProduction()`) mock sağlayıcı `503` verir; Stripe/iyzico anahtarları tanımlı değilse üretimde kart ödemesi `503`, **banka havalesi çalışır**. Üretimde mock webhook da reddedilir.
+- `/billing/success` dönüş sayfası **asla** sorgu parametresiyle (plan/dönem) aktive etmez; yalnızca mock modda ve yalnızca oturumdaki kullanıcının kendi bekleyen ödemesi için çalışır (plan/dönem ödeme kaydından okunur). Üretimde yalnızca `/?page=subscription&billing=processing`'e yönlendirir.
+- `POST /api/billing/webhook/stripe` (ham gövde, `Stripe-Signature` HMAC-SHA256 + zaman damgası, `STRIPE_WEBHOOK_SECRET`) ve `POST /api/billing/webhook/iyzico` (`IYZICO_SECRET_KEY` HMAC) imza doğrulamasından geçmeden hiçbir şey yapmaz.
+- `GET /billing/bank-info` parametreleri kaçışlar (XSS regresyonu). Test: `tests/billing-security.test.js`.
 
 ---
 
@@ -107,18 +130,21 @@ Her ödeme anında müşterinin VKN/Vergi Dairesi/Adres bilgileri `invoices` sat
 
 ### 5.1 Mimari
 - `whatsapp_phones` tablosu kullanıcı başına 3 telefon (E.164 format: `+905321234567`).
-- Yeni telefon eklenince `admin_approved = false` — admin panelinden onaylanır (kötüye kullanım kontrolü).
+- Yeni telefon eklenince `admin_approved = false` (`approval: 'pending'`) — admin onaylamadan asistan o numaraya **cevap vermez** (onaylı numara kapısı: `src/lib/whatsapp-approval.js`). Mevcut numaralar migration `007`'de onaysız sayıldı; admin yeniden onaylar.
 - WhatsApp Business API webhook gelince:
-  1. `from` numarası ile `whatsapp_phones` eşleştirilir.
-  2. Bağlı kullanıcının marka bağlamı yüklenir.
-  3. Sorgu işlenir; AI ile zenginleştirilirse `requireAiQuota` çalışır.
+  1. İmza doğrulanır (`WHATSAPP_APP_SECRET`; üretimde zorunlu).
+  2. `from` numarası normalize edilip `whatsapp_phones` ile eşleştirilir; **onay + aktif numara + aktif kullanıcı + doğrulanmış e-posta + (admin değilse) planda `whatsapp_phones` > 0 + active/trialing abonelik** yoksa sessizce yok sayılır.
+  3. Sorgu işlenir (SQL-backed cevap).
   4. Cevap WhatsApp'tan döner.
+- Not: webhook yolunda `requireAiQuota` çağrısı yoktur; "AI ile zenginleştirilirse kota" ifadesi kodda doğrulanmadı.
 
 ### 5.2 Endpoint'ler
 - `GET /api/billing/whatsapp` — kullanıcının hatları
 - `POST /api/billing/whatsapp` — telefon ekle (admin onayı bekler)
 - `DELETE /api/billing/whatsapp/:id` — telefon sil
-- `POST /api/billing/whatsapp/:id/approve` — admin onay
+- `POST /api/billing/whatsapp/:id/approve` — admin onay (eski yol)
+- `GET /api/admin/whatsapp-phones?status=pending|approved` — admin onay kuyruğu (numara `phone_masked` ile maskeli listelenir)
+- `POST /api/admin/whatsapp-phones/:id/approve`, `POST /api/admin/whatsapp-phones/:id/reject` — onay / ret
 
 ### 5.3 Sorgu Sayacı
 Her WA sorgusu `usage_meters.whatsapp_query_count` artar; sınır yok ama analitik için tutulur.
@@ -156,7 +182,9 @@ Sayaçlar `getCurrentMonthMeter(userId)` upsert pattern'i ile her API çağrıs�
 
 ---
 
-## 8. ANOMALİ TESPİTİ (KOPYALAMA RİSKİ)
+## 8. ANOMALİ TESPİTİ (KOPYALAMA RİSKİ) — PLANLANAN, KODDA DOĞRULANMADI
+
+> Bu bölümdeki `usage_anomalies` kayıtları ve sinyaller için sunucu kodunda (`server.js`, `src/`) uygulama bulunamadı; tasarım hedefi olarak okunmalıdır.
 
 ### 8.1 İzlenen Sinyaller
 - 1 saatte 100+ farklı sayfa açma → `anomaly_type = 'page_burst'`
@@ -173,7 +201,9 @@ Sayaçlar `getCurrentMonthMeter(userId)` upsert pattern'i ile her API çağrıs�
 
 ---
 
-## 9. "İLK AY ₺1" PROMOSYONU (TRIAL YERİNE)
+## 9. "İLK AY ₺1" PROMOSYONU (TRIAL YERİNE) — PLANLANAN, KODDA DOĞRULANMADI
+
+> `first_month_promo_price` için `server.js`/`src/`/`billing/` içinde kullanım bulunamadı; tasarım hedefidir.
 
 Trial kopyalama riski getirdiği için kullanılmıyor. Yerine:
 
@@ -208,11 +238,13 @@ INSERT INTO subscriptions (..., first_month_promo_price) VALUES (..., $X)
                                     ↓ period_end
                               [cancelled]
 
+(Yetki yalnızca active/trialing + süresi dolmamış durumda geçerlidir; bkz. §2.3. `pending` kısıtlıdır.)
+
 [active] ──payment_failed──→ [past_due] ──retry_success──→ [active]
                                           ──retry_fail (60d)──→ [cancelled]
 ```
 
-- **Enterprise için özel**: `invoice_pending` ara durumu (havale 30-60 gün gecikse de erişim açık kalır).
+- ~~Enterprise için `invoice_pending` ara durumu~~ **kodda doğrulanmadı / uygulanmıyor**: havale onaylanana kadar abonelik `pending` (kısıtlı) kalır; plan değişiminde mevcut aktif erişim korunur (§2.3).
 
 ---
 
@@ -244,18 +276,21 @@ INSERT INTO subscriptions (..., first_month_promo_price) VALUES (..., $X)
 | `/api/me/features` | GET | auth | Frontend gating cache |
 | `/api/billing/usage` | GET | auth | Aylık sayaçlar + uyarılar |
 | `/api/billing/payment-providers` | GET | public | 3 sağlayıcı |
-| `/api/billing/checkout` | POST | auth | Ödeme başlat |
+| `/api/billing/checkout` | POST | auth | Ödeme başlat (entitled aboneliği değiştirmez) |
+| `/api/billing/change-plan` | POST | auth | Plan değişimi (checkout'a delege) |
 | `/api/billing/cancel` | POST | auth | Dönem sonunda iptal |
 | `/api/billing/invoices` | GET | auth | Fatura geçmişi |
 | `/api/billing/rivals` | GET / PUT | auth | Rakip seçimi yönetimi |
 | `/api/billing/whatsapp` | GET / POST | auth | Telefon listesi / ekleme |
 | `/api/billing/whatsapp/:id` | DELETE | auth | Telefon sil |
-| `/api/billing/whatsapp/:id/approve` | POST | adminOnly | Admin onayı |
+| `/api/billing/whatsapp/:id/approve` | POST | adminOnly | Admin onayı (eski yol) |
+| `/api/admin/whatsapp-phones` | GET | adminOnly | Onay kuyruğu (maskeli numara) |
+| `/api/admin/whatsapp-phones/:id/approve` / `.../reject` | POST | adminOnly | Numara onay / ret |
 | `/api/billing/webhook/stripe` | POST | imza | Stripe |
 | `/api/billing/webhook/iyzico` | POST | imza | iyzico |
 | `/api/billing/bank-confirm` | POST | adminOnly | Havale onay |
 | `/api/billing/bank-pending` | GET | adminOnly | Bekleyen havaleler |
-| `/api/auth/signup` | POST | public | Hesap + pending abonelik |
+| `/api/auth/signup` | POST | public | Hesap (davet kodu zorunlu) + (plan varsa) pending abonelik |
 
 ---
 
@@ -277,7 +312,9 @@ INSERT INTO subscriptions (..., first_month_promo_price) VALUES (..., $X)
 - [ ] Plan kartı features listesinde Türkçe açıklama
 - [ ] Kullanım sayacı için `usage_meters`'da kolon var mı / artırılıyor mu?
 - [ ] Anomali sinyali oluşturuyor mu? (örn. yeni endpoint'te abuse riski varsa `anomaly_flags`)
-- [ ] `node --check server.js` geçti
+- [ ] `npm run lint:syntax`, `npm run lint:undef`, `npm test` (DB'li) geçti
+- [ ] Yetki kararı `getUserActiveSubscription`/`requireFeature` ile mi (pending'e yetki verilmiyor)?
+- [ ] AI ucu `requireAiQuota()` + `recordAiUsage(..., req)` kullanıyor mu?
 - [ ] Lokal test: Starter / Growth / Enterprise kullanıcılarla manuel deneme
 - [ ] Paywall overlay yetkisiz kullanıcıya gösteriliyor
 

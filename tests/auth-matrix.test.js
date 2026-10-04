@@ -88,3 +88,20 @@ describe('auth matrix (HTTP)', { skip: SKIP_DB && SKIP_REASON }, () => {
         assert.equal((await s.api('GET', '/api/auth/me', { token: jwtFresh })).status, 401);
     });
 });
+
+describe('authMiddleware fail-closed (birim)', () => {
+    it('kullanıcı durumu DB\'den okunamazsa 503 döner (JWT imzasına tek başına güvenilmez)', async () => {
+        const { pool } = require('../src/db');
+        const { authMiddleware } = require('../src/middleware/auth');
+        const origQuery = pool.query;
+        pool.query = async () => { throw new Error('db down'); };
+        try {
+            const token = jwt.sign({ id: 424242, role: 'admin', email: 'x@test.local' }, require('../src/config').JWT_SECRET);
+            const res = { code: null, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } };
+            let nextCalled = false;
+            await authMiddleware({ headers: { authorization: `Bearer ${token}` }, method: 'GET' }, res, () => { nextCalled = true; });
+            assert.equal(nextCalled, false);
+            assert.equal(res.code, 503);
+        } finally { pool.query = origQuery; }
+    });
+});

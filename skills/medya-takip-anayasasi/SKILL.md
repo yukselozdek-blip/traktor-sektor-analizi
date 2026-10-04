@@ -12,6 +12,7 @@ description: Traktör Sektör Analizi platformunda Marka Medya Radarı altyapıs
 - `../marka-sekme-deneyim-anayasasi/SKILL.md`
 - `../abonelik-odeme-anayasasi/SKILL.md` (media_watch feature gating)
 - `../turkce-karakter-anayasasi/SKILL.md`
+- `../guvenlik-anayasasi/SKILL.md` (IDOR / marka kapsamı kuralı §13)
 
 ---
 
@@ -129,14 +130,14 @@ Backend endpoint: `GET /api/media-watch/coverage?brand_id=...`.
 `POST /api/media-watch/translate { item_id }` — `requireFeature('ai_brief', 'media_watch')`.
 
 ### 5.2 Akış
-1. Item DB'den okunur. Eğer `language === 'tr'` ise erken çıkış (`{ skipped: true }`).
+1. Item DB'den okunur; **sahiplik kontrolü SQL'dedir**: marka kullanıcısı yalnızca kendi markasının kaydını çevirebilir (başkasının kaydı `404 Kayıt bulunamadı`); yalnızca admin her kaydı çevirebilir. Eğer `language === 'tr'` ise erken çıkış (`{ skipped: true }`).
 2. Groq API (`llama-3.3-70b-versatile`) ile prompt:
    ```
    Aşağıdaki tarım sektörü haberini TÜRKÇE'ye çevir ve 3 cümleyle özetle.
    ```
 3. JSON response: `{ translated_title, translated_summary }`
 4. DB güncellenir; `original_title` korunur.
-5. AI usage kaydı atılır (Enterprise/Growth kotasından düşülür).
+5. AI usage kaydı atılır (`recordAiUsage`; Enterprise/Growth kotasından düşülür). Kota `requireAiQuota()` ile atomik rezerve edilir; dolunca `429 AI_QUOTA_EXCEEDED` (bkz. abonelik anayasası §2.4).
 
 ### 5.3 Maliyet Kontrolü
 - Çeviri çağrısı `requireAiQuota` ile kotalı (Growth: aylık 50, Enterprise: sınırsız fair-use).
@@ -211,6 +212,12 @@ Status şeridindeki "Şimdi Tara" butonu. Tıklanınca:
 
 ## 9. GÜVENLİK
 
+### 9.0 Marka kapsamı kuralı (IDOR) — KRİTİK
+- **Marka kullanıcısı (`brand_user`) yalnızca KENDİ markasının medya verisini görür.** Tüm kullanıcı rotaları (`overview`, `alerts`, `items`, `brief`, `brief/generate`, `alerts/rebuild`, `coverage`, `run-now`, `translate`) `resolveMediaWatchScopedBrandId(req, requestedBrandId)` kullanır: admin istediği `brand_id`'yi verebilir (boşsa tümü), diğer herkes için **`req.user.brand_id`** (DB'den gelen) zorlanır; istekteki `brand_id` yok sayılır.
+- `coverage` gibi istatistik uçlarında marka filtresi SQL'e `brand_id = $1` olarak eklenir; marka kullanıcısı için filtresiz (tüm markalar) sorgu ASLA çalışmaz.
+- Tek kayıt uçlarında (`translate`) sahiplik `WHERE id = $1 AND brand_id = $2` ile denetlenir.
+- Yeni medya rotası eklenirken aynı kalıp kullanılır. Testler: `tests/security-regressions.test.js` (coverage ve translate IDOR).
+
 ### 9.1 Webhook Authorization
 Tüm `/api/media-watch/ingest`, `/alerts/refresh`, `/brief/refresh` endpoint'leri `x-media-watch-key` header gerektirir (`MEDIA_WATCH_WEBHOOK_KEY` env). Yoksa 401.
 
@@ -260,7 +267,9 @@ Bridge `127.0.0.1:3011` üzerinden çalışır (lokal-only). Internet'e açık D
 | `/api/media-watch/sources` | GET | requireFeature('media_watch') | Kaynak registry |
 | `/api/media-watch/coverage` | GET | requireFeature('media_watch') | Coğrafi/dil/kaynak istatistikleri |
 | `/api/media-watch/run-now` | POST | media_watch + tier 3 | Manuel tarama tetikle |
-| `/api/media-watch/translate` | POST | requireFeature('ai_brief','media_watch') | AI çeviri |
+| `/api/media-watch/translate` | POST | requireFeature('ai_brief','media_watch') + `requireAiQuota()` + marka sahiplik kontrolü | AI çeviri |
+| `/api/media-watch/brief/generate` | POST | requireFeature('ai_brief','media_watch') + `requireAiQuota()` | Brif üret |
+| `/api/media-watch/alerts/rebuild` | POST | requireFeature('media_watch') | Alarm yeniden oluştur |
 | `/api/media-watch/alerts/refresh` | POST | webhook key | Alarm yenile |
 | `/api/media-watch/brief/refresh` | POST | webhook key | Brif yenile |
 
