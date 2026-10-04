@@ -49,9 +49,11 @@ const API = {
             return null;
         }
         if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Bilinmeyen hata' }));
+            // Hız sınırı (429) yanıtı JSON olmayabilir: "Bilinmeyen hata" yerine anlaşılır mesaj
+            const err = await res.json().catch(() => ({ error: res.status === 429 ? 'Çok fazla istek gönderildi, lütfen biraz bekleyip tekrar deneyin.' : 'Bilinmeyen hata' }));
             const apiErr = new Error(err.error || `HTTP ${res.status}`);
             if (err.code) apiErr.code = err.code;
+            apiErr.status = res.status;
             throw apiErr;
         }
 

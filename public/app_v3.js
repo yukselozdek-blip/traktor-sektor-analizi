@@ -551,6 +551,34 @@ async function requestAiAnalysis(type, context, panelId) {
 // ============================================
 // INITIALIZATION
 // ============================================
+// Marka ve il listelerini BAĞIMSIZ yükler (Promise.allSettled): biri başarısız olsa diğeri doldurulur.
+// Zaten dolu olan liste yeniden istenmez (force: true hariç). Başarısız listeler için console.error yazılır.
+let referenceLoadFailed = { brands: false, provinces: false };
+async function loadReferenceData({ force = false } = {}) {
+    const needBrands = force || !Array.isArray(allBrands) || allBrands.length === 0;
+    const needProvinces = force || !Array.isArray(allProvinces) || allProvinces.length === 0;
+    const [brandsRes, provincesRes] = await Promise.allSettled([
+        needBrands ? API.getBrands() : Promise.resolve(allBrands),
+        needProvinces ? API.getProvinces() : Promise.resolve(allProvinces)
+    ]);
+    if (brandsRes.status === 'fulfilled' && Array.isArray(brandsRes.value)) {
+        allBrands = brandsRes.value;
+        referenceLoadFailed.brands = false;
+    } else {
+        referenceLoadFailed.brands = true;
+        allBrands = Array.isArray(allBrands) ? allBrands : [];
+        console.error('Marka listesi yüklenemedi (kritik olmayan):', brandsRes.reason || 'geçersiz yanıt');
+    }
+    if (provincesRes.status === 'fulfilled' && Array.isArray(provincesRes.value)) {
+        allProvinces = provincesRes.value;
+        referenceLoadFailed.provinces = false;
+    } else {
+        referenceLoadFailed.provinces = true;
+        allProvinces = Array.isArray(allProvinces) ? allProvinces : [];
+        console.error('İl listesi yüklenemedi (kritik olmayan):', provincesRes.reason || 'geçersiz yanıt');
+    }
+}
+
 async function init() {
     try {
         currentUser = await API.me();
@@ -562,17 +590,8 @@ async function init() {
 
     if (!currentUser) { API.logout(); return; }
 
-    try {
-        // Pre-load common data
-        [allBrands, allProvinces] = await Promise.all([
-            API.getBrands(),
-            API.getProvinces()
-        ]);
-    } catch (err) {
-        console.error('Data pre-load error (non-fatal):', err);
-        allBrands = allBrands || [];
-        allProvinces = allProvinces || [];
-    }
+    // Ortak veriler birbirinden bağımsız yüklenir: biri hata verse (ör. /api/provinces) diğeri dolu kalır.
+    await loadReferenceData();
 
     localStorage.setItem('user_data', JSON.stringify(currentUser));
     if (currentUser?.brand?.slug) {
@@ -1060,7 +1079,11 @@ function toggleSidebar(event) {
 
 // Hata ekranındaki "Tekrar Dene": satır içi ifade `let currentPage` (global sözcüksel) değişkenini göremediği için adlandırılmış işlev
 function retryCurrentPage() {
-    navigateTo(currentPage);
+    // Önceki hata başarısız yüklemelerden kaynaklanmış olabilir: ortak listeleri de (boşsa) yeniden dene.
+    API.clearCache();
+    const needRef = !allBrands?.length || !allProvinces?.length;
+    const run = () => navigateTo(currentPage, { history: 'replace' });
+    if (needRef) loadReferenceData().then(run, run); else run();
 }
 
 function onYearChange() {
@@ -5811,16 +5834,24 @@ async function loadBrandHubPage() {
 
     try {
         const state = ensureBrandHubState();
-        const effectiveBrandId = currentUser?.role === 'admin'
+        const isAdmin = currentUser?.role === 'admin';
+        // Admin için marka listesi açılışta yüklenemediyse (geçici sunucu hatası) bir kez yeniden dene.
+        if (isAdmin && !state.brand_id && !(allBrands && allBrands.length)) {
+            try { allBrands = await API.getBrands(); } catch (e) { console.error('Marka Merkezi: marka listesi yeniden denemesi başarısız:', e); }
+        }
+        const effectiveBrandId = isAdmin
             ? (state.brand_id || String(allBrands?.[0]?.id || ''))
             : String(currentUser?.brand_id || '');
 
         if (!effectiveBrandId) {
+            // Doğru bilgi: yönetici için sorun atama değil, listenin yüklenememesidir.
+            const listFailed = isAdmin;
             pageContent.innerHTML = `
                 <div class="error-state">
                     <i class="fas fa-circle-exclamation"></i>
-                    <h3>Marka seçimi bulunamadı</h3>
-                    <p>Marka Merkezi için bir marka atanmış olmalı.</p>
+                    <h3>${listFailed ? 'Markalar yüklenemedi' : 'Marka seçimi bulunamadı'}</h3>
+                    <p>${listFailed ? 'Markalar yüklenemedi, sayfayı yenileyin.' : 'Marka Merkezi için bir marka atanmış olmalı.'}</p>
+                    ${listFailed ? '<button class="btn-filter" data-on-click="retryCurrentPage()" style="margin-top:16px">Tekrar Dene</button>' : ''}
                 </div>
             `;
             return;

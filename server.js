@@ -233,6 +233,13 @@ app.get('/api/auth/diagnostic', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// Model kataloğu sorgusu (tüm tuik_veri taraması + ordered-set toplulaştırmalar, ~0,7 sn) markadan/modelden bağımsızdır;
+// marka/model değiştirildikçe yeniden hesaplanmasın diye paylaşılır (MODEL_REGION_CATALOG_TTL_MS, 0 = kapalı).
+const { memoShared } = require('./src/lib/shared-memo');
+// Açılış listeleri (marka/il) için kısa TTL + hata durumunda eski değer (REF_CACHE_TTL_MS, ms)
+const REF_CACHE_TTL_MS = Number.isFinite(parseInt(process.env.REF_CACHE_TTL_MS || '', 10)) ? parseInt(process.env.REF_CACHE_TTL_MS, 10) : 10000;
+const MODEL_REGION_CATALOG_TTL_MS = Number.isFinite(parseInt(process.env.MODEL_REGION_CATALOG_TTL_MS || '', 10))
+    ? parseInt(process.env.MODEL_REGION_CATALOG_TTL_MS, 10) : 30000;
 app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
     try {
         await ensureProvincesSeeded();
@@ -243,6 +250,8 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
         const modelWindowFilter = `
             tv.tescil_yil IS NOT NULL
             AND tv.tescil_ay IS NOT NULL
+            AND tv.tescil_ay BETWEEN 1 AND 12
+            AND tv.tescil_yil BETWEEN 1990 AND 2100
             AND (tv.model_yili IS NULL OR tv.tescil_yil = tv.model_yili OR tv.tescil_yil = tv.model_yili + 1)
         `;
         const normalizedTuikBrandExpr = `
@@ -325,7 +334,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
                 WHERE sp.status IN ('announced', 'active')
                 GROUP BY spc.province_id
             `),
-            pool.query(`
+            memoShared(`model-region:catalog:${maxYear}-${maxMonth}`, MODEL_REGION_CATALOG_TTL_MS, () => pool.query(`
                 WITH model_base AS (
                     SELECT
                         b.id AS brand_id,
@@ -397,7 +406,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
                     END AS hp_range
                 FROM model_base
                 ORDER BY total_sales DESC, brand_name ASC, model_name ASC
-            `, [maxYear, maxMonth, prevYear])
+            `, [maxYear, maxMonth, prevYear]))
         ]);
 
         const supportMap = new Map(supportRes.rows.map(row => [Number(row.province_id), row.support_programs]));
@@ -918,7 +927,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
             }
         });
     } catch (err) {
-        console.error('Model-region error:', err);
+        console.error('Model-region error:', err && err.code ? `[${err.code}]` : '', err && err.message, err && err.detail ? `| ${err.detail}` : '', err && err.stack ? `\n${err.stack}` : '');
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -5017,8 +5026,23 @@ app.get('/api/tuik/years', authMiddleware, async (req, res) => {
 });
 
 let provincesSeededOk = false;
+let provincesSeedPromise = null;
+let provincesSeedLastAttempt = 0;
 async function ensureProvincesSeeded() {
     if (provincesSeededOk) return;
+    // Tohumlama tamamlandı ama il sayısı hâlâ eksikse (kalıcı çakışma) her istekte 81 INSERT'i yeniden deneme.
+    if (Date.now() - provincesSeedLastAttempt < 60000) return;
+    // Eşzamanlı çağrılar (sayfa açılışında /api/provinces + model-region + ...) aynı tohumlamayı paylaşsın:
+    // her biri ayrı 81 INSERT döngüsü başlatıp bağlantı havuzunu ve satır kilitlerini tüketmesin.
+    if (!provincesSeedPromise) {
+        provincesSeedPromise = seedProvincesOnce()
+            .then(() => { if (!provincesSeededOk) provincesSeedLastAttempt = Date.now(); })
+            .finally(() => { provincesSeedPromise = null; });
+    }
+    return provincesSeedPromise;
+}
+
+async function seedProvincesOnce() {
     const { provinces } = require('./database/seed-data');
     const countRes = await pool.query('SELECT COUNT(*)::int AS count FROM provinces');
     const currentCount = parseInt(countRes.rows[0]?.count || 0, 10);
@@ -5029,24 +5053,32 @@ async function ensureProvincesSeeded() {
     }
 
     for (const province of provinces) {
-        await pool.query(`
-            INSERT INTO provinces (name, plate_code, region, latitude, longitude, population)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (plate_code) DO UPDATE SET
-                name = EXCLUDED.name,
-                region = EXCLUDED.region,
-                latitude = EXCLUDED.latitude,
-                longitude = EXCLUDED.longitude,
-                population = COALESCE(provinces.population, EXCLUDED.population)
-        `, [
-            province.name,
-            province.plate_code,
-            province.region,
-            province.lat,
-            province.lng,
-            province.pop
-        ]);
+        try {
+            await pool.query(`
+                INSERT INTO provinces (name, plate_code, region, latitude, longitude, population)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (plate_code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    region = EXCLUDED.region,
+                    latitude = EXCLUDED.latitude,
+                    longitude = EXCLUDED.longitude,
+                    population = COALESCE(provinces.population, EXCLUDED.population)
+            `, [
+                province.name,
+                province.plate_code,
+                province.region,
+                province.lat,
+                province.lng,
+                province.pop
+            ]);
+        } catch (err) {
+            // Tek bir il satırının çakışması (örn. aynı ad başka plaka kodunda: provinces_name_key) tüm okuma
+            // rotalarını 500'e düşürmesin; kalan iller yine de eklenir.
+            console.error(`[provinces] ${province.plate_code} ${province.name} tohumlanamadı:`, err && err.code ? `[${err.code}]` : '', err && err.message);
+        }
     }
+    const after = await pool.query('SELECT COUNT(*)::int AS count FROM provinces');
+    if (parseInt(after.rows[0]?.count || 0, 10) >= provinces.length) provincesSeededOk = true;
 }
 
 app.get('/api/brand-portals/directory', async (req, res) => {
@@ -5281,9 +5313,12 @@ app.get('/api/brand-portal', authMiddleware, async (req, res) => {
 
 app.get('/api/brands', authMiddleware, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM brands WHERE is_active = true ORDER BY name');
-        res.json(result.rows);
+        // Açılışta (init) çağrılır: DB geçici olarak yanıt vermezse (uzun kilit/havuz dolu) son iyi liste sunulur.
+        const rows = await memoShared('ref:brands', REF_CACHE_TTL_MS, async () =>
+            (await pool.query('SELECT * FROM brands WHERE is_active = true ORDER BY name')).rows, { staleOnError: true, staleAfterMs: 1500 });
+        res.json(rows);
     } catch (err) {
+        console.error('Brands list error:', err && err.code ? `[${err.code}]` : '', err && err.message);
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
@@ -5303,15 +5338,20 @@ app.get('/api/brands/:slug', authMiddleware, async (req, res) => {
 // ============================================
 app.get('/api/provinces', authMiddleware, async (req, res) => {
     try {
-        await ensureProvincesSeeded();
-        const { region } = req.query;
-        let query = 'SELECT * FROM provinces';
-        const params = [];
-        if (region) { query += ' WHERE region = $1'; params.push(region); }
-        query += ' ORDER BY name';
-        const result = await pool.query(query, params);
-        res.json(result.rows.map(row => enrichProvinceWithReference(row)));
+        const region = req.query.region ? String(req.query.region) : '';
+        // Açılışta (init) çağrılır: DB geçici olarak yanıt vermezse son iyi liste sunulur (staleOnError).
+        // Tohumlama hatası okumayı engellemez: mevcut iller yine listelenir.
+        const rows = await memoShared(`ref:provinces:${region}`, REF_CACHE_TTL_MS, async () => {
+            try { await ensureProvincesSeeded(); } catch (seedErr) { console.error('[provinces] tohumlama hatası (liste mevcut verilerle sürüyor):', seedErr && seedErr.message); }
+            let query = 'SELECT * FROM provinces';
+            const params = [];
+            if (region) { query += ' WHERE region = $1'; params.push(region); }
+            query += ' ORDER BY name';
+            return (await pool.query(query, params)).rows;
+        }, { staleOnError: true, staleAfterMs: 1500 });
+        res.json(rows.map(row => enrichProvinceWithReference(row)));
     } catch (err) {
+        console.error('Provinces list error:', err && err.code ? `[${err.code}]` : '', err && err.message);
         res.status(500).json({ error: 'Sunucu hatası' });
     }
 });

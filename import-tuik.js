@@ -4,7 +4,8 @@ const path = require('path');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const EXCEL_PATH = path.join(__dirname, 'data', 'TuikRapor.xlsx');
+// TUIK_EXCEL_PATH: yalnızca testler/operasyon için sunucu ortamından geçersiz kılma (kullanıcı girdisi değildir)
+const EXCEL_PATH = process.env.TUIK_EXCEL_PATH || path.join(__dirname, 'data', 'TuikRapor.xlsx');
 const BATCH_SIZE = 1000;
 
 const TUIK_COLUMNS = ['Marka', 'TuikModelAdi', 'TescilYil', 'TescilAy', 'SehirKodu', 'SehirAdi',
@@ -115,6 +116,7 @@ async function importExcel(poolOrClient) {
 
     // Geçerli TuikVeri satırları
     const tuikRows = [];
+    let skippedBadDate = 0;
     for (const row of tuikData) {
         const tescilYil = parseInt(row['TescilYil']);
         const tescilAy = parseInt(row['TescilAy']);
@@ -126,11 +128,14 @@ async function importExcel(poolOrClient) {
         const tuikModelAdi = String(row['TuikModelAdi'] || '').trim();
 
         if (!tescilYil || !tescilAy || isNaN(satisAdet) || satisAdet <= 0 || !marka) continue;
+        // Geçersiz ay/yıl (örn. ay=13) veritabanında MAKE_DATE(...) kullanan rotaları ('date field value out of range') 500'e düşürür
+        if (tescilAy < 1 || tescilAy > 12 || tescilYil < 1990 || tescilYil > 2100) { skippedBadDate++; continue; }
 
         tuikRows.push({
             row, tescilYil, tescilAy, satisAdet, marka, sehirAdi, sehirKodu, modelYili, tuikModelAdi
         });
     }
+    if (skippedBadDate > 0) console.warn(`⚠️ Geçersiz ay/yıl nedeniyle ${skippedBadDate} TuikVeri satırı atlandı.`);
     if (tuikRows.length === 0) {
         throw new Error('TuikVeri sayfasında geçerli (yıl, ay, adet > 0, marka dolu) satır bulunamadı.');
     }
@@ -190,7 +195,15 @@ async function importExcel(poolOrClient) {
             );
         `);
 
-        await client.query(`ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER;`);
+        // ALTER TABLE (IF NOT EXISTS olsa bile) ACCESS EXCLUSIVE kilidi alır ve kilit transaction sonuna
+        // kadar (tüm içe aktarma boyunca) tutulur: bu sürede TÜM okuma istekleri bekler, bağlantı havuzu
+        // dolar ve /api/brands, /api/provinces, /api/sales/* 500 verir. Bu yüzden yalnızca gerçekten
+        // gerekliyse çalıştır.
+        const hasModelYear = await client.query(
+            `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'sales_data' AND column_name = 'model_year'`);
+        if (hasModelYear.rowCount === 0) {
+            await client.query(`ALTER TABLE sales_data ADD COLUMN IF NOT EXISTS model_year INTEGER;`);
+        }
 
         // Excel'de aynı ay/marka için birden fazla satır olabileceğinden orijinal davranış:
         // sales_data üzerindeki UNIQUE kısıtlamalarını kaldır (artık transaction içinde;
@@ -210,7 +223,12 @@ async function importExcel(poolOrClient) {
         `);
 
         console.log('🗑️ Eski veriler temizleniyor (transaction içinde)...');
-        await client.query('TRUNCATE sales_data, tuik_veri, teknik_veri RESTART IDENTITY CASCADE');
+        // TRUNCATE ACCESS EXCLUSIVE kilit alır ve içe aktarma bitene kadar tüm okumaları bloklar (canlıda
+        // dakikalarca 'Sunucu hatası'). DELETE yalnızca satır kilidi alır; okuyucular commit'e kadar eski
+        // veriyi görmeye devam eder. Bu tablolara yabancı anahtar yok (CASCADE gereksiz).
+        await client.query('DELETE FROM sales_data');
+        await client.query('DELETE FROM tuik_veri');
+        await client.query('DELETE FROM teknik_veri');
 
         // TeknikVeri
         console.log('📥 TeknikVeri Excel verileri SQL e yazılıyor...');
@@ -341,6 +359,9 @@ async function importExcel(poolOrClient) {
         }
 
         await client.query('COMMIT');
+        // Toplu yükleme sonrası planlayıcı istatistiklerini tazele (kilit almaz; hata içe aktarmayı bozmaz)
+        try { await client.query('ANALYZE tuik_veri'); await client.query('ANALYZE teknik_veri'); await client.query('ANALYZE sales_data'); }
+        catch (e) { console.warn('ANALYZE atlandı:', e.message); }
 
         const result = {
             tuik: tuikRows.length,
