@@ -42,6 +42,8 @@ Tüm `CHANGE_ME` işaretlemelerini gerçek değerlerle değiştir:
 
 ## E-posta (SMTP) kurulumu
 
+> **Railway Free/Hobby planı giden SMTP portlarını (25/465/587) engeller** (loglarda `ETIMEDOUT`). Bu durumda `BREVO_API_KEY` kullanın (Brevo → SMTP & API → API keys); mailler HTTPS ile gönderilir, `SMTP_*` değişkenleri gerekmez. `MAIL_FROM` yine zorunlu.
+
 Şifre sıfırlama ve e-posta doğrulama mailleri SMTP ile gönderilir. **SMTP tanımlı değilse e-posta gönderilmez**: kullanıcı "Şifremi unuttum" dediğinde her zaman aynı genel mesajı görür ama mail ulaşmaz (sunucu ilk kullanımda tek bir uyarı loglar). Production'da `APP_BASE_URL` (örn. `https://alanadiniz.com`) de tanımlı olmalıdır; aksi halde mail içindeki bağlantı üretilemez.
 
 Gerekli ortam değişkenleri: `SMTP_HOST`, `SMTP_PORT` (varsayılan 587), `SMTP_SECURE` (465 için `true`), `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`.

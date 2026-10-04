@@ -7,8 +7,45 @@ const fs = require('fs');
 let transporter = null;
 let warned = false;
 
+// Railway (Free/Hobby) giden SMTP portlarını (25/465/587) engeller; bu yüzden HTTPS üzerinden
+// çalışan Brevo API'si öncelikli, SMTP ikinci seçenek.
+function hasBrevoApi() {
+    return !!(process.env.BREVO_API_KEY && process.env.MAIL_FROM);
+}
+
 function isMailConfigured() {
-    return !!(process.env.SMTP_HOST && process.env.MAIL_FROM);
+    return hasBrevoApi() || !!(process.env.SMTP_HOST && process.env.MAIL_FROM);
+}
+
+function parseFrom(from) {
+    const m = String(from || '').match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+    return m ? { name: m[1].trim() || undefined, email: m[2].trim() } : { email: String(from || '').trim() };
+}
+
+async function sendViaBrevoApi({ to, subject, text, html }) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+        const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({
+                sender: parseFrom(process.env.MAIL_FROM),
+                to: [{ email: to }],
+                subject,
+                textContent: text || undefined,
+                htmlContent: html || (text ? `<pre>${String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>` : undefined)
+            }),
+            signal: ctrl.signal
+        });
+        if (!resp.ok) {
+            const body = await resp.text().catch(() => '');
+            const e = new Error(`brevo_http_${resp.status} ${body.slice(0, 200)}`);
+            throw e;
+        }
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 function outboxFile() {
@@ -42,9 +79,13 @@ async function sendMail({ to, subject, text, html } = {}) {
         if (!isMailConfigured()) {
             if (!warned) {
                 warned = true;
-                console.warn('[mailer] SMTP yapılandırılmamış (SMTP_HOST / MAIL_FROM). E-postalar (şifre sıfırlama, e-posta doğrulama) gönderilmeyecek.');
+                console.warn('[mailer] SMTP yapılandırılmamış (BREVO_API_KEY veya SMTP_HOST, ve MAIL_FROM). E-postalar (şifre sıfırlama, e-posta doğrulama) gönderilmeyecek.');
             }
             return { sent: false, error: 'not_configured' };
+        }
+        if (hasBrevoApi()) {
+            await sendViaBrevoApi({ to, subject, text, html });
+            return { sent: true };
         }
         await getTransporter().sendMail({ from: process.env.MAIL_FROM, to, subject, text, html });
         return { sent: true };
