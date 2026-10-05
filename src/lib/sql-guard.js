@@ -78,8 +78,10 @@ function isSafeSql(sql) {
 
     const fromRe = /\b(?:FROM|JOIN)\s+([^()]*?)(?=\bWHERE\b|\bGROUP\b|\bORDER\b|\bLIMIT\b|\bHAVING\b|\bJOIN\b|\bON\b|\bUNION\b|\bINTERSECT\b|\bEXCEPT\b|\bINNER\b|\bLEFT\b|\bRIGHT\b|\bFULL\b|\bCROSS\b|\bNATURAL\b|\bWINDOW\b|\bOFFSET\b|\bFETCH\b|\)|$)/gi;
     let found = 0;
+    let commaJoins = 0; // FROM a, b, c (örtük birleşim) JOIN sayacını atlıyordu
     while ((m = fromRe.exec(forTables)) !== null) {
         const parts = m[1].split(',');
+        commaJoins += Math.max(0, parts.filter(p => p.trim()).length - 1);
         for (const part of parts) {
             const tok = part.trim().split(/\s+/)[0];
             if (!tok) continue;
@@ -90,6 +92,9 @@ function isSafeSql(sql) {
             if (!SQL_ALLOWED_TABLES.has(name) && !cteNames.has(name)) return false;
         }
     }
+    // Virgüllü (örtük) birleşimler de Kartezyen çarpım riskidir: en fazla 2, ve JOIN'lerle birlikte MAX_JOINS'i aşmaz
+    const explicitJoins = (stripped.match(/\bJOIN\b/gi) || []).length;
+    if (commaJoins > 2 || explicitJoins + commaJoins > MAX_JOINS) return false;
     // Satır içi alt sorgular için "FROM (" durumunda tablo yok sayılır; en az bir FROM yoksa da (ör. SELECT 1) sorun değil
     return true;
 }

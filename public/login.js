@@ -237,6 +237,17 @@ function finishPasswordLogin(data, { email, remember }) {
     window.location.href = plan && /^[a-z0-9_-]{1,50}$/i.test(plan) ? `/?page=subscription&plan=${encodeURIComponent(plan)}&billing=start` : '/';
 }
 
+// QR kod (kendi sunucumuzdan yüklenen qrcode-generator; çıktı yalnızca kütüphanenin ürettiği SVG'dir)
+function renderQr(el, text) {
+    if (!el) return;
+    try {
+        const qr = qrcode(0, 'M');
+        qr.addData(text);
+        qr.make();
+        el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    } catch (_) { el.style.display = 'none'; }
+}
+
 // ---- İki adımlı doğrulama: kod girişi veya (yönetici için) zorunlu kurulum ----
 const mfaState = { token: null, setup: false, ctx: null, pendingData: null };
 
@@ -258,6 +269,7 @@ async function startMfa(data, ctx) {
             const s = await API.mfaSetup(mfaState.token);
             document.getElementById('mfaSecret').textContent = s.secret;
             const a = document.getElementById('mfaUri'); a.href = s.otpauth_uri;
+            renderQr(document.getElementById('mfaQr'), s.otpauth_uri);
         } catch (err) { showError(err.message || 'Kurulum başlatılamadı'); return; }
     }
     document.getElementById('mfaCode').focus();

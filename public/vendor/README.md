@@ -8,6 +8,7 @@ Sürüm yükseltmek için: `npm i <paket>@<sürüm>` ile dosyayı alıp buraya k
 | chart.umd.min.js | chart.js (dist/chart.umd.js) | 4.4.1 |
 | chartjs-plugin-datalabels.min.js | chartjs-plugin-datalabels | 2.2.0 |
 | purify.min.js | dompurify | 3.2.7 |
+| qrcode.js | qrcode-generator (dist/qrcode.js, MIT) — 2FA kurulum QR kodu | 2.0.4 |
 | leaflet/ | leaflet | 1.9.4 |
 | fontawesome/ | @fortawesome/fontawesome-free (css + woff2) | 6.5.1 |
 | fonts/ | @fontsource/manrope, @fontsource/space-grotesk (woff2, latin+latin-ext) | son sürüm |

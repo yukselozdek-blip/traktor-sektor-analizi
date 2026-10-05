@@ -11,6 +11,15 @@ const SIGNUP_LIMITER = rateLimit({
     message: { error: 'Çok fazla kayıt denemesi. 1 saat bekleyin.' }
 });
 
+// IP'den bağımsız genel kayıt sınırı (ikinci savunma): X-Forwarded-For sahtelenip IP başına sınır atlatılsa bile
+// toplu hesap açma / e-posta taraması sınırlı kalır. Tüm istekler tek anahtarı paylaşır.
+const SIGNUP_GLOBAL_LIMITER = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: Math.max(1, parseInt(process.env.SIGNUP_GLOBAL_MAX || '', 10) || 200),
+    keyGenerator: () => 'signup-global', standardHeaders: false, legacyHeaders: false,
+    message: { error: 'Şu anda çok fazla kayıt isteği alınıyor. Lütfen daha sonra tekrar deneyin.' }
+});
+
 const FORGOT_LIMITER = rateLimit({
     windowMs: 60 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
     message: { error: 'Çok fazla şifre sıfırlama isteği. 1 saat sonra tekrar deneyin.' }
@@ -26,4 +35,4 @@ const RESET_LIMITER = rateLimit({
     message: { error: 'Çok fazla deneme. Lütfen daha sonra tekrar deneyin.' }
 });
 
-module.exports = { LOGIN_LIMITER, SIGNUP_LIMITER, FORGOT_LIMITER, RESET_LIMITER, RESEND_LIMITER };
+module.exports = { LOGIN_LIMITER, SIGNUP_LIMITER, SIGNUP_GLOBAL_LIMITER, FORGOT_LIMITER, RESET_LIMITER, RESEND_LIMITER };
