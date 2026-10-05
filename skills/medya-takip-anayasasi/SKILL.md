@@ -185,6 +185,9 @@ Mimari kurallar: (1) her RSS kaynağı çalıştırma başına **bir kez** indir
 ### 7.1 Endpoint
 `POST /api/media-watch/run-now { pack?, brand_id? }` — `requireFeature('media_watch')` + `tier_rank >= 3` (Enterprise) veya admin.
 
+### 7.1a Arka planda çalışma (zaman aşımı düzeltmesi)
+Tam tarama dakikalar sürer; "Şimdi Tara" artık köprüyü `async:true` ile çağırır ve **hemen 202** alır (`{started:true}`); tarama zaten sürüyorsa 409 döner. Durum: köprü `GET /api/media-watch/status` (sürüyor mu, son çalıştırma süresi/kayıt sayısı/ilk 10 kaynak hatası), uygulamada yalnızca yöneticiye `GET /api/admin/media-watch/bridge-status`; Yönetişim → Sistem Sağlığı sekmesinde "Medya tarama" kartı olarak görünür. Köprü kaynak hatalarını (ör. 403/429) bu özete yazar: canlıda veri gelmiyorsa ilk bakılacak yer burasıdır. Tek paket istekleri (`push-pack-N`) senkron kalır.
+
 ### 7.2 Davranış
 Bridge'in `/api/media-watch/push-pack-X` veya `/api/media-watch/push-all` endpoint'ini çağırır. Sonuç JSON: `{ payload_count, item_count, results }`.
 

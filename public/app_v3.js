@@ -10988,16 +10988,26 @@ function onMwxBrandSwitch(value) {
 
 async function onMwxRunNow() {
     const btn = event?.target?.closest('button');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Tarama başlatıldı...'; }
+    const reset = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-satellite-dish"></i> Şimdi Tara'; } };
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Başlatılıyor...'; }
     try {
         const r = await API.runMediaWatchNow({ brand_id: mediaWatchState.brand_id || null });
+        if (r?.started) {
+            // Tarama arka planda sürer (dakikalar); sayfa 60 sn'de bir kendini tazeler.
+            if (btn) btn.innerHTML = '<i class="fas fa-check"></i> Tarama arka planda başlatıldı';
+            alert('Tarama arka planda başlatıldı. Sonuçlar birkaç dakika içinde görünür; sayfa kendiliğinden yenilenir.');
+            setTimeout(reset, 8000);
+            return;
+        }
         const total = r?.item_count || r?.payload_count || 0;
         if (btn) btn.innerHTML = `<i class="fas fa-check"></i> Tamamlandı (${total} kayıt)`;
         setTimeout(() => loadMediaWatchPage(), 1500);
     } catch (err) {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-satellite-dish"></i> Şimdi Tara'; }
+        reset();
         if (err?.message?.includes('ENTERPRISE')) {
             alert('Manuel tarama Enterprise pakette. Aboneliğinizi yükseltin.');
+        } else if (err?.status === 409) {
+            alert('Tarama zaten sürüyor. Birkaç dakika sonra sayfayı yenileyin.');
         } else {
             alert('Tarama başlatılamadı: ' + (err.message || 'bilinmeyen hata'));
         }
@@ -12197,6 +12207,24 @@ async function govRenderAudit(host) {
     await govLoadAudit(host, false);
 }
 
+async function govMediaWatchCard() {
+    let b;
+    try { b = await govGet('/api/admin/media-watch/bridge-status'); } catch (_) { b = null; }
+    if (!b) return '';
+    if (!b.reachable) return govBox('Medya tarama', 'fa-satellite-dish', '<p style="color:var(--warning);margin:0">Tarama programı çalışmıyor ya da erişilemiyor. Railway\'de MEDIA_WATCH_BRIDGE_AUTOSTART=true ve MEDIA_WATCH_WEBHOOK_KEY tanımlı olmalı.</p>');
+    const l = b.last;
+    const when = x => (x ? new Date(x).toLocaleString('tr-TR') : '-');
+    const rows = [
+        ['Durum', b.in_flight ? 'Tarama sürüyor (başlangıç: ' + when(b.started_at) + ')' : 'Beklemede'],
+        ['Zamanlama', b.autorun ? b.schedule : 'Otomatik tarama kapalı'],
+        ['Son çalıştırma', l ? when(l.finished_at) + ' · ' + Math.round((l.duration_ms || 0) / 1000) + ' sn · ' + (l.ok ? 'tamamlandı' : 'HATA: ' + (l.error || '')) : 'Henüz çalışmadı'],
+        ['Son çalıştırma sonucu', l ? (l.item_count ?? 0) + ' kayıt · ' + (l.error_count || 0) + ' kaynak hatası' : '-']
+    ];
+    const errs = (l?.errors || []).map(e => [e.pack, e.where, e.error]);
+    return govBox('Medya tarama', 'fa-satellite-dish', govTable(['Alan', 'Değer'], rows)
+        + (errs.length ? '<div style="margin-top:14px"><strong style="font-size:13px">İlk kaynak hataları</strong>' + govTable(['Paket', 'Kaynak', 'Hata'], errs) + '</div>' : ''));
+}
+
 async function govRenderHealth(host) {
     let h;
     try { h = await govGet('/health/deep'); } catch (err) { host.innerHTML = govBox('Sistem sağlığı', 'fa-heart-pulse', `<p style="color:var(--danger)">Sağlık bilgisi alınamadı: ${escapeHtml(err.message)}</p>`); return; }
@@ -12212,6 +12240,7 @@ async function govRenderHealth(host) {
             ${govCard('fa-clock', '#a855f7', upText, 'ÇALIŞMA SÜRESİ', 'Node ' + (h.node_version || ''))}
             ${govCard('fa-plug', '#06b6d4', (c.database?.pool_total ?? '-') + ' / ' + (c.database?.pool_idle ?? '-'), 'BAĞLANTI HAVUZU', 'Toplam / boşta · bekleyen: ' + (c.database?.pool_waiting ?? '-'))}
         </div>
+        ${await govMediaWatchCard()}
         <div style="margin-top:14px"><button type="button" class="btn-filter" id="govHealthRefresh"><i class="fas fa-rotate" aria-hidden="true"></i> Yenile</button></div>`;
     host.querySelector('#govHealthRefresh').addEventListener('click', () => govRenderHealth(host));
 }

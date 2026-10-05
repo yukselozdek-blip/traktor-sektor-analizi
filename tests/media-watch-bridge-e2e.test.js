@@ -2,15 +2,28 @@
 // Uçtan uca: köprü (doğrudan mod) → sahte RSS → gerçek test sunucusunun /api/media-watch/ingest uç noktası → veritabanı.
 // Needs a DB (TEST_DATABASE_URL/DATABASE_URL), otherwise skipped.
 const { describe, it, before, after } = require('node:test');
+const http = require('node:http');
 const assert = require('node:assert/strict');
 const { startServer, SKIP_DB, SKIP_REASON } = require('./helpers');
 
 const KEY = 'test-media-watch-key-' + 'x'.repeat(20);
 
 describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB && SKIP_REASON }, () => {
-    let s, bridge, realFetch;
+    let s, bridge, realFetch, fakeBridge, fakeBridgeCalls = [], fakeBridgeBusy = false;
     before(async () => {
-        s = await startServer({ env: { MEDIA_WATCH_WEBHOOK_KEY: KEY } });
+        // Uygulamanın run-now yolunu sınamak için sahte köprü (gövdeyi kaydeder, meşgulse 409 döner)
+        fakeBridge = http.createServer((req, res) => {
+            let body = '';
+            req.on('data', d => { body += d; });
+            req.on('end', () => {
+                fakeBridgeCalls.push({ url: req.url, body: JSON.parse(body || '{}') });
+                res.setHeader('Content-Type', 'application/json');
+                if (fakeBridgeBusy) { res.statusCode = 409; return res.end(JSON.stringify({ error: 'Tarama zaten sürüyor' })); }
+                res.statusCode = 202; res.end(JSON.stringify({ started: true }));
+            });
+        });
+        await new Promise(r => fakeBridge.listen(0, '127.0.0.1', r));
+        s = await startServer({ env: { MEDIA_WATCH_WEBHOOK_KEY: KEY, MEDIA_WATCH_BRIDGE_URL: `http://127.0.0.1:${fakeBridge.address().port}` } });
         await s.pool.query(`INSERT INTO brands (name, slug, is_active) VALUES ('Kubota', 'kubota', true)
             ON CONFLICT (slug) DO UPDATE SET name = 'Kubota', is_active = true`);
         process.env.DATABASE_URL = s.pool.options.connectionString;
@@ -22,6 +35,7 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
         // Yalnızca dış RSS adresleri sahtelenir; test sunucusuna giden istekler gerçek kalır.
         global.fetch = async (url, opts) => {
             if (String(url).startsWith(s.baseUrl)) return realFetch(url, opts);
+            await new Promise(r => setTimeout(r, 120)); // taramanın 'sürüyor' durumunu gözlemlemek için
             return new Response(`<rss><channel><item><title>Kubota yeni traktörünü tanıttı</title><description>Lansman haberi</description>
                 <link>https://haber.test/kubota-1</link><pubDate>Mon, 05 Oct 2026 08:00:00 GMT</pubDate></item>
                 <item><title>Alakasız haber</title><link>https://haber.test/x</link></item></channel></rss>`, { status: 200 });
@@ -31,6 +45,7 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
     after(async () => {
         if (realFetch) global.fetch = realFetch;
         if (s) await s.stop();
+        if (fakeBridge) await new Promise(r => fakeBridge.close(r));
     });
 
     it('pack-5 çalışır: eşleşen haber veritabanına yazılır, alakasız yazılmaz; tekrar çalıştırmak yineleme üretmez', async () => {
@@ -54,5 +69,51 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
     it('yanlış webhook anahtarıyla ingest reddedilir', async () => {
         const r = await s.api('POST', '/api/media-watch/ingest', { headers: { 'x-media-watch-key': 'yanlis' }, body: { items: [] } });
         assert.equal(r.status, 401);
+    });
+
+    it('"Şimdi Tara": uygulama köprüyü arka planda (async) başlatır, hemen 202 döner; meşgulken 409 iletir', async () => {
+        const admin = await s.createUserWithToken({ role: 'admin' });
+        const r = await s.api('POST', '/api/media-watch/run-now', { token: admin.token, body: { brand_id: null } });
+        assert.equal(r.status, 202, r.text);
+        assert.equal(r.json.started, true);
+        const call = fakeBridgeCalls.at(-1);
+        assert.match(call.url, /push-all$/);
+        assert.equal(call.body.async, true);
+        fakeBridgeBusy = true;
+        const busy = await s.api('POST', '/api/media-watch/run-now', { token: admin.token, body: {} });
+        assert.equal(busy.status, 409);
+        fakeBridgeBusy = false;
+    });
+
+    it('bridge-status yalnızca yöneticiye açık', async () => {
+        const user = await s.createUserWithToken({ role: 'brand_user' });
+        assert.equal((await s.api('GET', '/api/admin/media-watch/bridge-status')).status, 401);
+        assert.equal((await s.api('GET', '/api/admin/media-watch/bridge-status', { token: user.token })).status, 403);
+        const admin = await s.createUserWithToken({ role: 'admin' });
+        const r = await s.api('GET', '/api/admin/media-watch/bridge-status', { token: admin.token });
+        assert.equal(r.status, 200);
+        assert.ok('reachable' in r.json);
+    });
+
+    it('köprü: async başlatma 202, sürerken ikinci istek 409, bitince durum ve son sonuç görünür', async () => {
+        const srv = await new Promise(r => { const x = bridge.app.listen(0, '127.0.0.1', () => r(x)); });
+        const base = `http://127.0.0.1:${srv.address().port}`;
+        try {
+            const post = () => realFetch(`${base}/api/media-watch/push-all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true, brand_name: 'Kubota' }) });
+            const a = await post();
+            assert.equal(a.status, 202);
+            const b = await post();
+            assert.equal(b.status, 409);
+            let st;
+            for (let i = 0; i < 100; i++) {
+                st = await (await realFetch(`${base}/api/media-watch/status`)).json();
+                if (!st.in_flight && st.last) break;
+                await new Promise(r => setTimeout(r, 200));
+            }
+            assert.equal(st.in_flight, false);
+            assert.equal(st.last.ok, true, JSON.stringify(st.last));
+            assert.ok(st.last.item_count >= 1);
+            assert.ok(Number.isFinite(st.last.duration_ms));
+        } finally { await new Promise(r => srv.close(r)); }
     });
 });
