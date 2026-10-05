@@ -69,4 +69,14 @@ describe('isSafeSql', () => {
             assert.equal(isSafeSql(q), true, q);
         }
     });
+    it('virgüllü (örtük) birleşimler sınırlıdır: Kartezyen çarpım DoS\'u', () => {
+        for (const q of [
+            'select * from sales_view a, sales_view b, sales_view c, sales_view d, sales_view e, sales_view f, sales_view g',
+            'SELECT COUNT(*) FROM sales_view, brands, provinces, tuik_veri',
+        ]) assert.equal(isSafeSql(q), false, q);
+        for (const q of [
+            'SELECT COUNT(*) FROM sales_view, brands, provinces',
+            'SELECT COUNT(*) FROM sales_view s, brands b WHERE s.brand_id = b.id',
+        ]) assert.equal(isSafeSql(q), true, q);
+    });
 });

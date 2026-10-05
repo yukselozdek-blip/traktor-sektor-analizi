@@ -17,7 +17,11 @@ function validateProfileText(body, fields = Object.keys(MAX_LEN)) {
 
 // Dahili/özel ağ adresi mi? (SSRF engeli) Ad çözümlemesi yapılmaz; yalnızca açık adres/ad kalıpları.
 function isPrivateHost(hostname = '') {
-    const h = String(hostname).toLowerCase().replace(/^\[|\]$/g, '');
+    let h = String(hostname).toLowerCase().replace(/^\[|\]$/g, '');
+    if (!h) return true;
+    // Savunma derinliği: 127.1, 0177.0.0.1, 0x7f.1, sondaki nokta gibi biçimleri WHATWG URL ile gerçek adrese normalize et
+    // (çağıran kodun normalize ettiğine güvenme); ayrıştırılamayan host güvenli sayılmaz.
+    try { h = new URL('http://' + (h.includes(':') && !h.startsWith('[') ? '[' + h + ']' : h)).hostname.replace(/^\[|\]$/g, ''); } catch (_) { return true; }
     if (!h) return true;
     if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.lan') || h.endsWith('.home')) return true;
     if (!h.includes('.') && !h.includes(':')) return true; // tek etiketli iç ad (ör. postgres, n8n)

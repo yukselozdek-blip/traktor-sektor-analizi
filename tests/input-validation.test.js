@@ -19,7 +19,7 @@ describe('girdi doğrulama (birim)', () => {
 
 describe('SSRF: isPrivateHost', () => {
     it('iç ağ/loopback/metadata adreslerini reddeder, genel alan adlarını kabul eder', () => {
-        for (const h of ['localhost', '127.0.0.1', '10.0.0.5', '192.168.1.1', '172.16.0.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '[::1]', 'fd00::1', 'n8n', 'postgres', 'app.railway.internal', 'printer.local', '2130706433', '0x7f000001', '::ffff:127.0.0.1']) {
+        for (const h of ['localhost', '127.0.0.1', '10.0.0.5', '192.168.1.1', '172.16.0.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '[::1]', 'fd00::1', 'n8n', 'postgres', 'app.railway.internal', 'printer.local', '2130706433', '0x7f000001', '::ffff:127.0.0.1', '127.1', '127.0.1', '0177.0.0.1', '0x7f.0.0.1', '127.0.0.1.']) {
             assert.equal(isPrivateHost(h), true, h);
         }
         for (const h of ['www.example.com', 'commons.wikimedia.org', '8.8.8.8', 'cdn.tumosan.com.tr']) assert.equal(isPrivateHost(h), false, h);
