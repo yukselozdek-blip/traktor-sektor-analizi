@@ -6309,6 +6309,9 @@ function isMediaWatchWebhookAuthorized(req) {
     const headerKey = String(req.headers['x-media-watch-key'] || req.headers['x-n8n-key'] || '').trim();
     const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     if (!MEDIA_WATCH_WEBHOOK_KEY) return false;
+    // HTTP başlıkları yalnızca ASCII taşır: Türkçe/Unicode karakterli anahtarlar için köprü anahtarın SHA-256 özetini gönderir.
+    const digestHeader = String(req.headers['x-media-watch-key-sha256'] || '').trim().toLowerCase();
+    if (digestHeader && safeEqualStr(digestHeader, crypto.createHash('sha256').update(MEDIA_WATCH_WEBHOOK_KEY, 'utf8').digest('hex'))) return true;
     return safeEqualStr(headerKey, MEDIA_WATCH_WEBHOOK_KEY) || safeEqualStr(bearer, MEDIA_WATCH_WEBHOOK_KEY);
 }
 

@@ -368,7 +368,7 @@ module.exports = function registerMediaWatch(app, ctx) {
     // Bağlantı testi (yalnızca yönetici): köprü dış kaynaklara ve uygulamaya erişebiliyor mu?
     app.get('/api/admin/media-watch/self-test', authMiddleware, adminOnly, async (req, res) => {
         try {
-            const r = await fetch(`${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/self-test`, { signal: AbortSignal.timeout(40000) }).catch(() => null);
+            const r = await fetch(`${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/self-test`, { signal: AbortSignal.timeout(90000) }).catch(() => null);
             if (!r || !r.ok) return res.json({ reachable: false });
             res.json({ reachable: true, ...(await r.json()) });
         } catch (err) { logRouteError(req, err, 'GET /api/admin/media-watch/self-test'); res.status(500).json({ error: 'Sunucu hatası' }); }

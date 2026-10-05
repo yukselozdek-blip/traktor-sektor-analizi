@@ -6,7 +6,7 @@ const http = require('node:http');
 const assert = require('node:assert/strict');
 const { startServer, SKIP_DB, SKIP_REASON } = require('./helpers');
 
-const KEY = 'test-media-watch-key-' + 'x'.repeat(20);
+const KEY = 'Şifre-test-key-ğüöçı-' + 'x'.repeat(20); // Türkçe karakterli anahtar: HTTP başlığına düz yazılamaz, özetle gönderilmeli
 
 describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB && SKIP_REASON }, () => {
     let s, bridge, realFetch, failIngest = false, failGoogle = false, fakeBridge, fakeBridgeCalls = [], fakeBridgeBusy = false;
@@ -181,6 +181,8 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
         assert.equal(ok.ingest.ok, true);
         assert.ok(ok.brands.count >= 1);
         assert.equal(ok.config.key_set, true);
+        assert.equal(ok.config.key_non_ascii, true);
+        assert.ok(ok.registry.total >= 30 && ok.registry.ok === ok.registry.total, JSON.stringify(ok.registry));
         assert.equal(JSON.stringify(ok).includes(KEY), false, 'anahtarın kendisi sızmamalı (yalnızca uzunluk)');
         failGoogle = true; failIngest = true;
         try {
