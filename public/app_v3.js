@@ -11533,12 +11533,15 @@ async function loadSubscriptionPage() {
                         <span class="sub-active-eyebrow">Mevcut Aboneliğiniz</span>
                         <h3>${subEscape(subscription.plan_name)}</h3>
                         <small>
-                            ${subscription.status === 'active' ? 'Aktif' : (subscription.status === 'pending' ? 'Ödeme bekleniyor' : subEscape(subscription.status))}
+                            ${subscription.status === 'active' ? 'Aktif' : (subscription.status === 'pending' ? 'Ödeme bekleniyor' : (subscription.status === 'expired' ? 'Süresi doldu' : subEscape(subscription.status)))}
                             ${subscription.current_period_end ? ` · ${new Date(subscription.current_period_end).toLocaleDateString('tr-TR')} tarihine kadar geçerli` : ''}
                         </small>
                     </div>
                 </div>
                 <div class="sub-active-actions">
+                    ${subscription.pending_change
+                        ? `<span class="sub-flag is-warn">Plan değişikliği ödeme onayı bekliyor: ${subEscape((sortedPlans.find(p => p.slug === subscription.pending_change.plan_slug) || {}).name || subscription.pending_change.plan_slug)} (${subscription.pending_change.period === 'yearly' ? 'yıllık' : 'aylık'})</span>`
+                        : ''}
                     ${subscription.cancel_at_period_end
                         ? '<span class="sub-flag is-warn">Dönem sonunda iptal edilecek</span>'
                         : `<button class="sub-btn-secondary" data-on-click="subCancelSubscription()"><i class="fas fa-ban"></i> Aboneliği iptal et</button>`

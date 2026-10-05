@@ -61,3 +61,7 @@ Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: eskiden yeniye
 - Panel açılışında marka/il yüklemesi bağımsız; `/api/brands`, `/api/provinces` kısa önbellek + son iyi liste; il tohumlaması tek uçuşta.
 - TÜİK içe aktarma okumaları bloklamaz (DELETE, koşullu ALTER, ANALYZE).
 - 125 hata yakalayıcının tamamı artık günlüğe yazar (`logRouteError`), `[5xx]` izleme ve global hata ara katmanı.
+
+### 5 Ekim 2026 — küçük sertleştirmeler
+- E-posta doğrulama token'ı veritabanında SHA-256 hash olarak saklanır; e-postadaki ham bağlantı değişmedi.
+- Süresi dolan abonelikler saatlik tarama ile `expired` olur (`BILLING_SWEEP_INTERVAL_MS`); yeniden aktivasyonda `cancel_at_period_end` sıfırlanır; abonelik sayfasında onay bekleyen plan değişikliği gösterilir.
