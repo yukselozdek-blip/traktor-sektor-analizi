@@ -12218,11 +12218,12 @@ async function govMediaWatchCard() {
         ['Durum', b.in_flight ? 'Tarama sürüyor (başlangıç: ' + when(b.started_at) + ')' : 'Beklemede'],
         ['Zamanlama', b.autorun ? b.schedule : 'Otomatik tarama kapalı'],
         ['Son çalıştırma', l ? when(l.finished_at) + ' · ' + Math.round((l.duration_ms || 0) / 1000) + ' sn · ' + (l.ok ? 'tamamlandı' : 'HATA: ' + (l.error || '')) : 'Henüz çalışmadı'],
-        ['Son çalıştırma sonucu', l ? (l.item_count ?? 0) + ' kayıt · ' + (l.error_count || 0) + ' kaynak hatası' : '-']
+        ['Toplanan haber', l ? (l.item_count ?? 0) + ' kayıt · ' + (l.error_count || 0) + ' hata' : '-'],
+        ['Veritabanına kaydedilen', l ? (l.inserted_count ?? 0) + ' kayıt · ' + (l.ingest_ok ?? 0) + ' marka başarılı, ' + (l.ingest_failed ?? 0) + ' başarısız' + ((l.ingest_failed || 0) > 0 ? '  ⚠ kayıt reddedildi' : '') : '-']
     ];
     const errs = (l?.errors || []).map(e => [e.pack, e.where, e.error]);
     return govBox('Medya tarama', 'fa-satellite-dish', govTable(['Alan', 'Değer'], rows)
-        + (errs.length ? '<div style="margin-top:14px"><strong style="font-size:13px">İlk kaynak hataları</strong>' + govTable(['Paket', 'Kaynak', 'Hata'], errs) + '</div>' : ''));
+        + (errs.length ? '<div style="margin-top:14px"><strong style="font-size:13px">İlk hatalar</strong>' + govTable(['Paket', 'Kaynak', 'Hata'], errs) + '</div>' : ''));
 }
 
 async function govRenderHealth(host) {

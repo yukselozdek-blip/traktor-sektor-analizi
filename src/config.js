@@ -36,7 +36,8 @@ const WHATSAPP_QUERY_API_KEY = process.env.WHATSAPP_QUERY_API_KEY || '';
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
-const MEDIA_WATCH_WEBHOOK_KEY = process.env.MEDIA_WATCH_WEBHOOK_KEY || process.env.WHATSAPP_QUERY_API_KEY || '';
+// Baştaki/sondaki boşluk ve satır sonu temizlenir: yapıştırılan anahtarda görünmez boşluk olması köprüyle uyuşmazlığa (401) yol açıyordu.
+const MEDIA_WATCH_WEBHOOK_KEY = String(process.env.MEDIA_WATCH_WEBHOOK_KEY || process.env.WHATSAPP_QUERY_API_KEY || '').trim();
 const N8N_WHATSAPP_PROCESSOR_URL = (
     process.env.N8N_WHATSAPP_PROCESSOR_URL
     || (process.env.RAILWAY_SERVICE_N8N_URL ? `https://${process.env.RAILWAY_SERVICE_N8N_URL}/webhook/whatsapp-sales-assistant-process-v4` : '')
