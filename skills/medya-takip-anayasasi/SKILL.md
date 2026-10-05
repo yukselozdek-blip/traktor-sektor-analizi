@@ -188,6 +188,12 @@ Mimari kurallar: (1) her RSS kaynağı çalıştırma başına **bir kez** indir
 ### 7.1a Arka planda çalışma (zaman aşımı düzeltmesi)
 Tam tarama dakikalar sürer; "Şimdi Tara" artık köprüyü `async:true` ile çağırır ve **hemen 202** alır (`{started:true}`); tarama zaten sürüyorsa 409 döner. Durum: köprü `GET /api/media-watch/status` (sürüyor mu, son çalıştırma süresi/kayıt sayısı/ilk 10 kaynak hatası), uygulamada yalnızca yöneticiye `GET /api/admin/media-watch/bridge-status`; Yönetişim → Sistem Sağlığı sekmesinde "Medya tarama" kartı olarak görünür. Köprü kaynak hatalarını (ör. 403/429) bu özete yazar: canlıda veri gelmiyorsa ilk bakılacak yer burasıdır. Tek paket istekleri (`push-pack-N`) senkron kalır.
 
+### 7.1b Dayanıklılık kuralları (canlıda tarama günlerce boş kaldığında eklendi)
+- **Kayıt artımlıdır:** doğrudan modda her marka toplanır toplanmaz uygulamaya yazılır (`_onPayload`); eskiden paketin tüm markaları toplanıp en sonda yazılıyordu, zaman aşımına uğrayan/deploy ile kesilen tarama hiç veri bırakmıyordu.
+- **RSS kaynakları paralel** (eşzamanlılık 6, `prefetchFeeds`) ve koşu başına bir kez indirilir.
+- **Google devre kesici:** art arda 6 Google Haberler isteği başarısız olursa o koşuda kalan Google sorguları atlanır (paket 1-3 ve 6); RSS paketleri (4-5) çalışmaya devam eder. Aksi halde her istek zaman aşımını bekleyip tek tarama 40+ dakika sürer.
+- **Görünürlük:** `/api/media-watch/status` sürerken ilerlemeyi (paket, kaydedilen marka, yazılan haber, istek sayıları) gösterir; Yönetişim → Sistem Sağlığı → "Medya tarama" kartında **"Bağlantı testini çalıştır"** (`GET /api/admin/media-watch/self-test`): Google Haberler / TR RSS / uluslararası RSS erişimi, uygulamaya kayıt (webhook anahtarı), aktif marka sayısı ve ayarlar; sonuç cümlesi nedeni söyler. Test anahtarın kendisini değil yalnızca uzunluğunu gösterir.
+
 ### 7.2 Davranış
 Bridge'in `/api/media-watch/push-pack-X` veya `/api/media-watch/push-all` endpoint'ini çağırır. Sonuç JSON: `{ payload_count, item_count, results }`.
 
