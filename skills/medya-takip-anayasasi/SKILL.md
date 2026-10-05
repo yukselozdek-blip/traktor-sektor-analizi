@@ -170,6 +170,10 @@ N8N_BASIC_AUTH_USER=admin
 N8N_BASIC_AUTH_PASSWORD=<password>
 ```
 
+### 6.3a Tarayıcı (köprü) deposu ve Railway'de açılışı
+`media-watch-bridge.js` (depo kökü) taramayı yapan programdır; `server.js` onu **alt süreç** olarak başlatır (`MEDIA_WATCH_BRIDGE_AUTOSTART=true`), `127.0.0.1:3011`'de yalnızca yerel dinler, doğrudan modda sonucu uygulamanın `/api/media-watch/ingest` uç noktasına yollar. Railway'de **zorunlu** değişkenler: `MEDIA_WATCH_WEBHOOK_KEY` (uzun rastgele, uygulama ve köprü aynı değeri kullanır), `MEDIA_WATCH_BRIDGE_AUTOSTART=true`. İsteğe bağlı: `MEDIA_WATCH_BRIDGE_SCHEDULE` (varsayılan saatte bir, `7 * * * *`), `MEDIA_WATCH_BRIDGE_PACKS`, `MEDIA_WATCH_BRIDGE_DELAY_MS` (istekler arası nezaket aralığı, 250), `MEDIA_WATCH_BRIDGE_RUN_ON_START` (deploy sonrası son 6 saatte kayıt yoksa ilk tarama, `true`).
+Mimari kurallar: (1) her RSS kaynağı çalıştırma başına **bir kez** indirilir (marka sayısı kadar değil); (2) 12'den fazla marka varsa pencere dönüşümlüdür (alfabetik ilk 12 sabit kalmaz); (3) yanıtlar 3 MB ile sınırlıdır; (4) modül `require` ile içe aktarılabilir (testler), doğrudan çalıştırılınca dinler. Testler: `tests/media-watch-bridge.test.js` (birim), `tests/media-watch-bridge-e2e.test.js` (köprü → ingest → veritabanı).
+
 ### 6.4 DIRECT_MODE vs n8n Mode
 - Lokal/Railway tek-konteyner deploy → `MEDIA_WATCH_BRIDGE_DIRECT=true` (n8n'i bypass eder)
 - Çoklu konteyner + n8n hizmeti aktif → `false` (webhook akışı)
@@ -195,7 +199,7 @@ Status şeridindeki "Şimdi Tara" butonu. Tıklanınca:
 ## 8. ZAMANLAMA VE PERFORMANS
 
 ### 8.1 Cron
-- Default: `*/30 * * * *` (her 30 dakika)
+- Default: `7 * * * *` (saatte bir; kaynaklara nazik davranmak için. Sıklaştırmak için `MEDIA_WATCH_BRIDGE_SCHEDULE`)
 - 6 pack × ~12 marka × ~3-25 query = saatte ~3000+ HTTP çağrısı
 - `autorunInFlight` mutex'i ile eş zamanlı çalışma engellenir
 - Pack-bazlı sıralı yürütme (paralel değil) — kaynak rate-limit'ini aşmamak için
