@@ -11920,7 +11920,8 @@ async function renderMfaCard() {
             </div>`;
     } else if (mfaUi.secret) {
         body = `
-            <p style="font-size:13px;margin:0 0 8px">Doğrulayıcı uygulamanızda (Google/Microsoft Authenticator, 1Password vb.) "anahtar gir" ile ekleyin:</p>
+            <p style="font-size:13px;margin:0 0 8px">Telefonunuzdaki doğrulayıcı uygulamada (Google/Microsoft Authenticator, 1Password vb.) "+" → "QR kodu tara" ile okutun. Tarayamazsanız "anahtar gir" ile alttaki anahtarı yazın:</p>
+            <div id="mfaQrBox" style="background:#fff;padding:10px;border-radius:10px;width:200px;height:200px;margin-bottom:10px" role="img" aria-label="Doğrulayıcı uygulama için QR kod"></div>
             <code style="display:block;padding:10px;border-radius:8px;background:var(--bg-card-hover);word-break:break-all;letter-spacing:1px;user-select:all">${escapeHtml(mfaUi.secret)}</code>
             <p style="margin:6px 0 12px;font-size:12px"><a href="${escapeHtml(mfaUi.uri)}">Telefonda uygulamayı otomatik aç</a></p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;max-width:360px">
@@ -11940,6 +11941,15 @@ async function renderMfaCard() {
                 <div role="status" style="margin-top:12px;font-size:13px;color:${color}">${escapeHtml(mfaUi.msg)}</div>
             </div>
         </div>`;
+    const qrBox = document.getElementById('mfaQrBox');
+    if (qrBox && mfaUi.uri && typeof qrcode === 'function') {
+        try {
+            const qr = qrcode(0, 'M');
+            qr.addData(mfaUi.uri);
+            qr.make();
+            qrBox.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+        } catch (_) { qrBox.style.display = 'none'; }
+    }
 }
 
 async function mfaBeginSetup() {

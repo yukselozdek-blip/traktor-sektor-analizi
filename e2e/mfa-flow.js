@@ -22,6 +22,8 @@ const ok = (c, m) => { console.log((c ? 'OK   ' : 'FAIL ') + m); if (!c) process
     ok(await page.locator('#mfaSetupBox').isVisible(), 'yönetici için zorunlu kurulum ekranı geldi');
     await page.waitForFunction(() => document.getElementById('mfaSecret').textContent.length > 10);
     const secret = (await page.textContent('#mfaSecret')).trim();
+    ok(await page.locator('#mfaQr svg').count() === 1, 'QR kod çizildi');
+    await page.locator('#mfaQr').screenshot({ path: '/tmp/qr/mfa-qr.png' });
     ok(new URL(page.url()).pathname.includes('login'), 'kurulum bitmeden panele geçilmedi');
 
     await page.fill('#mfaCode', '000000');

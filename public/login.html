@@ -738,7 +738,8 @@
             <form class="auth-form" id="mfaForm" data-form="mfa" autocomplete="off">
                 <h2 class="login-welcome" id="mfaTitle">İki Adımlı Doğrulama</h2>
                 <div id="mfaSetupBox" style="display:none;flex-direction:column;gap:10px;">
-                    <p style="margin:0;color:var(--muted);font-size:13px;">Yönetici hesapları için iki adımlı doğrulama zorunludur. Bir doğrulayıcı uygulamada (Google Authenticator, Microsoft Authenticator, 1Password vb.) "anahtar gir" seçeneğiyle aşağıdaki anahtarı ekleyin:</p>
+                    <p style="margin:0;color:var(--muted);font-size:13px;">Yönetici hesapları için iki adımlı doğrulama zorunludur. Telefonunuzdaki doğrulayıcı uygulamada (Google Authenticator, Microsoft Authenticator, 1Password vb.) "+" → "QR kodu tara" ile aşağıdaki kodu okutun. Tarayamazsanız "anahtar gir" ile alttaki anahtarı yazın:</p>
+                    <div id="mfaQr" style="align-self:center;background:#fff;padding:10px;border-radius:10px;width:200px;height:200px;" role="img" aria-label="Doğrulayıcı uygulama için QR kod"></div>
                     <code id="mfaSecret" style="display:block;padding:10px;border-radius:8px;background:rgba(255,255,255,.06);word-break:break-all;letter-spacing:1px;text-align:center;user-select:all;"></code>
                     <a id="mfaUri" href="#" style="font-size:12px;text-align:center;">Telefonda uygulamayı otomatik aç</a>
                 </div>
@@ -907,8 +908,9 @@
         </section>
     </div>
 
+    <script src="/vendor/qrcode.js"></script>
     <script src="/api_v3.js?v=6.2-mfa"></script>
-    <script src="/login.js?v=1.1"></script>
+    <script src="/login.js?v=1.2"></script>
     <script src="/a11y.js?v=1.5"></script>
 </body>
 </html>
