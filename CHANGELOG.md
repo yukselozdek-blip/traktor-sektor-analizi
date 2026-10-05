@@ -65,3 +65,4 @@ Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: eskiden yeniye
 ### 5 Ekim 2026 — küçük sertleştirmeler
 - E-posta doğrulama token'ı veritabanında SHA-256 hash olarak saklanır; e-postadaki ham bağlantı değişmedi.
 - Süresi dolan abonelikler saatlik tarama ile `expired` olur (`BILLING_SWEEP_INTERVAL_MS`); yeniden aktivasyonda `cancel_at_period_end` sıfırlanır; abonelik sayfasında onay bekleyen plan değişikliği gösterilir.
+- Harita sayfalarından ayrılırken oluşan Leaflet `invalidateSize` yarışı giderildi (zamanlayıcılar haritanın hâlâ sayfada olduğunu kontrol eder).

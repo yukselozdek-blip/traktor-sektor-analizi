@@ -6585,9 +6585,11 @@ function bindTurkeyMapResizeObserver() {
 function scheduleTurkeyMapResize(refit = false) {
     if (turkeyMapResizeTimer) clearTimeout(turkeyMapResizeTimer);
     turkeyMapResizeTimer = setTimeout(() => {
-        if (!leafletMap) return;
-        leafletMap.invalidateSize();
-        if (refit) fitTurkeyMapBounds();
+        if (!leafletMap || !leafletMap._container || !leafletMap._container.isConnected) return;
+        try {
+            leafletMap.invalidateSize();
+            if (refit) fitTurkeyMapBounds();
+        } catch (_) { /* harita sayfadan ayrılırken kaldırıldı */ }
     }, 220);
 }
 
@@ -13614,7 +13616,7 @@ async function renderModelRegionMap({ focus, themeProfile }) {
             }).addTo(_mrxMap);
 
             _mrxMap.fitBounds(geoLayer.getBounds(), { padding: [8, 8] });
-            setTimeout(() => _mrxMap.invalidateSize(), 80);
+            { const m = _mrxMap; setTimeout(() => { try { if (m === _mrxMap && m._container && m._container.isConnected) m.invalidateSize(); } catch (_) { /* harita kaldırıldı */ } }, 80); }
         } catch (err) {
             console.warn('Model-bölge haritası yüklenemedi', err);
         }
@@ -14880,7 +14882,7 @@ async function loadBrandComparePage() {
 
                     // Tüm Türkiye'yi tam kadraja yerleştir (zoom kullanıcı kontrolüne kapalı)
                     _bmMap.fitBounds(geoLayer.getBounds(), { padding: [8, 8] });
-                    setTimeout(() => _bmMap.invalidateSize(), 80);
+                    { const m = _bmMap; setTimeout(() => { try { if (m === _bmMap && m._container && m._container.isConnected) m.invalidateSize(); } catch (_) { /* harita kaldırıldı */ } }, 80); }
                 } catch (err) {
                     console.warn('Choropleth yüklenemedi, nokta haritasına dönülüyor', err);
                     compareDominanceMap.forEach(item => {
