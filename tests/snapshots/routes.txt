@@ -16,6 +16,8 @@ MW middleware /^\/api\/?(?=\/|$)/i
 GET "/api/auth/diagnostic" [authMiddleware>adminOnly><anonymous>]
 GET "/api/sales/model-region" [authMiddleware><anonymous>]
 GET "/health" [<anonymous>]
+GET "/health/ready" [<anonymous>]
+GET "/health/deep" [authMiddleware>adminOnly><anonymous>]
 GET "/privacy-policy" [<anonymous>]
 GET "/terms-of-service" [<anonymous>]
 GET "/data-deletion" [<anonymous>]
