@@ -110,3 +110,10 @@ Betikler için `'unsafe-inline'` **kapalı** (`script-src 'self'` + `script-src-
 - **E-posta doğrulaması zorunludur**: e-posta gönderimi (Brevo veya SMTP, yukarıdaki bölüm) ve `APP_BASE_URL` tanımlı olmalıdır; aksi halde yeni kullanıcılar giriş yapamaz. Önceden kayıtlı kullanıcılar migration ile doğrulanmış sayıldı.
 - WhatsApp asistanı yalnızca **admin onaylı** numaralara cevap verir; mevcut numaralar migration sonrası onaysızdır. Yönetici onayı: `GET/POST /api/admin/whatsapp-phones...` (arayüz: Ayarlar).
 - Ayrıntılı kurallar ve yeni özellik kontrol listesi: `skills/guvenlik-anayasasi/SKILL.md`.
+
+## İki adımlı doğrulama (2FA)
+
+Yönetici ve süper kullanıcı hesapları için üretimde **zorunludur**: bu hesaplar ilk girişte (yeni sürüm yayınlandıktan sonra) ekranda bir anahtar görür, doğrulayıcı uygulamaya ekleyip 6 haneli kodu girer ve 10 kurtarma kodunu saklar. Diğer kullanıcılar Ayarlar → "İki Adımlı Doğrulama" kartından isteğe bağlı açar.
+- Railway'de `TOTP_ENC_KEY` (uzun rastgele değer) tanımlayın; tanımlanmazsa `JWT_SECRET`'tan türetilir. **Bu anahtarı sonradan değiştirmeyin** (kayıtlı 2FA secret'ları çözülemez olur).
+- Telefon kaybında: kurtarma kodu kullanın; yoksa başka bir süper kullanıcı `POST /api/admin/users/:id/2fa-reset` ile sıfırlar. Tek süper kullanıcı varsa ve hiçbir yol kalmadıysa veritabanında `UPDATE users SET totp_enabled=false, totp_secret_enc=NULL WHERE email='...'` çalıştırılır.
+- Acil geri alma: `REQUIRE_ADMIN_2FA=0` (zorunluluğu kapatır; etkin hesaplar yine kod ister).

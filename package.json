@@ -18,7 +18,8 @@
     "e2e:contrast": "node e2e/brand-contrast.js",
     "e2e:mobile": "node e2e/mobile-overflow.js",
     "e2e:click": "node e2e/click-through.js",
-    "e2e:refdata": "node e2e/ref-data-resilience.js"
+    "e2e:refdata": "node e2e/ref-data-resilience.js",
+    "e2e:mfa": "node e2e/mfa-flow.js"
   },
   "dependencies": {
     "axios": "^1.6.7",

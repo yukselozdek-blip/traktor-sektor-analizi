@@ -217,18 +217,88 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     const remember = !!fd.get('remember_me');
     try {
         const data = await API.login(email, fd.get('password'));
-        if (data?.session || data?.token) {
-            if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
-            if (remember) localStorage.setItem('remember_email', email);
-            else localStorage.removeItem('remember_email');
-            let plan = null;
-            try { plan = localStorage.getItem('post_login_plan'); localStorage.removeItem('post_login_plan'); } catch (_) { /* noop */ }
-            // Kayıtta plan seçildiyse doğrulama sonrası ilk girişte abonelik sayfasına gidilir.
-            window.location.href = plan && /^[a-z0-9_-]{1,50}$/i.test(plan) ? `/?page=subscription&plan=${encodeURIComponent(plan)}&billing=start` : '/';
-        }
+        if (data?.mfa_required) { startMfa(data, { email, remember }); return; }
+        finishPasswordLogin(data, { email, remember });
     } catch (err) {
         showError(err.message || 'Giriş başarısız');
         document.getElementById('btnResendLogin').style.display = err.code === 'EMAIL_NOT_VERIFIED' ? 'inline-flex' : 'none';
+    }
+});
+
+
+function finishPasswordLogin(data, { email, remember }) {
+    if (!(data?.session || data?.token)) return;
+    if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
+    if (remember) localStorage.setItem('remember_email', email);
+    else localStorage.removeItem('remember_email');
+    let plan = null;
+    try { plan = localStorage.getItem('post_login_plan'); localStorage.removeItem('post_login_plan'); } catch (_) { /* noop */ }
+    // Kayıtta plan seçildiyse doğrulama sonrası ilk girişte abonelik sayfasına gidilir.
+    window.location.href = plan && /^[a-z0-9_-]{1,50}$/i.test(plan) ? `/?page=subscription&plan=${encodeURIComponent(plan)}&billing=start` : '/';
+}
+
+// ---- İki adımlı doğrulama: kod girişi veya (yönetici için) zorunlu kurulum ----
+const mfaState = { token: null, setup: false, ctx: null, pendingData: null };
+
+async function startMfa(data, ctx) {
+    mfaState.token = data.mfa_token; mfaState.setup = !!data.mfa_setup_required; mfaState.ctx = ctx; mfaState.pendingData = null;
+    showTab('mfa');
+    document.getElementById('mfaRecoveryBox').style.display = 'none';
+    document.getElementById('mfaSubmit').style.display = '';
+    document.getElementById('mfaCode').value = '';
+    document.getElementById('mfaCode').closest('.field').style.display = '';
+    const setupBox = document.getElementById('mfaSetupBox');
+    setupBox.style.display = mfaState.setup ? 'flex' : 'none';
+    document.getElementById('mfaTitle').textContent = mfaState.setup ? 'İki Adımlı Doğrulamayı Kur' : 'İki Adımlı Doğrulama';
+    document.getElementById('mfaHint').textContent = mfaState.setup
+        ? 'Anahtarı uygulamaya ekledikten sonra uygulamanın gösterdiği 6 haneli kodu girin.'
+        : 'Doğrulayıcı uygulamanızdaki 6 haneli kodu girin. Cihazınıza erişemiyorsanız kurtarma kodlarınızdan birini yazabilirsiniz.';
+    if (mfaState.setup) {
+        try {
+            const s = await API.mfaSetup(mfaState.token);
+            document.getElementById('mfaSecret').textContent = s.secret;
+            const a = document.getElementById('mfaUri'); a.href = s.otpauth_uri;
+        } catch (err) { showError(err.message || 'Kurulum başlatılamadı'); return; }
+    }
+    document.getElementById('mfaCode').focus();
+}
+
+document.getElementById('mfaForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    hideMessages();
+    const code = document.getElementById('mfaCode').value.trim();
+    const btn = document.getElementById('mfaSubmit');
+    btn.disabled = true;
+    try {
+        if (mfaState.setup) {
+            const r = await API.mfaEnable(code, mfaState.token);
+            mfaState.pendingData = r;
+            document.getElementById('mfaRecoveryList').textContent = (r.recovery_codes || []).join('\n');
+            document.getElementById('mfaRecoveryBox').style.display = 'flex';
+            document.getElementById('mfaSetupBox').style.display = 'none';
+            document.getElementById('mfaCode').closest('.field').style.display = 'none';
+            btn.style.display = 'none';
+            document.getElementById('mfaContinue').focus();
+        } else {
+            const r = await API.mfaVerify(mfaState.token, code);
+            if (r?.token || r?.session) {
+                localStorage.setItem('user_data', JSON.stringify(r.user));
+                finishPasswordLogin(r, mfaState.ctx || { email: '', remember: false });
+            }
+        }
+    } catch (err) {
+        showError(err.message || 'Doğrulama başarısız');
+        if (/^Oturum süresi doldu/.test(err.message || '')) setTimeout(() => window.location.reload(), 1500);
+    } finally { btn.disabled = false; }
+});
+
+document.getElementById('mfaContinue').addEventListener('click', () => {
+    const r = mfaState.pendingData;
+    if (r?.token || r?.session) {
+        localStorage.setItem('user_data', JSON.stringify(r.user));
+        finishPasswordLogin(r, mfaState.ctx || { email: '', remember: false });
+    } else {
+        window.location.reload(); // zorunlu olmayan akış: yeniden giriş
     }
 });
 
@@ -357,6 +427,7 @@ async function handleGoogleCredential(response) {
             return;
         }
         if (!r.ok) { showError(data.error || 'Google girişi başarısız'); return; }
+        if (data?.mfa_required) { startMfa(data, { email: '', remember: false }); return; }
         if (data?.session || data?.token) {
             localStorage.setItem('user_data', JSON.stringify(data.user));
             if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);

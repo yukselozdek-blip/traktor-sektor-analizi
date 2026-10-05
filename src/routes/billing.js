@@ -24,6 +24,20 @@ module.exports = function registerBilling(app, ctx) {
         getUserActiveSubscription, getUserSubscriptionAnyStatus, isSubscriptionEntitled, getPreviewPlanSlug, getPreviewPlanFeatures
     } = ctx;
 
+    // Dönemi dolan aktif abonelikleri 'expired' yapar (erişim zaten current_period_end ile kesiliyor; bu yalnızca durumu tutarlı kılar).
+    async function expireStaleSubscriptions() {
+        try {
+            const r = await pool.query(
+                `UPDATE subscriptions SET status = 'expired', updated_at = NOW()
+                 WHERE status IN ('active', 'trialing', 'cancelled') AND current_period_end IS NOT NULL AND current_period_end <= NOW()`);
+            if (r.rowCount) console.log(`[billing] ${r.rowCount} abonelik süresi dolduğu için expired yapıldı`);
+        } catch (err) { console.error('[billing] expire sweep hatası:', err.message); }
+    }
+    app.locals.expireStaleSubscriptions = expireStaleSubscriptions;
+    const sweepMs = Math.max(500, parseInt(process.env.BILLING_SWEEP_INTERVAL_MS, 10) || 60 * 60 * 1000);
+    setTimeout(expireStaleSubscriptions, Math.min(sweepMs, 30 * 1000)).unref();
+    setInterval(expireStaleSubscriptions, sweepMs).unref();
+
     // Plan listesi (public)
     app.get('/api/plans', async (req, res) => {
         try {
@@ -289,7 +303,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
         if (existing.rows.length > 0) {
             await pool.query(
                 `UPDATE subscriptions SET plan_id = $1, status = 'active', provider = $2,
-             current_period_start = NOW(), current_period_end = $3, updated_at = NOW()
+             current_period_start = NOW(), current_period_end = $3, cancel_at_period_end = false, updated_at = NOW()
              WHERE id = $4`,
                 [planId, provider, periodEnd, existing.rows[0].id]
             );

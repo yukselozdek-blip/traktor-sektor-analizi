@@ -7,6 +7,7 @@ const { sendMail } = require('./mailer');
 
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 const newVerifyToken = () => crypto.randomBytes(24).toString('hex');
+const hashVerifyToken = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
 const verifyExpiry = () => new Date(Date.now() + VERIFY_TTL_MS);
 
 function sendVerificationEmail(req, user, token, escapeMailHtml) {
@@ -23,4 +24,4 @@ function sendVerificationEmail(req, user, token, escapeMailHtml) {
     } catch (_) { /* akış bozulmamalı */ }
 }
 
-module.exports = { VERIFY_TTL_MS, newVerifyToken, verifyExpiry, sendVerificationEmail };
+module.exports = { VERIFY_TTL_MS, newVerifyToken, hashVerifyToken, verifyExpiry, sendVerificationEmail };

@@ -1,5 +1,6 @@
 'use strict';
 const { describe, it, before, after } = require('node:test');
+const { hashVerifyToken } = require('../src/lib/verify-email');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { startServer, SKIP_DB, SKIP_REASON, TEST_PASSWORD } = require('./helpers');
@@ -28,7 +29,8 @@ describe('e-posta doğrulaması zorunlu', { skip: SKIP_DB && SKIP_REASON }, () =
 
         const row = (await s.pool.query('SELECT email_verified, email_verify_token, email_verify_expires FROM users WHERE email = $1', [email])).rows[0];
         assert.equal(row.email_verified, false);
-        assert.equal(row.email_verify_token, r.json.verify_token_dev);
+        assert.notEqual(row.email_verify_token, r.json.verify_token_dev); // veritabanında ham token yok
+        assert.equal(row.email_verify_token, hashVerifyToken(r.json.verify_token_dev));
         const hrs = (new Date(row.email_verify_expires) - Date.now()) / 3600000;
         assert.ok(hrs > 23 && hrs <= 24.01, 'token ~24 saat geçerli: ' + hrs);
 
@@ -40,10 +42,10 @@ describe('e-posta doğrulaması zorunlu', { skip: SKIP_DB && SKIP_REASON }, () =
         assert.match(blocked.json.error, /doğrulayın/);
         assert.equal(blocked.json.token, undefined);
 
-        const v = await fetch(`${s.baseUrl}/api/auth/verify-email?token=${row.email_verify_token}`, { redirect: 'manual' });
+        const v = await fetch(`${s.baseUrl}/api/auth/verify-email?token=${r.json.verify_token_dev}`, { redirect: 'manual' });
         assert.equal(v.status, 302);
         assert.equal(v.headers.get('location'), '/login.html?verified=1');
-        const v2 = await fetch(`${s.baseUrl}/api/auth/verify-email?token=${row.email_verify_token}`, { redirect: 'manual' });
+        const v2 = await fetch(`${s.baseUrl}/api/auth/verify-email?token=${r.json.verify_token_dev}`, { redirect: 'manual' });
         assert.equal(v2.headers.get('location'), '/login.html?verified=0'); // tek kullanımlık
 
         const ok = await s.api('POST', '/api/auth/login', { body: { email, password: TEST_PASSWORD } });
@@ -53,7 +55,7 @@ describe('e-posta doğrulaması zorunlu', { skip: SKIP_DB && SKIP_REASON }, () =
 
     it('süresi dolmuş doğrulama bağlantısı reddedilir', async () => {
         const u = await s.createUser({ verified: false });
-        await s.pool.query(`UPDATE users SET email_verify_token = $1, email_verify_expires = NOW() - INTERVAL '1 minute' WHERE id = $2`, ['a'.repeat(48), u.id]);
+        await s.pool.query(`UPDATE users SET email_verify_token = $1, email_verify_expires = NOW() - INTERVAL '1 minute' WHERE id = $2`, [hashVerifyToken('a'.repeat(48)), u.id]);
         const v = await fetch(`${s.baseUrl}/api/auth/verify-email?token=${'a'.repeat(48)}`, { redirect: 'manual' });
         assert.equal(v.headers.get('location'), '/login.html?verified=0');
         assert.equal((await s.pool.query('SELECT email_verified FROM users WHERE id = $1', [u.id])).rows[0].email_verified, false);
@@ -70,7 +72,7 @@ describe('e-posta doğrulaması zorunlu', { skip: SKIP_DB && SKIP_REASON }, () =
 
     it('resend-verification: her zaman aynı genel yanıt; yalnızca doğrulanmamış hesaba yeni token', async () => {
         const unv = await s.createUser({ verified: false });
-        await s.pool.query(`UPDATE users SET email_verify_token = $1, email_verify_expires = NOW() + INTERVAL '1 hour' WHERE id = $2`, ['b'.repeat(48), unv.id]);
+        await s.pool.query(`UPDATE users SET email_verify_token = $1, email_verify_expires = NOW() + INTERVAL '1 hour' WHERE id = $2`, [hashVerifyToken('b'.repeat(48)), unv.id]);
         const ver = await s.createUser({ verified: true });
         const call = email => s.api('POST', '/api/auth/resend-verification', { body: { email } });
         const a = await call(unv.email);
@@ -80,7 +82,7 @@ describe('e-posta doğrulaması zorunlu', { skip: SKIP_DB && SKIP_REASON }, () =
         assert.deepEqual(a.json, b.json);
         assert.deepEqual(a.json, c.json);
         const row = (await s.pool.query('SELECT email_verify_token, email_verify_expires FROM users WHERE id = $1', [unv.id])).rows[0];
-        assert.notEqual(row.email_verify_token, 'b'.repeat(48));
+        assert.notEqual(row.email_verify_token, hashVerifyToken('b'.repeat(48)));
         assert.ok(new Date(row.email_verify_expires) - Date.now() > 23 * 3600000);
         assert.equal((await s.pool.query('SELECT email_verify_token FROM users WHERE id = $1', [ver.id])).rows[0].email_verify_token, null);
     });
