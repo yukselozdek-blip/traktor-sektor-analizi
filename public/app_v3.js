@@ -12234,6 +12234,7 @@ function govMwSelfTestHtml(t) {
     const net = x => x ? (x.ok ? `${x.status} · ${(x.ms / 1000).toFixed(1)} sn · ${x.items} haber` : `${x.error || ('HTTP ' + x.status)} · ${((x.ms || 0) / 1000).toFixed(1)} sn`) : '-';
     const rows = [
         ['Google Haberler', mark(t.google_news?.ok), net(t.google_news)],
+        ['Bing Haberler (yedek)', mark(t.bing_news?.ok), net(t.bing_news)],
         ['Türkiye sektör RSS (AA Tarım)', mark(t.sector_rss?.ok), net(t.sector_rss)],
         ['Uluslararası RSS (AgFunder)', mark(t.international_rss?.ok), net(t.international_rss)],
         ['Uygulamaya kayıt (webhook anahtarı)', mark(t.ingest?.ok), t.ingest?.ok ? 'Kabul edildi' : escapeHtml(t.ingest?.error || '')],
@@ -12244,6 +12245,7 @@ function govMwSelfTestHtml(t) {
     const verdict = [];
     if (t.ingest && !t.ingest.ok) verdict.push(t.ingest.key_rejected ? 'Uygulama kayıtları reddediyor: MEDIA_WATCH_WEBHOOK_KEY değeri uygulama ve köprüde farklı görünüyor.' : 'Haberler uygulamaya yazılamıyor (yukarıdaki hataya bakın).');
     if (!t.google_news?.ok && !t.sector_rss?.ok && !t.international_rss?.ok) verdict.push('Sunucu hiçbir dış siteye erişemiyor: ağ çıkışı kısıtlı olabilir.');
+    else if (!t.google_news?.ok && t.bing_news?.ok) verdict.push('Google Haberler bu sunucuyu engelliyor; tarama otomatik olarak Bing Haberler yedeğiyle sürer.');
     else if (!t.google_news?.ok) verdict.push('Google Haberler bu sunucudan yanıt vermiyor veya engelliyor; RSS kaynakları (paket 4 ve 5) çalışır.');
     if (t.brands && !t.brands.ok) verdict.push('Taranacak aktif marka yok.');
     if (!verdict.length) verdict.push('Her şey çalışıyor görünüyor. "Şimdi Tara" ile taramayı başlatın.');
