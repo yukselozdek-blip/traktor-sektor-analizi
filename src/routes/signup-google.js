@@ -7,7 +7,6 @@ const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('../config');
 const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
 const { INVITE_ERROR, consumeInviteCode } = require('../lib/invites');
 const { newVerifyToken, hashVerifyToken, verifyExpiry, sendVerificationEmail } = require('../lib/verify-email');
-const BRAND_MISMATCH_ERROR = 'Davet kodu seçtiğiniz markaya ait değil';
 
 module.exports = function registerSignupGoogle(app, ctx) {
     const {
@@ -64,7 +63,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
                     if (!invite) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
                     if (effectiveBrandId && effectiveBrandId !== invite.brand_id) {
                         await client.query('ROLLBACK');
-                        return res.status(400).json({ error: BRAND_MISMATCH_ERROR });
+                        return res.status(400).json({ error: INVITE_ERROR }); // kodun geçerli olduğu sızdırılmaz: her hata aynı mesaj
                     }
                     effectiveBrandId = invite.brand_id;
                     inviteId = invite.id;
@@ -137,7 +136,9 @@ module.exports = function registerSignupGoogle(app, ctx) {
 
     async function verifyGoogleIdToken(idToken) {
         // Google'ın tokeninfo endpoint'i ile minimal doğrulama (production'da google-auth-library tercih edilir)
-        const r = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`, {
+        // Test için sahte tokeninfo uç noktası yalnızca üretim DIŞINDA kabul edilir.
+        const tokenInfoUrl = (!require('../lib/env').isProduction() && process.env.GOOGLE_TOKENINFO_URL) || 'https://oauth2.googleapis.com/tokeninfo';
+        const r = await fetch(`${tokenInfoUrl}?id_token=${encodeURIComponent(idToken)}`, {
             signal: AbortSignal.timeout(8000)
         });
         if (!r.ok) throw new Error('Google token doğrulanamadı');
@@ -232,7 +233,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
                     if (!invite) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
                     if (effectiveBrandId && effectiveBrandId !== invite.brand_id) {
                         await client.query('ROLLBACK');
-                        return res.status(400).json({ error: BRAND_MISMATCH_ERROR });
+                        return res.status(400).json({ error: INVITE_ERROR }); // kodun geçerli olduğu sızdırılmaz: her hata aynı mesaj
                     }
                     effectiveBrandId = invite.brand_id;
                     inviteId = invite.id;

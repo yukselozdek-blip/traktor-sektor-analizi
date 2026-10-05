@@ -65,7 +65,9 @@ describe('davet kodları', { skip: SKIP_DB && SKIP_REASON }, () => {
         const inv = await s.createInvite({ brandId: brandA });
         const r = await signup(inv.code, { brand_id: brandB });
         assert.equal(r.status, 400);
-        assert.match(r.json.error, /markaya ait değil/);
+        // Kodun geçerli olduğu sızdırılmaz: mesaj, bilinmeyen kodla alınanla birebir aynı
+        const unknown = await signup('TSA-AAAA-BBBB-CCCC', { brand_id: brandB });
+        assert.equal(r.json.error, unknown.json.error);
         const used = (await s.pool.query('SELECT used_count FROM invite_codes WHERE id = $1', [inv.id])).rows[0].used_count;
         assert.equal(used, 0);
         const ok = await signup(inv.code, { brand_id: brandA });
