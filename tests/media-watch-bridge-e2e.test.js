@@ -9,7 +9,7 @@ const { startServer, SKIP_DB, SKIP_REASON } = require('./helpers');
 const KEY = 'test-media-watch-key-' + 'x'.repeat(20);
 
 describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB && SKIP_REASON }, () => {
-    let s, bridge, realFetch, failIngest = false, fakeBridge, fakeBridgeCalls = [], fakeBridgeBusy = false;
+    let s, bridge, realFetch, failIngest = false, failGoogle = false, fakeBridge, fakeBridgeCalls = [], fakeBridgeBusy = false;
     before(async () => {
         // Uygulamanın run-now yolunu sınamak için sahte köprü (gövdeyi kaydeder, meşgulse 409 döner)
         fakeBridge = http.createServer((req, res) => {
@@ -34,6 +34,7 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
         realFetch = global.fetch;
         // Yalnızca dış RSS adresleri sahtelenir; test sunucusuna giden istekler gerçek kalır.
         global.fetch = async (url, opts) => {
+            if (failGoogle && String(url).includes('news.google.com')) return new Response('blocked', { status: 503 });
             if (failIngest && String(url).includes('/api/media-watch/ingest')) return new Response(JSON.stringify({ error: 'Webhook yetkisiz' }), { status: 401 });
             if (String(url).startsWith(s.baseUrl)) return realFetch(url, opts);
             await new Promise(r => setTimeout(r, 120)); // taramanın 'sürüyor' durumunu gözlemlemek için
@@ -150,5 +151,53 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
             }
             assert.ok(st.last.ingest_ok >= 1 && st.last.ingest_failed === 0, JSON.stringify(st.last));
         } finally { await new Promise(r => srv.close(r)); }
+    });
+
+    it('Google Haberler yanıt vermezse devre kesici açılır, RSS paketleri yine kaydedilir ve özet bunu söyler', async () => {
+        const srv = await new Promise(r => { const x = bridge.app.listen(0, '127.0.0.1', () => r(x)); });
+        const base = `http://127.0.0.1:${srv.address().port}`;
+        try {
+            failGoogle = true;
+            await realFetch(`${base}/api/media-watch/push-all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true, brand_name: 'Kubota' }) });
+            let st, sawProgress = false;
+            for (let i = 0; i < 150; i++) {
+                st = await (await realFetch(`${base}/api/media-watch/status`)).json();
+                if (st.in_flight && st.progress && st.progress.pack) sawProgress = true;
+                if (!st.in_flight && st.last) break;
+                await new Promise(r => setTimeout(r, 100));
+            }
+            assert.equal(st.last.google_breaker_open, true, JSON.stringify(st.last));
+            assert.ok(st.last.fetch_failed >= 6, JSON.stringify(st.last));
+            assert.ok(st.last.errors.some(e => e.where === 'google-news'), JSON.stringify(st.last.errors));
+            assert.ok(st.last.ingest_ok >= 1, 'RSS paketleri (4/5) yine kaydedilmeli: ' + JSON.stringify(st.last));
+            assert.ok(sawProgress, 'sürerken ilerleme bilgisi görünmeli');
+        } finally { failGoogle = false; await new Promise(r => srv.close(r)); }
+    });
+
+    it('bağlantı testi: dış kaynaklar, kayıt (anahtar) ve marka sayısını raporlar; reddedilen anahtarı tanır', async () => {
+        const ok = await bridge.selfTest();
+        assert.equal(ok.google_news.ok, true);
+        assert.equal(ok.sector_rss.ok, true);
+        assert.equal(ok.ingest.ok, true);
+        assert.ok(ok.brands.count >= 1);
+        assert.equal(ok.config.key_set, true);
+        assert.equal(JSON.stringify(ok).includes(KEY), false, 'anahtarın kendisi sızmamalı (yalnızca uzunluk)');
+        failGoogle = true; failIngest = true;
+        try {
+            const bad = await bridge.selfTest();
+            assert.equal(bad.google_news.ok, false);
+            assert.equal(bad.ingest.ok, false);
+            assert.equal(bad.ingest.key_rejected, true);
+        } finally { failGoogle = false; failIngest = false; }
+    });
+
+    it('admin self-test ucu yalnızca yöneticiye açık ve köprüye iletir', async () => {
+        const user = await s.createUserWithToken({ role: 'brand_user' });
+        assert.equal((await s.api('GET', '/api/admin/media-watch/self-test')).status, 401);
+        assert.equal((await s.api('GET', '/api/admin/media-watch/self-test', { token: user.token })).status, 403);
+        const admin = await s.createUserWithToken({ role: 'admin' });
+        const r = await s.api('GET', '/api/admin/media-watch/self-test', { token: admin.token });
+        assert.equal(r.status, 200, r.text);
+        assert.equal(r.json.reachable, true);
     });
 });

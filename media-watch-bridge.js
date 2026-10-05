@@ -108,9 +108,22 @@ const MAX_RESPONSE_BYTES = 3 * 1024 * 1024;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Çalıştırma durumu (yönetici panelinde görünür): sürüyor mu, son çalıştırma sonucu ve ilk hatalar.
-const runState = { in_flight: false, started_at: null, last: null };
+const runState = { in_flight: false, started_at: null, last: null, progress: null };
 let runErrors = [];
 let ingestStats = { ok: 0, failed: 0, inserted: 0 };
+let fetchStats = { ok: 0, failed: 0 };
+// Google Haberler art arda yanıt vermezse (engel/ağ sorunu) o koşuda kalan Google sorguları atlanır:
+// aksi halde her istek zaman aşımını bekleyip tek bir tarama 40+ dakika sürebilir.
+const googleBreaker = { fails: 0, open: false };
+const GOOGLE_BREAKER_LIMIT = 6;
+const googleOk = () => { googleBreaker.fails = 0; };
+const googleFail = (pack) => {
+    googleBreaker.fails++;
+    if (!googleBreaker.open && googleBreaker.fails >= GOOGLE_BREAKER_LIMIT) {
+        googleBreaker.open = true;
+        noteError(pack, 'google-news', `Art arda ${GOOGLE_BREAKER_LIMIT} istek başarısız: Google Haberler bu sunucudan erişilemiyor, kalan Google sorguları atlandı`);
+    }
+};
 const noteError = (pack, where, err) => { if (runErrors.length < 200) runErrors.push({ pack, where: String(where).slice(0, 80), error: String((err && err.message) || err).slice(0, 160) }); };
 
 app.use(express.json({ limit: '4mb' }));
@@ -492,6 +505,17 @@ function buildBrandQueries(packCode = 'pack-1', brand = {}) {
 }
 
 async function fetchText(url) {
+    try {
+        const out = await fetchTextInner(url);
+        fetchStats.ok++;
+        return out;
+    } catch (err) {
+        fetchStats.failed++;
+        throw err;
+    }
+}
+
+async function fetchTextInner(url) {
     const response = await fetch(url, {
         headers: {
             'User-Agent': 'Traktor-Media-Watch-Bridge/1.0'
@@ -622,6 +646,12 @@ function pickBrandWindow(brands, maxBrands, packCode, explicit = false) {
     return window;
 }
 
+// Her marka toplanır toplanmaz yayımlanır (_onPayload): kayıt koşunun sonunu beklemez, uzun/yarım kalan taramada da veri birikir.
+async function emitPayload(options, payloads, payload) {
+    payloads.push(payload);
+    if (typeof options._onPayload === 'function') await options._onPayload(payload);
+}
+
 async function collectPackPayloads(packCode = 'pack-1', options = {}) {
     const limitPerFamily = Math.max(2, Math.min(10, Number(options.limit_per_family || options.limitPerFamily || 4)));
     const maxBrands = Math.max(1, Math.min(30, Number(options.max_brands || options.maxBrands || 12)));
@@ -641,8 +671,10 @@ async function collectPackPayloads(packCode = 'pack-1', options = {}) {
         const collected = [];
 
         for (const family of queries) {
+            if (googleBreaker.open) break;
             try {
                 const xml = await fetchText(buildGoogleNewsUrl(family.search_query));
+                googleOk();
                 const allParsed = parseRssItems(xml, {
                     ...family,
                     brand_id: brand.id,
@@ -658,7 +690,9 @@ async function collectPackPayloads(packCode = 'pack-1', options = {}) {
 
                 collected.push(...parsed);
             } catch (err) {
+                googleFail(packCode);
                 noteError(packCode, `${brand.slug}/${family.family_code}`, err);
+                if (googleBreaker.open) break;
                 const familyMeta = normalizeFamilyMeta(family.family_code, '', '');
                 collected.push({
                     brand_id: brand.id,
@@ -694,7 +728,7 @@ async function collectPackPayloads(packCode = 'pack-1', options = {}) {
         }
 
         const deduped = dedupeByLink(collected);
-        payloads.push({
+        await emitPayload(options, payloads, {
             brand_id: brand.id,
             brand_name: brand.name,
             brand_slug: brand.slug,
@@ -718,6 +752,22 @@ async function collectPackPayloads(packCode = 'pack-1', options = {}) {
 // ============================================
 // DOĞRUDAN RSS — registry kaynaklarını her marka için tara, eşleşenleri çıkar
 // ============================================
+// Kayıtlı RSS kaynakları sınırlı eşzamanlılıkla (6) bir kez indirilir; sonuç söz verisi olarak önbelleğe konur.
+async function prefetchFeeds(registry, cache, concurrency = 6) {
+    const queue = [...registry];
+    const workers = Array.from({ length: concurrency }, async () => {
+        while (queue.length) {
+            const src = queue.shift();
+            if (cache.has(src.rss)) continue;
+            const p = fetchText(src.rss);
+            p.catch(() => {}); // işlenmemiş ret oluşmasın; hata kullanım yerinde yakalanır
+            cache.set(src.rss, p);
+            try { await p; } catch (_) { /* kaynak hatası collectFromRegistrySources'ta kaydedilir */ }
+        }
+    });
+    await Promise.all(workers);
+}
+
 function brandMatchesText(brand, ...texts) {
     const aliases = [String(brand.name || '').trim()];
     if (brand.slug) aliases.push(String(brand.slug).replace(/-/g, ' '));
@@ -834,11 +884,12 @@ async function collectRegistryPackPayloads(packCode, registry, options = {}) {
     if (brands.length === 0) return [];
     const payloads = [];
     const sharedOptions = { ...options, _feedCache: new Map() };
+    await prefetchFeeds(registry, sharedOptions._feedCache);
 
     for (const brand of brands) {
         const items = await collectFromRegistrySources(packCode, brand, registry, sharedOptions);
         const deduped = dedupeByLink(items);
-        payloads.push({
+        await emitPayload(options, payloads, {
             brand_id: brand.id,
             brand_name: brand.name,
             brand_slug: brand.slug,
@@ -901,8 +952,10 @@ async function collectPack6Payloads(options = {}) {
         const queries = buildPack6BrandQueries(brand);
         const collected = [];
         for (const family of queries) {
+            if (googleBreaker.open) break;
             try {
                 const xml = await fetchText(buildGoogleNewsUrl(family.search_query));
+                googleOk();
                 const parsed = parseRssItems(xml, {
                     ...family,
                     brand_id: brand.id,
@@ -914,12 +967,13 @@ async function collectPack6Payloads(options = {}) {
                     raw_payload: { ...it.raw_payload, bridge_source: 'oem-press-google-news' }
                 })));
             } catch (err) {
+                googleFail('pack-6');
                 noteError('pack-6', `${brand.slug}/${family.family_code}`, err);
                 console.warn(`[pack-6] ${brand.slug}/${family.family_code} hatası: ${err.message}`);
             }
         }
         const deduped = dedupeByLink(collected);
-        payloads.push({
+        await emitPayload(options, payloads, {
             brand_id: brand.id,
             brand_name: brand.name,
             brand_slug: brand.slug,
@@ -1045,10 +1099,21 @@ async function pushPayloadsDirectToApp(payloads = [], packCode = 'pack-1') {
 
 async function runPackAndPush(packCode = 'pack-1', options = {}) {
     let payloads;
-    if (packCode === 'pack-4') payloads = await collectPack4Payloads(options);
-    else if (packCode === 'pack-5') payloads = await collectPack5Payloads(options);
-    else if (packCode === 'pack-6') payloads = await collectPack6Payloads(options);
-    else payloads = await collectPackPayloads(packCode, options);
+    const direct = DIRECT_MODE;
+    const pushed = [];
+    const opts = { ...options };
+    if (direct) {
+        // Doğrudan mod: her marka toplanır toplanmaz uygulamaya yazılır (kayıt, koşunun sonunu beklemez).
+        opts._onPayload = async payload => {
+            pushed.push(...await pushPayloadsDirectToApp([payload], packCode));
+            runState.progress = { ...(runState.progress || {}), pack: packCode, payloads_done: (runState.progress?.payloads_done || 0) + 1, last_brand: payload.brand_name };
+        };
+    }
+    runState.progress = { ...(runState.progress || {}), pack: packCode };
+    if (packCode === 'pack-4') payloads = await collectPack4Payloads(opts);
+    else if (packCode === 'pack-5') payloads = await collectPack5Payloads(opts);
+    else if (packCode === 'pack-6') payloads = await collectPack6Payloads(opts);
+    else payloads = await collectPackPayloads(packCode, opts);
 
     if (payloads.length === 0) {
         return {
@@ -1057,14 +1122,12 @@ async function runPackAndPush(packCode = 'pack-1', options = {}) {
             payload_count: 0,
             item_count: 0,
             brands: [],
-            mode: DIRECT_MODE ? 'direct' : 'n8n',
+            mode: direct ? 'direct' : 'n8n',
             response: null
         };
     }
 
-    const response = DIRECT_MODE
-        ? await pushPayloadsDirectToApp(payloads, packCode)
-        : await pushPayloadsToN8n(payloads, packCode);
+    const response = direct ? pushed : await pushPayloadsToN8n(payloads, packCode);
 
     return {
         success: true,
@@ -1076,7 +1139,7 @@ async function runPackAndPush(packCode = 'pack-1', options = {}) {
             brand_name: payload.brand_name,
             item_count: payload.item_count
         })),
-        mode: DIRECT_MODE ? 'direct' : 'n8n',
+        mode: direct ? 'direct' : 'n8n',
         response
     };
 }
@@ -1087,6 +1150,9 @@ async function runEnabledPacksAndPush(options = {}) {
     runState.started_at = new Date().toISOString();
     runErrors = [];
     ingestStats = { ok: 0, failed: 0, inserted: 0 };
+    fetchStats = { ok: 0, failed: 0 };
+    googleBreaker.fails = 0; googleBreaker.open = false;
+    runState.progress = { payloads_done: 0 };
     const t0 = Date.now();
     try {
         const result = await runEnabledPacksAndPushInner(options);
@@ -1094,6 +1160,7 @@ async function runEnabledPacksAndPush(options = {}) {
             started_at: runState.started_at, finished_at: new Date().toISOString(), duration_ms: Date.now() - t0, ok: true,
             packs: result.packs, payload_count: result.payload_count, item_count: result.item_count,
             ingest_ok: ingestStats.ok, ingest_failed: ingestStats.failed, inserted_count: ingestStats.inserted,
+            fetch_ok: fetchStats.ok, fetch_failed: fetchStats.failed, google_breaker_open: googleBreaker.open,
             error_count: runErrors.length, errors: runErrors.slice(0, 10)
         };
         return result;
@@ -1105,6 +1172,7 @@ async function runEnabledPacksAndPush(options = {}) {
         throw err;
     } finally {
         runState.in_flight = false;
+        runState.progress = null;
     }
 }
 
@@ -1135,8 +1203,42 @@ function startInBackground(res, options) {
 }
 const wantsAsync = req => req.body?.async === true || req.query?.async === '1';
 
+// Bağlantı testi (~20 sn): dış kaynaklara erişim, uygulamaya kayıt (anahtar), marka sayısı. Nedeni tek bakışta gösterir.
+async function timedFetch(url, ms = 8000) {
+    const t = Date.now();
+    try {
+        const r = await fetch(url, { headers: { 'User-Agent': 'Traktor-Media-Watch-Bridge/1.0' }, signal: AbortSignal.timeout(ms) });
+        const txt = await r.text();
+        return { ok: r.ok, status: r.status, ms: Date.now() - t, items: (txt.match(/<item\b/gi) || []).length };
+    } catch (e) {
+        const code = (e.cause && e.cause.code) || '';
+        return { ok: false, ms: Date.now() - t, error: (e.name === 'TimeoutError' ? 'zaman aşımı' : (code || e.message)).slice(0, 100) };
+    }
+}
+async function selfTest() {
+    const [google, sector, intl] = await Promise.all([
+        timedFetch(buildGoogleNewsUrl('"John Deere" traktor')),
+        timedFetch(SECTOR_PUBLICATIONS_REGISTRY.find(x => x.code === 'aa_tarim')?.rss || SECTOR_PUBLICATIONS_REGISTRY[0].rss),
+        timedFetch(INTERNATIONAL_SOURCE_REGISTRY[1].rss)
+    ]);
+    const out = { google_news: google, sector_rss: sector, international_rss: intl };
+    try { await postJsonToApp('/api/media-watch/ingest', { items: [] }); out.ingest = { ok: true }; }
+    catch (e) { out.ingest = { ok: false, error: String(e.message).slice(0, 160), key_rejected: /HTTP 401/.test(e.message) }; }
+    try { const b = await loadBrands({}); out.brands = { ok: b.length > 0, count: b.length }; }
+    catch (e) { out.brands = { ok: false, error: String(e.message).slice(0, 160) }; }
+    out.config = { key_set: !!MEDIA_WATCH_KEY, key_length: MEDIA_WATCH_KEY.length, direct_mode: DIRECT_MODE, packs: BRIDGE_PACKS, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN };
+    return out;
+}
+let selfTestCache = { at: 0, value: null };
+app.get('/api/media-watch/self-test', async (req, res) => {
+    try {
+        if (Date.now() - selfTestCache.at > 10000) selfTestCache = { at: Date.now(), value: await selfTest() };
+        res.json(selfTestCache.value);
+    } catch (err) { res.status(500).json({ error: String(err.message || err).slice(0, 200) }); }
+});
+
 app.get('/api/media-watch/status', (req, res) => {
-    res.json({ in_flight: runState.in_flight, started_at: runState.started_at, last: runState.last, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN, packs: BRIDGE_PACKS });
+    res.json({ in_flight: runState.in_flight, started_at: runState.started_at, progress: runState.in_flight ? { ...runState.progress, fetch_ok: fetchStats.ok, fetch_failed: fetchStats.failed, inserted: ingestStats.inserted, ingest_failed: ingestStats.failed, google_breaker_open: googleBreaker.open } : null, last: runState.last, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN, packs: BRIDGE_PACKS });
 });
 
 app.get('/health', async (req, res) => {
@@ -1363,7 +1465,7 @@ function start() {
 }
 
 module.exports = {
-    app, runPackAndPush, runEnabledPacksAndPush, parseRssItems, brandMatchesText, normalizeFamilyMeta, inferSignalScores, buildTopicTags, dedupeByLink,
+    app, runPackAndPush, runEnabledPacksAndPush, selfTest, prefetchFeeds, googleBreaker, parseRssItems, brandMatchesText, normalizeFamilyMeta, inferSignalScores, buildTopicTags, dedupeByLink,
     pickBrandWindow, INTERNATIONAL_SOURCE_REGISTRY, SECTOR_PUBLICATIONS_REGISTRY, OEM_PRESS_PATTERNS,
     buildPack1BrandQueries, buildPack2BrandQueries, buildPack3BrandQueries, buildPack6BrandQueries, collectFromRegistrySources
 };

@@ -91,4 +91,25 @@ describe('media-watch-bridge: kaynak başına tek indirme', () => {
         const items = await bridge.collectFromRegistrySources('pack-4', { id: 2, name: 'Kubota', slug: 'kubota' }, registry, { _feedCache: new Map() });
         assert.equal(items.length, 1);
     });
+
+    it('prefetchFeeds: eşzamanlılık sınırlıdır, hatalı kaynak diğerlerini ve süreci bozmaz (işlenmemiş ret yok)', async () => {
+        let active = 0, maxActive = 0;
+        global.fetch = async (url) => {
+            active++; maxActive = Math.max(maxActive, active);
+            await new Promise(r => setTimeout(r, 20));
+            active--;
+            return String(url).includes('bad') ? new Response('x', { status: 500 }) : new Response('<rss><channel></channel></rss>', { status: 200 });
+        };
+        let unhandled = 0;
+        const onUnhandled = () => { unhandled++; };
+        process.on('unhandledRejection', onUnhandled);
+        const registry = Array.from({ length: 15 }, (_, i) => ({ code: 'c' + i, name: 'n', rss: `https://${i % 5 === 0 ? 'bad' : 'ok'}${i}.test/rss`, language: 'en', country: 'US', category: 'news' }));
+        const cache = new Map();
+        await bridge.prefetchFeeds(registry, cache, 6);
+        await new Promise(r => setTimeout(r, 30));
+        process.off('unhandledRejection', onUnhandled);
+        assert.equal(cache.size, 15);
+        assert.ok(maxActive <= 6, 'eşzamanlılık sınırı aşıldı: ' + maxActive);
+        assert.equal(unhandled, 0);
+    });
 });

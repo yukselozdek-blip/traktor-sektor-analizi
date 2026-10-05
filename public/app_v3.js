@@ -12216,14 +12216,38 @@ async function govMediaWatchCard() {
     const when = x => (x ? new Date(x).toLocaleString('tr-TR') : '-');
     const rows = [
         ['Durum', b.in_flight ? 'Tarama sürüyor (başlangıç: ' + when(b.started_at) + ')' : 'Beklemede'],
+        ...(b.in_flight && b.progress ? [['İlerleme', (b.progress.pack || '-') + ' · ' + (b.progress.payloads_done || 0) + ' marka kaydedildi · ' + (b.progress.inserted || 0) + ' haber yazıldı · ' + (b.progress.fetch_ok || 0) + ' başarılı / ' + (b.progress.fetch_failed || 0) + ' başarısız istek' + (b.progress.google_breaker_open ? ' · Google Haberler erişilemiyor, atlandı' : '')]] : []),
         ['Zamanlama', b.autorun ? b.schedule : 'Otomatik tarama kapalı'],
         ['Son çalıştırma', l ? when(l.finished_at) + ' · ' + Math.round((l.duration_ms || 0) / 1000) + ' sn · ' + (l.ok ? 'tamamlandı' : 'HATA: ' + (l.error || '')) : 'Henüz çalışmadı'],
-        ['Toplanan haber', l ? (l.item_count ?? 0) + ' kayıt · ' + (l.error_count || 0) + ' hata' : '-'],
+        ['Toplanan haber', l ? (l.item_count ?? 0) + ' kayıt · ' + (l.error_count || 0) + ' hata · istekler: ' + (l.fetch_ok ?? 0) + ' başarılı / ' + (l.fetch_failed ?? 0) + ' başarısız' : '-'],
         ['Veritabanına kaydedilen', l ? (l.inserted_count ?? 0) + ' kayıt · ' + (l.ingest_ok ?? 0) + ' marka başarılı, ' + (l.ingest_failed ?? 0) + ' başarısız' + ((l.ingest_failed || 0) > 0 ? '  ⚠ kayıt reddedildi' : '') : '-']
     ];
     const errs = (l?.errors || []).map(e => [e.pack, e.where, e.error]);
     return govBox('Medya tarama', 'fa-satellite-dish', govTable(['Alan', 'Değer'], rows)
+        + '<div style="margin-top:14px"><button type="button" class="btn-filter" id="govMwSelfTest"><i class="fas fa-stethoscope" aria-hidden="true"></i> Bağlantı testini çalıştır</button><div id="govMwSelfTestOut" role="status" style="margin-top:12px"></div></div>'
         + (errs.length ? '<div style="margin-top:14px"><strong style="font-size:13px">İlk hatalar</strong>' + govTable(['Paket', 'Kaynak', 'Hata'], errs) + '</div>' : ''));
+}
+
+function govMwSelfTestHtml(t) {
+    if (!t || t.reachable === false) return '<p style="color:var(--danger)">Tarama programı yanıt vermiyor. Railway\'de MEDIA_WATCH_BRIDGE_AUTOSTART=true olmalı.</p>';
+    const mark = ok => ok ? '<span style="color:#22c55e">✓ Çalışıyor</span>' : '<span style="color:var(--danger)">✗ Sorun var</span>';
+    const net = x => x ? (x.ok ? `${x.status} · ${(x.ms / 1000).toFixed(1)} sn · ${x.items} haber` : `${x.error || ('HTTP ' + x.status)} · ${((x.ms || 0) / 1000).toFixed(1)} sn`) : '-';
+    const rows = [
+        ['Google Haberler', mark(t.google_news?.ok), net(t.google_news)],
+        ['Türkiye sektör RSS (AA Tarım)', mark(t.sector_rss?.ok), net(t.sector_rss)],
+        ['Uluslararası RSS (AgFunder)', mark(t.international_rss?.ok), net(t.international_rss)],
+        ['Uygulamaya kayıt (webhook anahtarı)', mark(t.ingest?.ok), t.ingest?.ok ? 'Kabul edildi' : escapeHtml(t.ingest?.error || '')],
+        ['Aktif marka sayısı', mark(t.brands?.ok), t.brands?.ok ? String(t.brands.count) : escapeHtml(t.brands?.error || 'Marka bulunamadı')],
+        ['Ayarlar', mark(t.config?.key_set), `anahtar ${t.config?.key_set ? 'tanımlı (' + t.config.key_length + ' karakter)' : 'TANIMSIZ'} · ${t.config?.direct_mode ? 'doğrudan mod' : 'n8n modu'}`]
+    ];
+    const verdict = [];
+    if (t.ingest && !t.ingest.ok) verdict.push(t.ingest.key_rejected ? 'Uygulama kayıtları reddediyor: MEDIA_WATCH_WEBHOOK_KEY değeri uygulama ve köprüde farklı görünüyor.' : 'Haberler uygulamaya yazılamıyor (yukarıdaki hataya bakın).');
+    if (!t.google_news?.ok && !t.sector_rss?.ok && !t.international_rss?.ok) verdict.push('Sunucu hiçbir dış siteye erişemiyor: ağ çıkışı kısıtlı olabilir.');
+    else if (!t.google_news?.ok) verdict.push('Google Haberler bu sunucudan yanıt vermiyor veya engelliyor; RSS kaynakları (paket 4 ve 5) çalışır.');
+    if (t.brands && !t.brands.ok) verdict.push('Taranacak aktif marka yok.');
+    if (!verdict.length) verdict.push('Her şey çalışıyor görünüyor. "Şimdi Tara" ile taramayı başlatın.');
+    return `<table class="data-table"><thead><tr><th>Kontrol</th><th>Durum</th><th>Ayrıntı</th></tr></thead><tbody>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${r[1]}</td><td>${escapeHtml(String(r[2]))}</td></tr>`).join('')}</tbody></table>
+        <p style="margin:12px 0 0;font-size:13px"><strong>Sonuç:</strong> ${verdict.map(escapeHtml).join(' ')}</p>`;
 }
 
 async function govRenderHealth(host) {
@@ -12244,6 +12268,14 @@ async function govRenderHealth(host) {
         ${await govMediaWatchCard()}
         <div style="margin-top:14px"><button type="button" class="btn-filter" id="govHealthRefresh"><i class="fas fa-rotate" aria-hidden="true"></i> Yenile</button></div>`;
     host.querySelector('#govHealthRefresh').addEventListener('click', () => govRenderHealth(host));
+    const stBtn = host.querySelector('#govMwSelfTest');
+    if (stBtn) stBtn.addEventListener('click', async () => {
+        const out = host.querySelector('#govMwSelfTestOut');
+        stBtn.disabled = true; out.textContent = 'Test çalışıyor (en fazla ~20 saniye)…';
+        try { out.innerHTML = govMwSelfTestHtml(await govGet('/api/admin/media-watch/self-test')); }
+        catch (err) { out.textContent = 'Test başarısız: ' + (err.message || 'hata'); }
+        finally { stBtn.disabled = false; }
+    });
 }
 
 async function govShowTab(tab) {
