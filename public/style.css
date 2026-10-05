@@ -14178,3 +14178,13 @@ body.is-brand-banner .be-kpi-grid {
     .chatbot-input-bar { padding: 10px 14px; }
     .chatbot-clear-btn span { display: none; }
 }
+
+/* Yönetişim paneli sekmeleri */
+.gov-tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); overflow-x: auto; }
+.gov-tabs [role="tab"] {
+    background: transparent; border: none; border-bottom: 3px solid transparent; color: var(--text-secondary);
+    padding: 12px 18px; min-height: 44px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.gov-tabs [role="tab"]:hover { color: var(--text-primary); }
+.gov-tabs [role="tab"].is-active { color: var(--text-primary); border-bottom-color: var(--brand-primary); }
+.gov-tabs [role="tab"]:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: -2px; }

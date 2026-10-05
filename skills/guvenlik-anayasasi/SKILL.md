@@ -304,3 +304,10 @@ DB gerektiren testler `TEST_DATABASE_URL` yoksa `SKIP` olur; **güvenlik değiş
 - Girdi: yalnızca metin, kontrol karakterleri atılır, en çok 500 karakter; kullanıcı başına dakikada 20 istek.
 - Çıktı: `sql` alanı yalnızca yöneticiye döner (şema bilgisi sızmaz). Ön yüz yanıtı önce kaçışlar, sonra yalnızca `*kalın*` ve satır sonu biçimler.
 - Ön yüzde GET önbelleği atlanır (`?_=<zaman>`): geçmiş her açılışta tazedir.
+
+
+## Yönetişim paneli (`/api/admin/governance/*`)
+- Tüm uçlar `authMiddleware` + `adminOnly`; herkese açık veri toplama ucu **yoktur** (eski sürümdeki tarayıcı telemetrisi uçları bilinçli olarak alınmadı: sahte veriyle doldurulabilir).
+- Mevcut tablolardan okur (`users`, `subscriptions`, `ai_usage_log`, `auth_audit`, `whatsapp_phones`, `invite_codes`); şifre/özet/gizli alanlar seçilmez.
+- Denetim kaydı: olay adı `^[a-z0-9_]{1,50}$` ile doğrulanır, `limit` en çok 100, imleç (`before`) tamsayı; kullanıcı aracısı 160 karaktere kısaltılır.
+- Ön yüz: sayfa `ADMIN_ONLY_PAGES`'tedir (marka kullanıcısı menüde görmez, adresle de giremez); tüm değerler kaçışlanır.
