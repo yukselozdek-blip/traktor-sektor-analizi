@@ -194,6 +194,12 @@ Tam tarama dakikalar sürer; "Şimdi Tara" artık köprüyü `async:true` ile ç
 - **Google devre kesici:** art arda 6 Google Haberler isteği başarısız olursa o koşuda kalan Google sorguları atlanır (paket 1-3 ve 6); RSS paketleri (4-5) çalışmaya devam eder. Aksi halde her istek zaman aşımını bekleyip tek tarama 40+ dakika sürer.
 - **Görünürlük:** `/api/media-watch/status` sürerken ilerlemeyi (paket, kaydedilen marka, yazılan haber, istek sayıları) gösterir; Yönetişim → Sistem Sağlığı → "Medya tarama" kartında **"Bağlantı testini çalıştır"** (`GET /api/admin/media-watch/self-test`): Google Haberler / TR RSS / uluslararası RSS erişimi, uygulamaya kayıt (webhook anahtarı), aktif marka sayısı ve ayarlar; sonuç cümlesi nedeni söyler. Test anahtarın kendisini değil yalnızca uzunluğunu gösterir.
 
+### 7.1d Haber kaynağı yedeği ve hız sınırı
+- Paket 1–3 ve 6 önce Google Haberler RSS'ini dener; 503/429 veya zaman aşımında aynı sorgu Bing Haberler RSS'ine (`bing.com/news/search?format=rss`) düşer. Google art arda 6 kez başarısız olursa o koşuda yalnızca Bing kullanılır.
+- Google istekleri arasında `MEDIA_WATCH_GOOGLE_DELAY_MS` (varsayılan 1500 ms) beklenir; her koşuda `MEDIA_WATCH_BRANDS_PER_RUN` (varsayılan 6) marka taranır, pencere her koşuda döner.
+- Okunamayan sorgu için sahte "bridge-error" haberi ÜRETİLMEZ; hatalar yalnızca çalıştırma hata listesinde görünür.
+- RSS kayıt defterindeki ölü adresler, Yönetişim → "Bağlantı testini çalıştır" çıktısındaki "RSS kaynak sağlığı" listesiyle tespit edilip doğrulanmış adreslerle değiştirilir; doğrulanmamış adres eklenmez.
+
 ### 7.1c Webhook anahtarı ve HTTP başlıkları
 HTTP başlık değerleri yalnızca ASCII (Latin-1) taşır. Anahtarda Türkçe/Unicode karakter (Ş, ğ, ü…) varsa `fetch` "Cannot convert argument to a ByteString" ile düşer ve **hiçbir haber kaydedilmez** (canlıda yaşandı). Bu yüzden köprü anahtarı düz göndermez, `x-media-watch-key-sha256` başlığında **SHA-256 özetini** gönderir; uygulama (`isMediaWatchWebhookAuthorized`) özeti zaman-sabit karşılaştırır. Düz `x-media-watch-key` / `x-n8n-key` / `Authorization: Bearer` yolları (n8n akışları) geriye uyumlu kalır ama **yalnızca ASCII anahtarla** çalışır: yeni anahtarları yalnızca harf (a-z, A-Z) ve rakamla üretin. Bağlantı testi anahtarın Türkçe karakter içerip içermediğini ve RSS kaynaklarının tek tek sağlığını (hatalı olanların adıyla) gösterir.
 

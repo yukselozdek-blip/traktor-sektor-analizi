@@ -78,3 +78,6 @@ Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: eskiden yeniye
 - Medya Takip: webhook anahtarı uygulama tarafında da baş/son boşluktan arındırılır (görünmez boşluk 401 uyuşmazlığına yol açıyordu); köprü kayıt reddini (ör. 401) çalıştırma özetinde sayar ve ipucu verir; Yönetişim kartı "Veritabanına kaydedilen" satırını gösterir.
 - Medya Takip dayanıklılık: marka bazlı artımlı kayıt (tarama yarım kalsa da veri birikir), RSS kaynakları paralel, Google Haberler devre kesici, sürerken ilerleme, Yönetişim kartında "Bağlantı testini çalıştır" (dış erişim, webhook anahtarı, marka sayısı).
 - Medya Takip KÖK NEDEN: webhook anahtarındaki Türkçe karakter (Ş) HTTP başlığına yazılamıyor, köprü kayıt isteğini göndermeden düşüyordu. Köprü artık anahtarın SHA-256 özetini gönderir (`x-media-watch-key-sha256`), uygulama özeti doğrular; bağlantı testi RSS kaynaklarının tek tek sağlığını ve anahtardaki özel karakteri bildirir.
+
+### 5 Ekim 2026 — Medya Takip veri akışı
+- Google Haberler sunucuyu 503 ile kısıtlayınca Bing Haberler RSS yedeği, Google istekleri arasında bekleme, koşu başına marka sınırı; sahte "bridge-error" kayıtları kaldırıldı; bağlantı testine Bing satırı eklendi.

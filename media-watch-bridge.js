@@ -218,6 +218,62 @@ function buildGoogleNewsUrl(query = '') {
     return `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=tr&gl=TR&ceid=TR:tr`;
 }
 
+function buildBingNewsUrl(query = '') {
+    return `https://www.bing.com/news/search?q=${encodeURIComponent(query)}&format=rss&setmkt=tr-TR&mkt=tr-TR`;
+}
+
+// Bing News RSS bağlantıları apiclick.aspx?...&url=<gerçek adres> biçimindedir; gerçek adresi ve yayıncıyı çıkarıp
+// Google biçimine (<link>, <source url>) çevirir ki aynı ayrıştırıcı kullanılsın.
+function normalizeBingXml(xml = '') {
+    return String(xml).replace(/<item\b[\s\S]*?<\/item>/gi, block => {
+        const linkMatch = block.match(/<link>([\s\S]*?)<\/link>/i);
+        if (!linkMatch) return block;
+        let real = decodeXmlEntities(linkMatch[1]).trim();
+        try {
+            const u = new URL(real);
+            const inner = u.searchParams.get('url');
+            if (inner && /^https?:\/\//i.test(inner)) real = inner;
+        } catch { /* olduğu gibi bırak */ }
+        const name = (block.match(/<News:Source>([\s\S]*?)<\/News:Source>/i) || [])[1] || '';
+        let origin = '';
+        try { origin = new URL(real).origin; } catch { origin = ''; }
+        let out = block.replace(linkMatch[0], `<link>${real.replace(/&/g, '&amp;')}</link>`);
+        if (origin && !/<source\b/i.test(out)) out = out.replace('</item>', `<source url="${origin}">${name.trim() || new URL(real).hostname}</source></item>`);
+        return out;
+    });
+}
+
+// Google'a nezaket aralığı: sunucu IP'si hız sınırına takılmasın (503/429). Bing yedeği Google engelliyken devreye girer.
+const GOOGLE_DELAY_MS = Math.max(0, Number(process.env.MEDIA_WATCH_GOOGLE_DELAY_MS || 1500));
+const GOOGLE_BRANDS_PER_RUN = Math.max(1, Math.min(30, Number(process.env.MEDIA_WATCH_BRANDS_PER_RUN || 6)));
+const bingBreaker = { fails: 0, open: false };
+async function fetchNewsFeed(query, packCode) {
+    if (!googleBreaker.open) {
+        try {
+            if (GOOGLE_DELAY_MS) await sleep(GOOGLE_DELAY_MS);
+            const xml = await fetchText(buildGoogleNewsUrl(query));
+            googleOk();
+            return { xml, via: 'google-news-rss' };
+        } catch (err) {
+            googleFail(packCode);
+            noteError(packCode, 'google:' + String(query).slice(0, 40), err);
+        }
+    }
+    if (bingBreaker.open) throw new Error('Google ve Bing Haberler erişilemiyor');
+    try {
+        const xml = normalizeBingXml(await fetchText(buildBingNewsUrl(query)));
+        bingBreaker.fails = 0;
+        return { xml, via: 'bing-news-rss' };
+    } catch (err) {
+        bingBreaker.fails++;
+        if (bingBreaker.fails >= GOOGLE_BREAKER_LIMIT) {
+            bingBreaker.open = true;
+            noteError(packCode, 'bing-news', `Art arda ${GOOGLE_BREAKER_LIMIT} istek başarısız: Bing Haberler erişilemiyor`);
+        }
+        throw err;
+    }
+}
+
 function resolveN8nWebhookUrl(packCode = 'pack-1') {
     const envMap = {
         'pack-1': String(
@@ -654,7 +710,7 @@ async function emitPayload(options, payloads, payload) {
 
 async function collectPackPayloads(packCode = 'pack-1', options = {}) {
     const limitPerFamily = Math.max(2, Math.min(10, Number(options.limit_per_family || options.limitPerFamily || 4)));
-    const maxBrands = Math.max(1, Math.min(30, Number(options.max_brands || options.maxBrands || 12)));
+    const maxBrands = Math.max(1, Math.min(30, Number(options.max_brands || options.maxBrands || GOOGLE_BRANDS_PER_RUN)));
     const brands = pickBrandWindow(await loadBrands({
         brand_id: options.brand_id || options.brandId || '',
         brand_name: options.brand_name || options.brandName || ''
@@ -671,59 +727,25 @@ async function collectPackPayloads(packCode = 'pack-1', options = {}) {
         const collected = [];
 
         for (const family of queries) {
-            if (googleBreaker.open) break;
+            if (googleBreaker.open && bingBreaker.open) break;
             try {
-                const xml = await fetchText(buildGoogleNewsUrl(family.search_query));
-                googleOk();
+                const { xml, via } = await fetchNewsFeed(family.search_query, packCode);
                 const allParsed = parseRssItems(xml, {
                     ...family,
                     brand_id: brand.id,
                     brand_name: brand.name,
                     brand_slug: brand.slug
                 });
-                // CRITICAL: Google News agresif eşleşme yapıyor — başlık/özet'te marka adı veya alias
-                // geçmeyen kayıtları ele (false-positive önleme: ör. John Deere q'su Frutteto TR
-                // videosu döndürüyor — Frutteto SAME/Deutz modeli, John Deere ile alakasız).
+                // Haber araması agresif eşleşir: başlık/özette marka adı veya alias geçmeyenleri ele (false-positive önleme).
                 const parsed = allParsed
                     .filter(it => brandMatchesText(brand, it.title, it.summary, it.content_text))
-                    .slice(0, limitPerFamily);
+                    .slice(0, limitPerFamily)
+                    .map(it => ({ ...it, raw_payload: { ...it.raw_payload, bridge_source: via } }));
 
                 collected.push(...parsed);
             } catch (err) {
-                googleFail(packCode);
+                // Hata kayıtları veri değildir: sahte "bridge-error" haberi üretme, yalnızca hata listesine yaz.
                 noteError(packCode, `${brand.slug}/${family.family_code}`, err);
-                if (googleBreaker.open) break;
-                const familyMeta = normalizeFamilyMeta(family.family_code, '', '');
-                collected.push({
-                    brand_id: brand.id,
-                    brand_name: brand.name,
-                    brand_slug: brand.slug,
-                    source_name: 'Media Watch Bridge',
-                    source_domain: 'host-bridge',
-                    source_url: buildGoogleNewsUrl(family.search_query),
-                    channel_type: familyMeta.channel_type,
-                    item_type: familyMeta.item_type,
-                    platform_name: familyMeta.platform_name || 'bridge',
-                    title: `${brand.name} icin ${family.family_code} akisinda hata`,
-                    summary: `Bridge ${family.family_code} akisini okuyamadi: ${err.message}`,
-                    content_text: `Bridge ${family.family_code} akisini okuyamadi: ${err.message}`,
-                    published_at: new Date().toISOString(),
-                    sentiment_label: 'mixed',
-                    sentiment_score: -0.1,
-                    severity_score: 0.42,
-                    relevance_score: 0.9,
-                    tags: ['bridge-error', family.family_code],
-                    topics: ['bridge-error'],
-                    recommendations: {
-                        operations: 'Kaynak erisimi ve DNS kontrol edilmeli.'
-                    },
-                    raw_payload: {
-                        bridge_source: 'google-news-rss',
-                        family_code: family.family_code,
-                        query: family.search_query,
-                        error: err.message
-                    }
-                });
             }
         }
 
@@ -940,7 +962,7 @@ function buildPack6BrandQueries(brand = {}) {
 }
 
 async function collectPack6Payloads(options = {}) {
-    const maxBrands = Math.max(1, Math.min(30, Number(options.max_brands || 12)));
+    const maxBrands = Math.max(1, Math.min(30, Number(options.max_brands || GOOGLE_BRANDS_PER_RUN)));
     const brands = pickBrandWindow(await loadBrands({
         brand_id: options.brand_id || '',
         brand_name: options.brand_name || ''
@@ -952,10 +974,9 @@ async function collectPack6Payloads(options = {}) {
         const queries = buildPack6BrandQueries(brand);
         const collected = [];
         for (const family of queries) {
-            if (googleBreaker.open) break;
+            if (googleBreaker.open && bingBreaker.open) break;
             try {
-                const xml = await fetchText(buildGoogleNewsUrl(family.search_query));
-                googleOk();
+                const { xml, via } = await fetchNewsFeed(family.search_query, 'pack-6');
                 const parsed = parseRssItems(xml, {
                     ...family,
                     brand_id: brand.id,
@@ -964,12 +985,10 @@ async function collectPack6Payloads(options = {}) {
                 }).slice(0, 4);
                 collected.push(...parsed.map(it => ({
                     ...it,
-                    raw_payload: { ...it.raw_payload, bridge_source: 'oem-press-google-news' }
+                    raw_payload: { ...it.raw_payload, bridge_source: via === 'bing-news-rss' ? 'oem-press-bing-news' : 'oem-press-google-news' }
                 })));
             } catch (err) {
-                googleFail('pack-6');
                 noteError('pack-6', `${brand.slug}/${family.family_code}`, err);
-                console.warn(`[pack-6] ${brand.slug}/${family.family_code} hatası: ${err.message}`);
             }
         }
         const deduped = dedupeByLink(collected);
@@ -1152,7 +1171,7 @@ async function runEnabledPacksAndPush(options = {}) {
     runErrors = [];
     ingestStats = { ok: 0, failed: 0, inserted: 0 };
     fetchStats = { ok: 0, failed: 0 };
-    googleBreaker.fails = 0; googleBreaker.open = false;
+    googleBreaker.fails = 0; googleBreaker.open = false; bingBreaker.fails = 0; bingBreaker.open = false;
     runState.progress = { payloads_done: 0 };
     const t0 = Date.now();
     try {
@@ -1233,12 +1252,13 @@ async function registryHealth(ms = 8000) {
 }
 
 async function selfTest() {
-    const [google, sector, intl] = await Promise.all([
+    const [google, bing, sector, intl] = await Promise.all([
         timedFetch(buildGoogleNewsUrl('"John Deere" traktor')),
+        timedFetch(buildBingNewsUrl('"John Deere" traktör')),
         timedFetch(SECTOR_PUBLICATIONS_REGISTRY.find(x => x.code === 'aa_tarim')?.rss || SECTOR_PUBLICATIONS_REGISTRY[0].rss),
         timedFetch(INTERNATIONAL_SOURCE_REGISTRY[1].rss)
     ]);
-    const out = { google_news: google, sector_rss: sector, international_rss: intl };
+    const out = { google_news: google, bing_news: bing, sector_rss: sector, international_rss: intl };
     try { await postJsonToApp('/api/media-watch/ingest', { items: [] }); out.ingest = { ok: true }; }
     catch (e) { out.ingest = { ok: false, error: String(e.message).slice(0, 160), key_rejected: /HTTP 401/.test(e.message) }; }
     try { const b = await loadBrands({}); out.brands = { ok: b.length > 0, count: b.length }; }
@@ -1256,7 +1276,7 @@ app.get('/api/media-watch/self-test', async (req, res) => {
 });
 
 app.get('/api/media-watch/status', (req, res) => {
-    res.json({ in_flight: runState.in_flight, started_at: runState.started_at, progress: runState.in_flight ? { ...runState.progress, fetch_ok: fetchStats.ok, fetch_failed: fetchStats.failed, inserted: ingestStats.inserted, ingest_failed: ingestStats.failed, google_breaker_open: googleBreaker.open } : null, last: runState.last, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN, packs: BRIDGE_PACKS });
+    res.json({ in_flight: runState.in_flight, started_at: runState.started_at, progress: runState.in_flight ? { ...runState.progress, fetch_ok: fetchStats.ok, fetch_failed: fetchStats.failed, inserted: ingestStats.inserted, ingest_failed: ingestStats.failed, google_breaker_open: googleBreaker.open, bing_breaker_open: bingBreaker.open } : null, last: runState.last, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN, packs: BRIDGE_PACKS });
 });
 
 app.get('/health', async (req, res) => {
@@ -1484,7 +1504,7 @@ function start() {
 
 module.exports = {
     app, runPackAndPush, runEnabledPacksAndPush, selfTest, prefetchFeeds, googleBreaker, parseRssItems, brandMatchesText, normalizeFamilyMeta, inferSignalScores, buildTopicTags, dedupeByLink,
-    pickBrandWindow, INTERNATIONAL_SOURCE_REGISTRY, SECTOR_PUBLICATIONS_REGISTRY, OEM_PRESS_PATTERNS,
+    pickBrandWindow, normalizeBingXml, buildBingNewsUrl, fetchNewsFeed, bingBreaker, INTERNATIONAL_SOURCE_REGISTRY, SECTOR_PUBLICATIONS_REGISTRY, OEM_PRESS_PATTERNS,
     buildPack1BrandQueries, buildPack2BrandQueries, buildPack3BrandQueries, buildPack6BrandQueries, collectFromRegistrySources
 };
 
