@@ -1,7 +1,7 @@
 'use strict';
 // Davet kodu yönetimi (yalnızca admin) + doğrulama e-postasını yeniden gönderme.
 const { generateInviteCode, hashInviteCode, inviteHint } = require('../lib/invites');
-const { newVerifyToken, verifyExpiry, sendVerificationEmail, VERIFY_TTL_MS } = require('../lib/verify-email');
+const { newVerifyToken, hashVerifyToken, verifyExpiry, sendVerificationEmail, VERIFY_TTL_MS } = require('../lib/verify-email');
 
 const GENERIC_RESEND = 'Eğer bu e-posta kayıtlı ve doğrulanmamışsa, yeni doğrulama bağlantısı gönderildi. Lütfen gelen kutunuzu (ve gerekirse spam klasörünü) kontrol edin.';
 const RESEND_COOLDOWN_MS = 60 * 1000;
@@ -90,7 +90,7 @@ module.exports = function registerInvites(app, ctx) {
                     const issuedAt = user.email_verify_expires ? new Date(user.email_verify_expires).getTime() - VERIFY_TTL_MS : 0;
                     if (Date.now() - issuedAt >= RESEND_COOLDOWN_MS) {
                         const token = newVerifyToken();
-                        await pool.query('UPDATE users SET email_verify_token = $1, email_verify_expires = $2 WHERE id = $3', [token, verifyExpiry(), user.id]);
+                        await pool.query('UPDATE users SET email_verify_token = $1, email_verify_expires = $2 WHERE id = $3', [hashVerifyToken(token), verifyExpiry(), user.id]);
                         sent = { user, token };
                     }
                 }

@@ -4793,7 +4793,7 @@ app.get('/api/auth/verify-email', async (req, res) => {
         const r = await pool.query(
             `UPDATE users SET email_verified = true, email_verify_token = NULL, email_verify_expires = NULL
              WHERE email_verify_token = $1 AND email_verify_expires > NOW() RETURNING id`,
-            [token]
+            [require('./src/lib/verify-email').hashVerifyToken(token)]
         );
         if (r.rows.length === 0) return res.redirect(302, '/login.html?verified=0');
         await logAuthAudit(r.rows[0].id, 'email_verified', req);

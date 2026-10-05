@@ -6,7 +6,7 @@ const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('../config');
 
 const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
 const { INVITE_ERROR, consumeInviteCode } = require('../lib/invites');
-const { newVerifyToken, verifyExpiry, sendVerificationEmail } = require('../lib/verify-email');
+const { newVerifyToken, hashVerifyToken, verifyExpiry, sendVerificationEmail } = require('../lib/verify-email');
 const BRAND_MISMATCH_ERROR = 'Davet kodu seçtiğiniz markaya ait değil';
 
 module.exports = function registerSignupGoogle(app, ctx) {
@@ -86,7 +86,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
                         email, hash, full_name, phone || null, effectiveBrandId,
                         company_name, company_tax_office || null, company_tax_number || null,
                         job_title, dealer_or_distributor || 'bayi', city || null,
-                        verifyToken, verifyExpires
+                        hashVerifyToken(verifyToken), verifyExpires
                     ]
                 );
                 newUser = userInsert.rows[0];
