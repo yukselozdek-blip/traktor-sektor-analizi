@@ -41,6 +41,8 @@ function mdToHtml(md) {
         return window.DOMPurify.sanitize(html, {
             ALLOWED_TAGS: MD_ALLOWED_TAGS,
             ALLOWED_ATTR: ['class', 'href', 'target', 'rel'],
+            // data-on-* (inline-actions.js) eylem öznitelikleri kullanıcı içeriğinden asla geçmemeli
+            ALLOW_DATA_ATTR: false,
             ALLOWED_URI_REGEXP: /^https?:/i
         });
     }
@@ -549,10 +551,35 @@ async function requestAiAnalysis(type, context, panelId) {
 // ============================================
 // INITIALIZATION
 // ============================================
-async function init() {
-    const token = localStorage.getItem('auth_token');
-    if (!token) { window.location.href = API.getLoginDestination(); return; }
+// Marka ve il listelerini BAĞIMSIZ yükler (Promise.allSettled): biri başarısız olsa diğeri doldurulur.
+// Zaten dolu olan liste yeniden istenmez (force: true hariç). Başarısız listeler için console.error yazılır.
+let referenceLoadFailed = { brands: false, provinces: false };
+async function loadReferenceData({ force = false } = {}) {
+    const needBrands = force || !Array.isArray(allBrands) || allBrands.length === 0;
+    const needProvinces = force || !Array.isArray(allProvinces) || allProvinces.length === 0;
+    const [brandsRes, provincesRes] = await Promise.allSettled([
+        needBrands ? API.getBrands() : Promise.resolve(allBrands),
+        needProvinces ? API.getProvinces() : Promise.resolve(allProvinces)
+    ]);
+    if (brandsRes.status === 'fulfilled' && Array.isArray(brandsRes.value)) {
+        allBrands = brandsRes.value;
+        referenceLoadFailed.brands = false;
+    } else {
+        referenceLoadFailed.brands = true;
+        allBrands = Array.isArray(allBrands) ? allBrands : [];
+        console.error('Marka listesi yüklenemedi (kritik olmayan):', brandsRes.reason || 'geçersiz yanıt');
+    }
+    if (provincesRes.status === 'fulfilled' && Array.isArray(provincesRes.value)) {
+        allProvinces = provincesRes.value;
+        referenceLoadFailed.provinces = false;
+    } else {
+        referenceLoadFailed.provinces = true;
+        allProvinces = Array.isArray(allProvinces) ? allProvinces : [];
+        console.error('İl listesi yüklenemedi (kritik olmayan):', provincesRes.reason || 'geçersiz yanıt');
+    }
+}
 
+async function init() {
     try {
         currentUser = await API.me();
     } catch (err) {
@@ -563,17 +590,8 @@ async function init() {
 
     if (!currentUser) { API.logout(); return; }
 
-    try {
-        // Pre-load common data
-        [allBrands, allProvinces] = await Promise.all([
-            API.getBrands(),
-            API.getProvinces()
-        ]);
-    } catch (err) {
-        console.error('Data pre-load error (non-fatal):', err);
-        allBrands = allBrands || [];
-        allProvinces = allProvinces || [];
-    }
+    // Ortak veriler birbirinden bağımsız yüklenir: biri hata verse (ör. /api/provinces) diğeri dolu kalır.
+    await loadReferenceData();
 
     localStorage.setItem('user_data', JSON.stringify(currentUser));
     if (currentUser?.brand?.slug) {
@@ -611,6 +629,41 @@ async function init() {
 // ============================================
 // BRAND THEMING
 // ============================================
+
+// WCAG: marka rengi üzerindeki yazı için okunur renk (beyaz ya da koyu) seçer ve CSS değişkenlerine yazar.
+function parseCssColor(value) {
+    const v = String(value || '').trim();
+    let m = v.match(/^#([0-9a-f]{3})$/i);
+    if (m) return m[1].split('').map(c => parseInt(c + c, 16));
+    m = v.match(/^#([0-9a-f]{6})$/i);
+    if (m) return [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+    m = v.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function relativeLuminance(rgb) {
+    const [r, g, b] = rgb.map(c => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrastRatio(a, b) {
+    const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+}
+function applyReadableBrandText() {
+    const root = document.documentElement;
+    const primary = parseCssColor(getComputedStyle(root).getPropertyValue('--brand-primary'));
+    if (!primary) return;
+    const white = [255, 255, 255], dark = [11, 18, 32];
+    // Yarı saydam yüzeylerde de okunur kalması için 5.2 eşiği (WCAG AA 4.5 + pay)
+    const useWhite = contrastRatio(white, primary) >= 5.2 || contrastRatio(white, primary) >= contrastRatio(dark, primary);
+    const on = useWhite ? '255, 255, 255' : '11, 18, 32';
+    root.style.setProperty('--on-brand', `rgb(${on})`);
+    root.style.setProperty('--on-brand-soft', `rgb(${on})`); // saydamlık kontrastı düşürdüğü için düz renk
+    root.style.setProperty('--on-brand-line', `rgba(${on}, 0.30)`);
+    // Marka metin rengi (--brand-text) marka zemininde yetersiz kontrastlıysa okunur olanla değiştir.
+    const current = parseCssColor(getComputedStyle(root).getPropertyValue('--brand-text'));
+    if (!current || contrastRatio(current, primary) < 4.5) root.style.setProperty('--brand-text', `rgb(${on})`);
+}
+
 function applyBrandTheme(brand) {
     const theme = window.BrandExperience?.applyTheme
         ? window.BrandExperience.applyTheme(document.documentElement, brand || {}, 'brand')
@@ -645,6 +698,8 @@ function applyBrandTheme(brand) {
     if (logoEl && theme.logo_url) {
         logoEl.innerHTML = `<img src="${safeHref(theme.logo_url)}" alt="${escapeHtml(theme.name)}">`;
     }
+
+    applyReadableBrandText();
 }
 
 function updateUserUI() {
@@ -881,6 +936,7 @@ function navigateTo(page, opts = {}) {
 
     const [title, subtitle] = titles[page] || ['', ''];
     document.getElementById('pageTitle').textContent = title;
+    { const h = document.getElementById('pageTitleSr'); if (h) h.textContent = title || 'Panel'; }
     document.getElementById('pageSubtitle').textContent = subtitle;
 
     // Global marka banner: her sekmede sayfa adını üstte gösterir
@@ -890,6 +946,7 @@ function navigateTo(page, opts = {}) {
     const meta = getReportMeta(page) || null;
     if (meta) {
         document.getElementById('pageTitle').textContent = meta.title || title;
+        { const h = document.getElementById('pageTitleSr'); if (h) h.textContent = meta.title || title || 'Panel'; }
         document.getElementById('pageSubtitle').textContent = meta.subtitle || subtitle;
     }
 
@@ -1018,6 +1075,15 @@ function toggleSidebar(event) {
     }
 
     sidebar.classList.toggle('open');
+}
+
+// Hata ekranındaki "Tekrar Dene": satır içi ifade `let currentPage` (global sözcüksel) değişkenini göremediği için adlandırılmış işlev
+function retryCurrentPage() {
+    // Önceki hata başarısız yüklemelerden kaynaklanmış olabilir: ortak listeleri de (boşsa) yeniden dene.
+    API.clearCache();
+    const needRef = !allBrands?.length || !allProvinces?.length;
+    const run = () => navigateTo(currentPage, { history: 'replace' });
+    if (needRef) loadReferenceData().then(run, run); else run();
 }
 
 function onYearChange() {
@@ -1546,7 +1612,7 @@ async function loadBrandEcosystemPage() {
                     <td class="be-strong">${formatNumber(distributor.curr_partial)}</td>
                     <td class="be-strong">${pctText(distributor.share_pct)}</td>
                     <td class="${yoyClass(distributor.yoy_pct)}">${yoyText(distributor.yoy_pct)}</td>
-                    <td>${distributor.top_brand_name}</td>
+                    <td>${escapeHtml(distributor.top_brand_name)}</td>
                 </tr>
             `;
         }).join('');
@@ -1963,7 +2029,7 @@ async function loadHpCommandCenterPage() {
                 <div class="chart-card hpx-panel hpx-span-6">
                     <div class="hpx-panel-head">
                         <div>
-                            <h3>${title}</h3>
+                            <h3>${escapeHtml(title)}</h3>
                             <p>${fmtPct(panel?.share_pct)} pay · ${formatNumber(panel?.total || 0)} adet</p>
                         </div>
                     </div>
@@ -2011,7 +2077,7 @@ async function loadHpCommandCenterPage() {
                         <div class="hpx-period-pill"><i class="fas fa-calendar-alt"></i><span>${periodLabel}</span></div>
                         <div class="hpx-brand-picker">
                             <label>Marka spotlight</label>
-                            <select id="hpCommandBrandSelect" class="year-select hpx-select" onchange="reloadHpCommandCenter()">
+                            <select id="hpCommandBrandSelect" class="year-select hpx-select" data-on-change="reloadHpCommandCenter()">
                                 ${brandOptions}
                             </select>
                         </div>
@@ -2372,7 +2438,7 @@ async function loadHpTopPage() {
                     </div>
                 </div>
                 <div class="ht-grid">${cards}</div>
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -2428,7 +2494,7 @@ async function loadHpTopModelPage() {
             html += `
                 <div class="htm-cat-section">
                     <div class="htm-cat-header">
-                        <div class="htm-cat-label" style="background:${color}">${label}</div>
+                        <div class="htm-cat-label" style="background:${color}">${escapeHtml(label)}</div>
                     </div>
                     <div class="htm-cat-content">
                         <div class="ht-grid htm-grid">${buildCatRow(catKey, segments)}</div>
@@ -2446,7 +2512,7 @@ async function loadHpTopModelPage() {
                     </div>
                 </div>
                 ${html}
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -2479,13 +2545,13 @@ async function loadObtHpPage() {
             const label = catLabels[catKey];
 
             // Header
-            let header = `<th class="obt-cat-th" style="background:${color}">${label}</th>`;
+            let header = `<th class="obt-cat-th" style="background:${color}">${escapeHtml(label)}</th>`;
             years.forEach(y => { header += `<th>${y}</th>`; });
             for (let m = 1; m <= max_month; m++) { header += `<th>${monthNames[m - 1]}</th>`; }
             header += `<th>${prev_year} İLK ${max_month} AY</th><th>${max_year} İLK ${max_month} AY</th>`;
 
             // Category total row
-            let totalRow = `<td class="obt-label obt-total-row">${label} Toplam</td>`;
+            let totalRow = `<td class="obt-label obt-total-row">${escapeHtml(label)} Toplam</td>`;
             years.forEach(y => { totalRow += cell(total.yearly[y] || 0, total.yearly[y] || 0); });
             for (let m = 1; m <= max_month; m++) { totalRow += cell(total.months[m] || 0, total.months[m] || 0); }
             totalRow += cell(total.prev_partial, total.prev_partial);
@@ -2563,8 +2629,8 @@ async function loadBrandHpPage() {
         header += `<th>${prev_year} İLK ${max_month} AY</th>`;
         header += `<th>${max_year} İLK ${max_month} AY</th>`;
         header += `<th>Seg.<br>Ağırlık %</th>`;
-        header += `<th>${brand_name}<br>${max_year} P.Payı</th>`;
-        header += `<th>${brand_name}<br>${prev_year} P.Payı</th>`;
+        header += `<th>${escapeHtml(brand_name)}<br>${max_year} P.Payı</th>`;
+        header += `<th>${escapeHtml(brand_name)}<br>${prev_year} P.Payı</th>`;
         header += `<th>P.Payı<br>Değişim</th>`;
 
         // Build rows
@@ -2591,7 +2657,7 @@ async function loadBrandHpPage() {
             rows += `<tr class="bhp-market-row ${isTotal ? 'bhp-total-group' : ''}">${r1}</tr>`;
 
             // Row 2: Brand Adet
-            let r2 = `<td class="bhp-row-label">${brand_name} Adet</td>`;
+            let r2 = `<td class="bhp-row-label">${escapeHtml(brand_name)} Adet</td>`;
             years.forEach(y => { r2 += `<td class="bhp-brand">${(seg.brand.yearly[y] || 0).toLocaleString('tr-TR')}</td>`; });
             for (let m = 1; m <= max_month; m++) { r2 += `<td class="bhp-brand">${(seg.brand.months[m] || 0).toLocaleString('tr-TR')}</td>`; }
             r2 += `<td class="bhp-brand bhp-partial">${seg.brand.prev_partial.toLocaleString('tr-TR')}</td>`;
@@ -2600,7 +2666,7 @@ async function loadBrandHpPage() {
             rows += `<tr class="bhp-brand-row ${isTotal ? 'bhp-total-group' : ''}">${r2}</tr>`;
 
             // Row 3: Brand %
-            let r3 = `<td class="bhp-row-label">${brand_name} %</td>`;
+            let r3 = `<td class="bhp-row-label">${escapeHtml(brand_name)} %</td>`;
             years.forEach(y => {
                 const pct = (seg.market.yearly[y] || 0) > 0 ? ((seg.brand.yearly[y] || 0) / seg.market.yearly[y] * 100).toFixed(1) : '0.0';
                 r3 += `<td class="bhp-pct">${pct}%</td>`;
@@ -3067,7 +3133,7 @@ async function legacyLoadProvTopBrandPage() {
                     </div>
                 </div>
                 <div class="ht-grid">${cards}</div>
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -3139,7 +3205,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
         const quickProvinceChips = provinces.slice(0, 8).map(item => `
             <button
                 class="ptx-quick-chip ${item.province_id === selectedProvince.province_id ? 'is-active' : ''}"
-                onclick="loadProvTopBrandPage(${jsArg(item.province_id)}, '')">
+                data-on-click="loadProvTopBrandPage(${jsArg(item.province_id)}, '')">
                 <strong>${safe(item.province_name)}</strong>
                 <span>${fmtNum(item.total_sales)} adet</span>
             </button>
@@ -3239,7 +3305,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
             <tr ${item.brand_id === selectedBrand.brand_id ? 'class="is-selected"' : ''}>
                 <td><strong>#${item.rank}</strong></td>
                 <td>
-                    <button class="ptx-link-btn" onclick="loadProvTopBrandPage(${jsArg(selectedProvince.province_id)}, ${jsArg(item.brand_id)})">
+                    <button class="ptx-link-btn" data-on-click="loadProvTopBrandPage(${jsArg(selectedProvince.province_id)}, ${jsArg(item.brand_id)})">
                         ${safe(item.brand_name)}
                     </button>
                     <span>${safe(item.top_model_name || '-')}</span>
@@ -3298,13 +3364,13 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                         <div class="ptx-filter-row">
                             <label class="ptx-field">
                                 <span>İl seç</span>
-                                <select id="provTopBrandProvinceSelect" onchange="loadProvTopBrandPage(this.value, '')">
+                                <select id="provTopBrandProvinceSelect" data-on-change="loadProvTopBrandPage(this.value, '')">
                                     ${provinceOptions}
                                 </select>
                             </label>
                             <label class="ptx-field">
                                 <span>Marka seç</span>
-                                <select id="provTopBrandBrandSelect" onchange="loadProvTopBrandPage(document.getElementById('provTopBrandProvinceSelect').value, this.value)">
+                                <select id="provTopBrandBrandSelect" data-on-change="loadProvTopBrandPage(document.getElementById('provTopBrandProvinceSelect').value, this.value)">
                                     ${brandOptions}
                                 </select>
                             </label>
@@ -3335,7 +3401,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                             ${executiveMemo.map(item => `
                                 <article class="ptx-memo ${item.tone}">
                                     <span>${safe(item.eyebrow)}</span>
-                                    <h4>${item.title}</h4>
+                                    <h4>${escapeHtml(item.title)}</h4>
                                     <p>${item.body}</p>
                                 </article>
                             `).join('')}
@@ -3571,7 +3637,7 @@ async function loadHpTopIlCatPage() {
             html += `
                 <div class="htm-cat-section">
                     <div class="htm-cat-header">
-                        <div class="htm-cat-label" style="background:${color}">${label}</div>
+                        <div class="htm-cat-label" style="background:${color}">${escapeHtml(label)}</div>
                     </div>
                     <div class="htm-cat-content">
                         <div class="ht-grid htm-grid">${buildCatRow(segments)}</div>
@@ -3589,7 +3655,7 @@ async function loadHpTopIlCatPage() {
                     </div>
                 </div>
                 ${html}
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -3646,7 +3712,7 @@ async function loadHpTopIlPage() {
                     </div>
                 </div>
                 <div class="ht-grid">${cards}</div>
-                <p style="color:#64748b;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
+                <p style="color: #8f9fb7;font-size:11px;margin-top:16px;">*Y.B : Yılbaşından beri (İlk ${max_month} ay)</p>
             </div>
         `;
 
@@ -3668,19 +3734,19 @@ async function loadMapFullPage() {
     document.getElementById('pageContent').innerHTML = `
         <div class="mf-container">
             <div class="mf-filters">
-                <select id="mfBrand" onchange="onMapFilterChange()">
+                <select id="mfBrand" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Markalar</option>${brandOpts}
                 </select>
-                <select id="mfCabin" onchange="onMapFilterChange()">
+                <select id="mfCabin" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Kabin</option>
                 </select>
-                <select id="mfDrive" onchange="onMapFilterChange()">
+                <select id="mfDrive" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Çekiş</option>
                 </select>
-                <select id="mfGear" onchange="onMapFilterChange()">
+                <select id="mfGear" data-on-change="onMapFilterChange()">
                     <option value="">Tüm Şanzıman</option>
                 </select>
-                <select id="mfHp" onchange="onMapFilterChange()">
+                <select id="mfHp" data-on-change="onMapFilterChange()">
                     <option value="">Tüm HP</option>
                 </select>
             </div>
@@ -4256,7 +4322,7 @@ async function loadTotalMarketPage() {
                         <h2>Toplam Traktör Pazarı (${prevYear} - ${currYear})</h2>
                         <p>İlk ${maxMonth} ay karşılaştırması</p>
                     </div>
-                    <select id="tmBrandFilter" class="year-select" onchange="reloadTotalMarket()" style="min-width:200px;">
+                    <select id="tmBrandFilter" class="year-select" data-on-change="reloadTotalMarket()" style="min-width:200px;">
                         ${brandOptions}
                     </select>
                 </div>
@@ -5027,7 +5093,7 @@ function buildBrandStageHtml(brand, options = {}) {
 
     const monogram = dashboardSafe(theme.symbol || theme.monogram || (brandName.slice(0, 2).toUpperCase()));
     const logoHtml = logoSrc
-        ? `<img src="${dashboardSafe(logoSrc)}" alt="${dashboardSafe(brandName)} logo" class="bh-mc-logo" onerror="this.outerHTML='<span class=&quot;bh-mc-monogram&quot;>${monogram}</span>'">`
+        ? `<img src="${dashboardSafe(logoSrc)}" alt="${dashboardSafe(brandName)} logo" class="bh-mc-logo" data-on-error="this.outerHTML='<span class=&quot;bh-mc-monogram&quot;>${monogram}</span>'">`
         : `<span class="bh-mc-monogram">${monogram}</span>`;
 
     const quickLinks = [
@@ -5040,7 +5106,7 @@ function buildBrandStageHtml(brand, options = {}) {
     const quickLinksHtml = quickLinks.map(link => {
         let favHost = '';
         try { favHost = new URL(link.favDomain).hostname; } catch { favHost = ''; }
-        const fav = favHost ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(favHost)}&sz=32" onerror="this.style.display='none'" alt="">` : `<i class="fas ${link.icon}"></i>`;
+        const fav = favHost ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(favHost)}&sz=32" data-on-error="this.style.display='none'" alt="">` : `<i class="fas ${link.icon}"></i>`;
         return `<a class="bh-mc-link" href="${dashboardSafe(link.url)}" target="_blank" rel="noreferrer">${fav}<span>${dashboardSafe(link.label)}</span></a>`;
     }).join('');
 
@@ -5050,7 +5116,7 @@ function buildBrandStageHtml(brand, options = {}) {
 
     const brandSelector = brandOptions
         ? `<label class="bh-mc-brand-select">
-                <select id="brandHubBrandFilter" onchange="onBrandHubBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
+                <select id="brandHubBrandFilter" data-on-change="onBrandHubBrandChange()" ${currentUser?.role === 'admin' ? '' : 'disabled'}>
                     ${brandOptions}
                 </select>
             </label>`
@@ -5059,7 +5125,7 @@ function buildBrandStageHtml(brand, options = {}) {
     const heroTitle = options.heroTitle || '';
     const showFilterToggle = options.showFilterToggle === true;
     const filterToggleHtml = showFilterToggle
-        ? `<button type="button" class="bh-mc-filter-toggle" onclick="togglePageFilterPanel(this)" aria-label="Filtreleri aç/kapat" title="Filtreleri aç/kapat"><i class="fas fa-sliders-h"></i></button>`
+        ? `<button type="button" class="bh-mc-filter-toggle" data-on-click="togglePageFilterPanel(this)" aria-label="Filtreleri aç/kapat" title="Filtreleri aç/kapat"><i class="fas fa-sliders-h"></i></button>`
         : '';
 
     return `
@@ -5185,7 +5251,7 @@ function renderSuperuserPreviewSwitch() {
     div.className = 'superuser-preview-switch';
     div.innerHTML = `
         <span class="sup-pre-label"><i class="fas fa-crown"></i> Önizleme:</span>
-        <select onchange="onSuperuserPreviewChange(this.value)">
+        <select data-on-change="onSuperuserPreviewChange(this.value)">
             <option value="">Tüm yetkiler (admin)</option>
             <option value="starter" ${current === 'starter' ? 'selected' : ''}>Starter</option>
             <option value="growth" ${current === 'growth' ? 'selected' : ''}>Growth</option>
@@ -5244,10 +5310,10 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
     });
 
     const quickLinks = [
-        profile.website_url ? `<a class="bh-link-btn" href="${profile.website_url}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
-        profile.dealer_locator_url ? `<a class="bh-link-btn" href="${profile.dealer_locator_url}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
-        profile.portal_url ? `<a class="bh-link-btn" href="${profile.portal_url}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
-        reportDocumentLink ? `<a class="bh-link-btn" href="${reportDocumentLink}" target="_blank" rel="noreferrer"><i class="fas fa-file-lines"></i><span>Rapor / Kaynak</span></a>` : ''
+        profile.website_url ? `<a class="bh-link-btn" href="${safeHref(profile.website_url)}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
+        profile.dealer_locator_url ? `<a class="bh-link-btn" href="${safeHref(profile.dealer_locator_url)}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
+        profile.portal_url ? `<a class="bh-link-btn" href="${safeHref(profile.portal_url)}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
+        reportDocumentLink ? `<a class="bh-link-btn" href="${safeHref(reportDocumentLink)}" target="_blank" rel="noreferrer"><i class="fas fa-file-lines"></i><span>Rapor / Kaynak</span></a>` : ''
     ].filter(Boolean).join('');
 
     const heroStats = (profile.hero_stats || []).map(item => `
@@ -5466,7 +5532,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
         <div class="bhx-watch-card ${item.tone === 'opportunity' ? 'is-positive' : ''}">
             <strong>${dashboardSafe(item.title || '-')}</strong>
             <p>${dashboardSafe(item.text || '')}</p>
-            ${item.source_url ? `<a href="${item.source_url}" target="_blank" rel="noreferrer">Resmi kaynak</a>` : ''}
+            ${item.source_url ? `<a href="${safeHref(item.source_url)}" target="_blank" rel="noreferrer">Resmi kaynak</a>` : ''}
         </div>
     `).join('');
 
@@ -5768,16 +5834,24 @@ async function loadBrandHubPage() {
 
     try {
         const state = ensureBrandHubState();
-        const effectiveBrandId = currentUser?.role === 'admin'
+        const isAdmin = currentUser?.role === 'admin';
+        // Admin için marka listesi açılışta yüklenemediyse (geçici sunucu hatası) bir kez yeniden dene.
+        if (isAdmin && !state.brand_id && !(allBrands && allBrands.length)) {
+            try { allBrands = await API.getBrands(); } catch (e) { console.error('Marka Merkezi: marka listesi yeniden denemesi başarısız:', e); }
+        }
+        const effectiveBrandId = isAdmin
             ? (state.brand_id || String(allBrands?.[0]?.id || ''))
             : String(currentUser?.brand_id || '');
 
         if (!effectiveBrandId) {
+            // Doğru bilgi: yönetici için sorun atama değil, listenin yüklenememesidir.
+            const listFailed = isAdmin;
             pageContent.innerHTML = `
                 <div class="error-state">
                     <i class="fas fa-circle-exclamation"></i>
-                    <h3>Marka seçimi bulunamadı</h3>
-                    <p>Marka Merkezi için bir marka atanmış olmalı.</p>
+                    <h3>${listFailed ? 'Markalar yüklenemedi' : 'Marka seçimi bulunamadı'}</h3>
+                    <p>${listFailed ? 'Markalar yüklenemedi, sayfayı yenileyin.' : 'Marka Merkezi için bir marka atanmış olmalı.'}</p>
+                    ${listFailed ? '<button class="btn-filter" data-on-click="retryCurrentPage()" style="margin-top:16px">Tekrar Dene</button>' : ''}
                 </div>
             `;
             return;
@@ -5816,10 +5890,10 @@ async function loadBrandHubPage() {
         });
 
         const quickLinks = [
-            profile.website_url ? `<a class="bh-link-btn" href="${profile.website_url}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
-            profile.dealer_locator_url ? `<a class="bh-link-btn" href="${profile.dealer_locator_url}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
-            profile.portal_url ? `<a class="bh-link-btn" href="${profile.portal_url}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
-            profile.price_list_url ? `<a class="bh-link-btn" href="${profile.price_list_url}" target="_blank" rel="noreferrer"><i class="fas fa-file-invoice-dollar"></i><span>Fiyat / Katalog</span></a>` : ''
+            profile.website_url ? `<a class="bh-link-btn" href="${safeHref(profile.website_url)}" target="_blank" rel="noreferrer"><i class="fas fa-globe"></i><span>Resmi Site</span></a>` : '',
+            profile.dealer_locator_url ? `<a class="bh-link-btn" href="${safeHref(profile.dealer_locator_url)}" target="_blank" rel="noreferrer"><i class="fas fa-map-location-dot"></i><span>Bayi Ağı</span></a>` : '',
+            profile.portal_url ? `<a class="bh-link-btn" href="${safeHref(profile.portal_url)}" target="_blank" rel="noreferrer"><i class="fas fa-right-to-bracket"></i><span>B2B Portal</span></a>` : '',
+            profile.price_list_url ? `<a class="bh-link-btn" href="${safeHref(profile.price_list_url)}" target="_blank" rel="noreferrer"><i class="fas fa-file-invoice-dollar"></i><span>Fiyat / Katalog</span></a>` : ''
         ].filter(Boolean).join('');
 
         const kpiCards = [
@@ -6209,27 +6283,27 @@ async function loadDashboard() {
                             </div>
                         </div>
                         <div class="tmx-filter-actions">
-                            <button type="button" class="tmx-btn tmx-btn-ghost" onclick="resetDashboardFilters()">
+                            <button type="button" class="tmx-btn tmx-btn-ghost" data-on-click="resetDashboardFilters()">
                                 <i class="fas fa-undo-alt"></i><span>Sıfırla</span>
                             </button>
-                            <button type="button" class="tmx-btn tmx-btn-secondary" data-dashboard-collapse onclick="toggleDashboardFilters()"></button>
+                            <button type="button" class="tmx-btn tmx-btn-secondary" data-dashboard-collapse data-on-click="toggleDashboardFilters()"></button>
                         </div>
                     </div>
                     <div class="tmx-filter-body">
                         <div class="tmx-filter-grid dbx-filter-grid">
-                            <select id="dbYearFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbYearFilter" data-on-change="onDashboardFilterChange()">
                                 ${yearOptions}
                             </select>
-                            <select id="dbCabinFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbCabinFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm Kabin</option>
                             </select>
-                            <select id="dbDriveFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbDriveFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm Çekiş</option>
                             </select>
-                            <select id="dbGearFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbGearFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm Şanzıman</option>
                             </select>
-                            <select id="dbHpFilter" onchange="onDashboardFilterChange()">
+                            <select id="dbHpFilter" data-on-change="onDashboardFilterChange()">
                                 <option value="">Tüm HP</option>
                             </select>
                         </div>
@@ -6618,30 +6692,30 @@ async function loadMapPage() {
                     </div>
                     <div class="tmx-filter-body">
                         <div class="tmx-filter-grid">
-                            <select id="mapBrandFilter" onchange="updateMap()">
+                            <select id="mapBrandFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Markalar</option>
                                 ${brandOptions}
                             </select>
-                            <select id="mapYearFilter" onchange="updateMap()">
+                            <select id="mapYearFilter" data-on-change="updateMap()">
                                 ${yearOptions}
                             </select>
-                            <select id="mapCabinFilter" onchange="updateMap()">
+                            <select id="mapCabinFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Kabin</option>
                                 ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
                             </select>
-                            <select id="mapDriveFilter" onchange="updateMap()">
+                            <select id="mapDriveFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Çekiş</option>
                                 ${selectedOption(currentDriveValue, currentDriveValue)}
                             </select>
-                            <select id="mapGearFilter" onchange="updateMap()">
+                            <select id="mapGearFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Şanzıman</option>
                                 ${selectedOption(currentGearValue, currentGearValue)}
                             </select>
-                            <select id="mapHpFilter" onchange="updateMap()">
+                            <select id="mapHpFilter" data-on-change="updateMap()">
                                 <option value="">Tüm HP</option>
                                 ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
                             </select>
-                            <select id="mapRegionFilter" onchange="updateMap()">
+                            <select id="mapRegionFilter" data-on-change="updateMap()">
                                 <option value="">Tüm Bölgeler</option>
                                 <option value="Marmara">Marmara</option>
                                 <option value="Ege">Ege</option>
@@ -6659,11 +6733,11 @@ async function loadMapPage() {
                     <div class="card-body tmx-map-body">
                         <div class="tmx-map-stage">
                             <div class="tmx-map-toolbar">
-                                <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                                <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse data-on-click="toggleTurkeyMapFilters()"></button>
+                                <button type="button" class="tmx-btn tmx-btn-ghost" data-on-click="fitTurkeyMapBounds()">
                                     <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
                                 </button>
-                                <button type="button" class="tmx-btn tmx-btn-ghost" data-sidebar-toggle onclick="toggleSidebar(event)">
+                                <button type="button" class="tmx-btn tmx-btn-ghost" data-sidebar-toggle data-on-click="toggleSidebar(event)">
                                     <i class="fas fa-bars"></i><span>Menü</span>
                                 </button>
                             </div>
@@ -7014,7 +7088,7 @@ async function loadSalesPage() {
         const content = document.getElementById('pageContent');
         content.innerHTML = `
             <div class="filter-bar">
-                <select id="salesDimension" onchange="updateSalesCharts()">
+                <select id="salesDimension" data-on-change="updateSalesCharts()">
                     <option value="category">Tarla / Bahçe</option>
                     <option value="cabin_type">Kabinli / Rollbar</option>
                     <option value="drive_type">2WD / 4WD</option>
@@ -7025,7 +7099,7 @@ async function loadSalesPage() {
                     <option value="">Tüm Markalar</option>
                     ${allBrands.map(b => `<option value="${b.id}" ${String(b.id) === String(selectedBrandId || '') ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}
                 </select>
-                <button class="btn-filter" onclick="updateSalesCharts()"><i class="fas fa-filter"></i> Filtrele</button>
+                <button class="btn-filter" data-on-click="updateSalesCharts()"><i class="fas fa-filter"></i> Filtrele</button>
             </div>
 
             <div class="grid-2">
@@ -7161,7 +7235,7 @@ async function loadCompetitorsPage() {
                     <option value="hp_range">Beygir Gücü</option>
                     <option value="gear_config">Şanzıman Tipi</option>
                 </select>
-                <button class="btn-filter" onclick="loadCompetitorAnalysis()"><i class="fas fa-search"></i> Analiz Et</button>
+                <button class="btn-filter" data-on-click="loadCompetitorAnalysis()"><i class="fas fa-search"></i> Analiz Et</button>
             </div>
 
             <div class="grid-2">
@@ -7460,8 +7534,8 @@ async function loadModelsPage() {
                         <span>${m.price_usd ? fmtPrice(m.price_usd) : '-'}</span>
                     </div>
                     <div class="mcx-alt-actions">
-                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('left', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">⟵ Sol'a koy</button>
-                        <button class="mcx-mini-btn" onclick="setModelCompareTarget('right', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">Sağ'a koy ⟶</button>
+                        <button class="mcx-mini-btn" data-on-click="setModelCompareTarget('left', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">⟵ Sol'a koy</button>
+                        <button class="mcx-mini-btn" data-on-click="setModelCompareTarget('right', ${jsArg(m.brand_id)}, ${jsArg(m.model_id)})">Sağ'a koy ⟶</button>
                     </div>
                 </article>
             `;
@@ -7485,7 +7559,7 @@ async function loadModelsPage() {
                             <span class="mcx-side-label">${dashboardSafe(brand1?.name || 'Marka A')} · Model A</span>
                         </div>
                         <div class="mcx-side-fields mcx-side-fields-single">
-                            <select id="mcxModel1" onchange="onModelCompareModelChange('left', this.value)">${modelOptionsFor(modelCompareState.brand1_id, modelCompareState.model1_key)}</select>
+                            <select id="mcxModel1" data-on-change="onModelCompareModelChange('left', this.value)">${modelOptionsFor(modelCompareState.brand1_id, modelCompareState.model1_key)}</select>
                         </div>
                     </div>
                     <div class="mcx-vs-badge">VS</div>
@@ -7495,8 +7569,8 @@ async function loadModelsPage() {
                             <span class="mcx-side-dot" style="background:${c2}"></span>
                         </div>
                         <div class="mcx-side-fields">
-                            <select id="mcxBrand2" onchange="onModelCompareBrandChange('right', this.value)">${brandOptionsFor(modelCompareState.brand2_id)}</select>
-                            <select id="mcxModel2" onchange="onModelCompareModelChange('right', this.value)">${modelOptionsFor(modelCompareState.brand2_id, modelCompareState.model2_key)}</select>
+                            <select id="mcxBrand2" data-on-change="onModelCompareBrandChange('right', this.value)">${brandOptionsFor(modelCompareState.brand2_id)}</select>
+                            <select id="mcxModel2" data-on-change="onModelCompareModelChange('right', this.value)">${modelOptionsFor(modelCompareState.brand2_id, modelCompareState.model2_key)}</select>
                         </div>
                     </div>
                 </section>
@@ -7505,8 +7579,8 @@ async function loadModelsPage() {
                 <section class="mcx-headline">
                     <h2><span style="color:${c1}">${dashboardSafe(brand1?.name || '')} ${dashboardSafe(m1.model_name)}</span> <em>vs</em> <span style="color:${c2}">${dashboardSafe(brand2?.name || '')} ${dashboardSafe(m2.model_name)}</span></h2>
                     <div class="mcx-quick-actions">
-                        <button class="mcx-action-btn" onclick="openModelCompareXray('left')"><i class="fas fa-x-ray"></i>Model A Röntgeni</button>
-                        <button class="mcx-action-btn" onclick="openModelCompareXray('right')"><i class="fas fa-x-ray"></i>Model B Röntgeni</button>
+                        <button class="mcx-action-btn" data-on-click="openModelCompareXray('left')"><i class="fas fa-x-ray"></i>Model A Röntgeni</button>
+                        <button class="mcx-action-btn" data-on-click="openModelCompareXray('right')"><i class="fas fa-x-ray"></i>Model B Röntgeni</button>
                     </div>
                 </section>
 
@@ -7698,7 +7772,7 @@ async function searchModels() {
                         <td>${m.gear_config || '-'}</td>
                         <td>${m.weight_kg ? m.weight_kg + ' kg' : '-'}</td>
                         <td>
-                            <button type="button" class="mi-row-btn" onclick="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
+                            <button type="button" class="mi-row-btn" data-on-click="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
                                 <i class="fas fa-x-ray"></i><span>Röntgen</span>
                             </button>
                         </td>
@@ -7831,7 +7905,7 @@ async function loadModelIntelPage() {
                         <input id="miModelSearch" type="search" value="${dashboardSafe(modelIntelState.q || '')}" placeholder="örn. Arion 450, 5S, TD...">
                     </label>
                     <div class="mi-filter-actions">
-                        <button type="button" class="mi-action-btn" onclick="refreshModelIntelDirectory()"><i class="fas fa-search"></i><span>Listele</span></button>
+                        <button type="button" class="mi-action-btn" data-on-click="refreshModelIntelDirectory()"><i class="fas fa-search"></i><span>Listele</span></button>
                     </div>
                 </div>
             </section>
@@ -7901,7 +7975,7 @@ function renderModelIntelDirectory(models = []) {
                         <span>${dashboardSafe(model.gear_config || '-')}</span>
                     </div>
                     <div class="mi-model-price">${model.price_usd ? fmtPrice(Number(model.price_usd)) : 'Fiyat kaydı yok'}</div>
-                    <button type="button" class="mi-card-btn" onclick="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
+                    <button type="button" class="mi-card-btn" data-on-click="openModelIntelDirectFromElement(this.closest('[data-model-intel-brand]'))">
                         <i class="fas fa-x-ray"></i><span>Röntgen</span>
                     </button>
                 </article>
@@ -7927,14 +8001,14 @@ function ensureModelIntelModal() {
 
     document.body.insertAdjacentHTML('beforeend', `
         <div class="mi-modal" id="modelIntelModal" aria-hidden="true">
-            <div class="mi-modal-backdrop" onclick="closeModelIntelModal()"></div>
+            <div class="mi-modal-backdrop" data-on-click="closeModelIntelModal()"></div>
             <section class="mi-modal-panel" role="dialog" aria-modal="true" aria-labelledby="modelIntelTitle">
                 <div class="mi-modal-head">
                     <div>
                         <span class="mi-kicker">Model röntgeni</span>
                         <h2 id="modelIntelTitle">Teknik dosya</h2>
                     </div>
-                    <button type="button" class="mi-close-btn" onclick="closeModelIntelModal()" aria-label="Kapat"><i class="fas fa-times"></i></button>
+                    <button type="button" class="mi-close-btn" data-on-click="closeModelIntelModal()" aria-label="Kapat"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="mi-modal-body" id="modelIntelBody"></div>
             </section>
@@ -8053,7 +8127,7 @@ function renderModelIntelGallery(gallery = [], displayName = '', data = {}) {
         ? 'n8n ile resmi kaynaklardan yeni fotoğraf ara'
         : 'n8n webhook bağlantısı yapılandırılınca otomatik tarama yapılır';
     const syncButton = `
-        <button class="mi-gallery-sync-btn" type="button" data-mi-gallery-sync onclick="syncModelIntelGalleryFromModal()" title="${dashboardSafe(syncTitle)}">
+        <button class="mi-gallery-sync-btn" type="button" data-mi-gallery-sync data-on-click="syncModelIntelGalleryFromModal()" title="${dashboardSafe(syncTitle)}">
             <i class="fas fa-sync-alt"></i><span>${syncLabel}</span>
         </button>
     `;
@@ -8076,12 +8150,12 @@ function renderModelIntelGallery(gallery = [], displayName = '', data = {}) {
         : '<span id="miGallerySourceLink" class="mi-gallery-source is-muted"><i class="fas fa-link"></i><span>Kaynak bekliyor</span></span>';
     const navButtons = normalized.length > 1
         ? `
-            <button class="mi-gallery-nav mi-gallery-prev" type="button" onclick="setModelIntelGalleryImage(${activeIndex - 1})" title="Önceki görsel"><i class="fas fa-chevron-left"></i></button>
-            <button class="mi-gallery-nav mi-gallery-next" type="button" onclick="setModelIntelGalleryImage(${activeIndex + 1})" title="Sonraki görsel"><i class="fas fa-chevron-right"></i></button>
+            <button class="mi-gallery-nav mi-gallery-prev" type="button" data-on-click="setModelIntelGalleryImage(${activeIndex - 1})" title="Önceki görsel"><i class="fas fa-chevron-left"></i></button>
+            <button class="mi-gallery-nav mi-gallery-next" type="button" data-on-click="setModelIntelGalleryImage(${activeIndex + 1})" title="Sonraki görsel"><i class="fas fa-chevron-right"></i></button>
         `
         : '';
     const thumbs = normalized.map((item, index) => `
-        <button class="mi-gallery-thumb ${index === activeIndex ? 'is-active' : ''}" type="button" onclick="setModelIntelGalleryImage(${index})" title="${dashboardSafe(item.angle_label || item.label || displayName)}">
+        <button class="mi-gallery-thumb ${index === activeIndex ? 'is-active' : ''}" type="button" data-on-click="setModelIntelGalleryImage(${index})" title="${dashboardSafe(item.angle_label || item.label || displayName)}">
             <img src="${dashboardSafe(item.url)}" alt="${dashboardSafe(item.label || displayName)}" loading="lazy">
             <span>${dashboardSafe(item.angle_label || `Görsel ${index + 1}`)}</span>
         </button>
@@ -8139,8 +8213,8 @@ function setModelIntelGalleryImage(index = 0) {
     document.querySelectorAll('.mi-gallery-thumb').forEach((button, buttonIndex) => {
         button.classList.toggle('is-active', buttonIndex === nextIndex);
     });
-    document.querySelectorAll('.mi-gallery-prev').forEach(button => button.setAttribute('onclick', `setModelIntelGalleryImage(${nextIndex - 1})`));
-    document.querySelectorAll('.mi-gallery-next').forEach(button => button.setAttribute('onclick', `setModelIntelGalleryImage(${nextIndex + 1})`));
+    document.querySelectorAll('.mi-gallery-prev').forEach(button => button.setAttribute('data-on-click', `setModelIntelGalleryImage(${nextIndex - 1})`));
+    document.querySelectorAll('.mi-gallery-next').forEach(button => button.setAttribute('data-on-click', `setModelIntelGalleryImage(${nextIndex + 1})`));
 }
 
 async function syncModelIntelGalleryFromModal() {
@@ -8539,7 +8613,7 @@ const ModelImagesAdmin = {
         return `
             <article class="mig-pending-item" data-id="${item.id}">
                 <div class="mig-thumb">
-                    <img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.caption || '')}" loading="lazy" onerror="this.src=''; this.style.background='#1e293b';">
+                    <img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.caption || '')}" loading="lazy" data-on-error="this.src=''; this.style.background='#1e293b';">
                 </div>
                 <div class="mig-meta">
                     <div class="mig-meta-head">
@@ -8739,7 +8813,7 @@ const ModelImagesAdmin = {
         panel.innerHTML = `
             <div class="mig-trace-head">
                 <strong>${escapeHtml(title)}</strong>
-                <button class="btn btn-sm btn-ghost" onclick="document.getElementById('migTracePanel').style.display='none'">
+                <button class="btn btn-sm btn-ghost" data-on-click="document.getElementById('migTracePanel').style.display='none'">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -9857,7 +9931,7 @@ async function loadAIInsightsPage() {
         // Sayfa-içi sekme şeridi: 4 odaklı katman
         const activeTab = AIX_TABS.find(t => t.key === aiInsightsState.tab) ? aiInsightsState.tab : 'briefing';
         const tabStripHtml = AIX_TABS.map(t => `
-            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" onclick="onAiInsightsTabChange(${jsArg(t.key)})">
+            <button class="aix-tab ${t.key === activeTab ? 'is-active' : ''}" data-on-click="onAiInsightsTabChange(${jsArg(t.key)})">
                 <i class="fas ${t.icon}"></i>
                 <span>${dashboardSafe(t.label)}</span>
             </button>
@@ -9950,7 +10024,7 @@ async function loadAIInsightsPage() {
             <section class="aix-rival-toolbar">
                 <label class="aix-field">
                     <span><i class="fas fa-arrows-left-right-to-line"></i> Rakip seçimi</span>
-                    <select id="aiInsightsRivalFilter" onchange="onAiInsightsRivalChange()">
+                    <select id="aiInsightsRivalFilter" data-on-change="onAiInsightsRivalChange()">
                         <option value="">Rakip seç (otomatik en yakın)</option>
                         ${rivalOptionsHtml}
                     </select>
@@ -11051,7 +11125,7 @@ async function loadMediaWatchPage(silent = false) {
             const count = counts[cat.key] || 0;
             const active = state.category === cat.key;
             return `
-                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" onclick="onMwxCategoryClick(${jsArg(cat.key)})" style="--cat-color:${cat.color}">
+                <button class="mwx-cat-chip ${active ? 'is-active' : ''}" data-on-click="onMwxCategoryClick(${jsArg(cat.key)})" style="--cat-color:${cat.color}">
                     <i class="fas ${cat.icon}"></i>
                     <span>${dashboardSafe(cat.label)}</span>
                     <em>${formatNumber(count)}</em>
@@ -11082,7 +11156,7 @@ async function loadMediaWatchPage(silent = false) {
                                 ${isForeign ? `<span class="mwx-feed-lang" title="Orijinal dil">${dashboardSafe(lang.toUpperCase())}</span>` : ''}
                                 <span class="mwx-feed-sent ${sentMeta.tone}">${dashboardSafe(sentMeta.label)}</span>
                                 <span class="mwx-feed-time">${formatMediaWatchRelative(item.published_at || item.created_at)}</span>
-                                ${isForeign && !item.translated_title ? `<button class="mwx-feed-translate" onclick="onMwxTranslate(${item.id || 0}, this)" title="Türkçe'ye çevir"><i class="fas fa-language"></i></button>` : ''}
+                                ${isForeign && !item.translated_title ? `<button class="mwx-feed-translate" data-on-click="onMwxTranslate(${item.id || 0}, this)" title="Türkçe'ye çevir"><i class="fas fa-language"></i></button>` : ''}
                                 ${item.translated_title ? `<span class="mwx-feed-translated" title="AI çevrildi"><i class="fas fa-check-double"></i> TR</span>` : ''}
                             </div>
                             <h3 class="mwx-feed-title"><a href="${dashboardSafe(sourceUrl)}" target="_blank" rel="noreferrer">${mediaWatchSafe(displayTitle)}</a></h3>
@@ -11185,8 +11259,8 @@ async function loadMediaWatchPage(silent = false) {
                     </div>
                 </div>
                 <div class="mwx-n8n-actions">
-                    <button class="mwx-mini-btn" onclick="runMediaWatchCollection()"><i class="fas fa-satellite-dish"></i> Tarama başlat</button>
-                    <button class="mwx-mini-btn" onclick="refreshMediaWatchBrief()"><i class="fas fa-brain"></i> AI brif üret</button>
+                    <button class="mwx-mini-btn" data-on-click="runMediaWatchCollection()"><i class="fas fa-satellite-dish"></i> Tarama başlat</button>
+                    <button class="mwx-mini-btn" data-on-click="refreshMediaWatchBrief()"><i class="fas fa-brain"></i> AI brif üret</button>
                 </div>
                 <small class="mwx-n8n-tip">Sayfa 60 saniyede bir otomatik tazelenir.</small>
             </article>
@@ -11235,7 +11309,7 @@ async function loadMediaWatchPage(silent = false) {
                         <i class="fas fa-globe"></i>
                         ${sources ? `${formatNumber(sources.total || 0)} kaynak · ${(sources.languages || []).length} dil · ${(sources.countries || []).length} ülke kapsamı taranıyor` : 'Kaynak listesi yükleniyor...'}
                     </div>
-                    <button class="mwx-mini-btn" onclick="onMwxRunNow()" title="Yeni kayıtları manuel çek (Enterprise)">
+                    <button class="mwx-mini-btn" data-on-click="onMwxRunNow()" title="Yeni kayıtları manuel çek (Enterprise)">
                         <i class="fas fa-satellite-dish"></i> Şimdi Tara
                     </button>
                 </section>
@@ -11390,14 +11464,16 @@ async function loadSubscriptionPage() {
                 ? `<div class="sub-flash sub-flash-warn"><i class="fas fa-circle-info"></i> Ödeme akışı kullanıcı tarafından iptal edildi.</div>`
                 : flash === 'error'
                     ? `<div class="sub-flash sub-flash-err"><i class="fas fa-triangle-exclamation"></i> Ödeme onaylanırken hata oluştu. Lütfen tekrar deneyin.</div>`
+                    : flash === 'processing'
+                        ? `<div class="sub-flash sub-flash-info"><i class="fas fa-hourglass-half"></i> Ödemeniz alındıysa aboneliğiniz birkaç dakika içinde otomatik aktive edilir. Bu sayfayı yenileyerek durumu kontrol edebilirsiniz.</div>`
                     : flash === 'start'
                         ? `<div class="sub-flash sub-flash-info"><i class="fas fa-bolt"></i> Hesabınız oluşturuldu. Ödeme yöntemini seçip aboneliği başlatın.</div>`
                         : '';
 
         const periodSwitchHtml = `
             <div class="sub-period-switch">
-                <button class="sub-period-btn ${period === 'monthly' ? 'is-active' : ''}" onclick="subSetPeriod('monthly')">Aylık</button>
-                <button class="sub-period-btn ${period === 'yearly' ? 'is-active' : ''}" onclick="subSetPeriod('yearly')">Yıllık <small>2 ay hediye</small></button>
+                <button class="sub-period-btn ${period === 'monthly' ? 'is-active' : ''}" data-on-click="subSetPeriod('monthly')">Aylık</button>
+                <button class="sub-period-btn ${period === 'yearly' ? 'is-active' : ''}" data-on-click="subSetPeriod('yearly')">Yıllık <small>2 ay hediye</small></button>
             </div>
         `;
 
@@ -11407,7 +11483,7 @@ async function loadSubscriptionPage() {
             const isCurrent = subscription?.plan_slug === plan.slug && (subscription?.status === 'active' || subscription?.status === 'trialing');
             const isSelected = subscriptionState.selectedPlan === plan.slug;
             return `
-                <article class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" onclick="subSelectPlan(${jsArg(plan.slug)})">
+                <div class="sub-plan-card ${isSelected ? 'is-selected' : ''} ${isCurrent ? 'is-current' : ''} ${plan.tier_rank === 2 ? 'is-featured' : ''}" data-on-click="subSelectPlan(${jsArg(plan.slug)})">
                     ${plan.tier_rank === 2 ? '<div class="sub-plan-badge">EN POPÜLER</div>' : ''}
                     ${isCurrent ? '<div class="sub-plan-current">MEVCUT PLAN</div>' : ''}
                     <div class="sub-plan-tier">Tier ${plan.tier_rank || 1}</div>
@@ -11424,14 +11500,14 @@ async function loadSubscriptionPage() {
                     <div class="sub-plan-meta">
                         <span><i class="fas fa-users"></i> ${plan.max_users >= 999 ? 'Sınırsız kullanıcı' : `${plan.max_users} kullanıcı`}</span>
                     </div>
-                </article>
+                </div>
             `;
         }).join('');
 
         const providerHtml = safeProviders.map(p => {
             const isSelected = subscriptionState.selectedProvider === p.code;
             return `
-                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" onclick="subSelectProvider(${jsArg(p.code)})">
+                <button type="button" class="sub-provider-card ${isSelected ? 'is-selected' : ''}" data-on-click="subSelectProvider(${jsArg(p.code)})">
                     <i class="fas ${p.icon || 'fa-credit-card'}"></i>
                     <div>
                         <strong>${subEscape(p.name)}</strong>
@@ -11465,7 +11541,7 @@ async function loadSubscriptionPage() {
                 <div class="sub-active-actions">
                     ${subscription.cancel_at_period_end
                         ? '<span class="sub-flag is-warn">Dönem sonunda iptal edilecek</span>'
-                        : `<button class="sub-btn-secondary" onclick="subCancelSubscription()"><i class="fas fa-ban"></i> Aboneliği iptal et</button>`
+                        : `<button class="sub-btn-secondary" data-on-click="subCancelSubscription()"><i class="fas fa-ban"></i> Aboneliği iptal et</button>`
                     }
                 </div>
             </section>
@@ -11517,7 +11593,7 @@ async function loadSubscriptionPage() {
                         <div class="sub-summary-row sub-summary-total">
                             <span>Toplam</span><strong>₺${formatNumber(checkoutPrice)}</strong>
                         </div>
-                        <button class="sub-btn-primary" id="subCheckoutBtn" onclick="subStartCheckout()" ${!selectedPlan || !selectedProvider ? 'disabled' : ''}>
+                        <button class="sub-btn-primary" id="subCheckoutBtn" data-on-click="subStartCheckout()" ${!selectedPlan || !selectedProvider ? 'disabled' : ''}>
                             <i class="fas fa-arrow-right"></i>
                             ${selectedProvider?.instant ? 'Ödemeyi tamamla' : 'IBAN bilgilerini al'}
                         </button>
@@ -11566,11 +11642,11 @@ async function loadSubscriptionPage() {
             if (lateUsage && lateUsage.usage) {
                 const u = lateUsage.usage; const lim = lateUsage.limits || {};
                 const fmt = (used, limit, label) => {
-                    if (limit === -1) return `<div class="sub-usage-row"><span>${label}</span><strong>${formatNumber(used)}</strong><small>sınırsız</small></div>`;
-                    if (limit === 0) return `<div class="sub-usage-row is-disabled"><span>${label}</span><strong>—</strong><small>pakette yok</small></div>`;
+                    if (limit === -1) return `<div class="sub-usage-row"><span>${escapeHtml(label)}</span><strong>${formatNumber(used)}</strong><small>sınırsız</small></div>`;
+                    if (limit === 0) return `<div class="sub-usage-row is-disabled"><span>${escapeHtml(label)}</span><strong>—</strong><small>pakette yok</small></div>`;
                     const pct = Math.min(100, Math.round((used / limit) * 100));
                     const tone = pct >= 100 ? 'is-down' : pct >= 80 ? 'is-warn' : 'is-up';
-                    return `<div class="sub-usage-row ${tone}"><span>${label}</span><strong>${formatNumber(used)} / ${formatNumber(limit)}</strong><div class="sub-usage-bar"><span style="width:${pct}%"></span></div></div>`;
+                    return `<div class="sub-usage-row ${tone}"><span>${escapeHtml(label)}</span><strong>${formatNumber(used)} / ${formatNumber(limit)}</strong><div class="sub-usage-bar"><span style="width:${pct}%"></span></div></div>`;
                 };
                 const warningsHtml = (lateUsage.warnings || []).map(w => `
                     <div class="sub-flash sub-flash-${w.level === 'critical' ? 'err' : 'warn'}">
@@ -11604,7 +11680,7 @@ async function loadSubscriptionPage() {
                         <i class="fas fa-triangle-exclamation"></i>
                         Abonelik verileri yüklenemedi: ${subEscape(err?.message || 'Bilinmeyen hata')}
                     </div>
-                    <button class="sub-btn-primary" onclick="loadSubscriptionPage()">
+                    <button class="sub-btn-primary" data-on-click="loadSubscriptionPage()">
                         <i class="fas fa-rotate"></i> Yeniden dene
                     </button>
                 </div>
@@ -11698,10 +11774,10 @@ function renderPaywallOverlay(featureKeys, pageLabel) {
                 <p>${subEscape(pageLabel || 'Bu özellik')} için planınızı yükseltmeniz gerekiyor.</p>
                 <small class="paywall-keys">Gerekli özellik: <code>${subEscape(featureNames)}</code></small>
                 <div class="paywall-actions">
-                    <button class="sub-btn-primary" onclick="navigateTo('subscription')">
+                    <button class="sub-btn-primary" data-on-click="navigateTo('subscription')">
                         <i class="fas fa-arrow-up-right-from-square"></i> Paketi yükselt
                     </button>
-                    <button class="sub-btn-secondary" onclick="navigateTo('dashboard')">
+                    <button class="sub-btn-secondary" data-on-click="navigateTo('dashboard')">
                         <i class="fas fa-house"></i> Dashboard'a dön
                     </button>
                 </div>
@@ -11739,7 +11815,7 @@ async function loadSettingsPage() {
                     </div>
                     <div>
                         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Şirket</label>
-                        <div style="font-size:15px">${currentUser?.company_name || '-'}</div>
+                        <div style="font-size:15px">${escapeHtml(currentUser?.company_name || '-')}</div>
                     </div>
                 </div>
             </div>
@@ -11770,13 +11846,13 @@ async function loadSettingsPage() {
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
                         <div>
                             <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">Lokal uygulamadan production deploy tetikleme</div>
-                            <div id="deployStatusBadge" style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#64748b22;color:#64748b;border:1px solid #64748b55;">Hazır</div>
+                            <div id="deployStatusBadge" style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#64748b22;color: #8f9fb7;border:1px solid #64748b55;">Hazır</div>
                         </div>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                            <button class="btn-filter" id="deployRailwayBtn" onclick="triggerRailwayDeploy()" style="background:#22c55e;">
+                            <button class="btn-filter" id="deployRailwayBtn" data-on-click="triggerRailwayDeploy()" style="background:#22c55e;">
                                 <i class="fas fa-rocket"></i> Railway'e Güncelle
                             </button>
-                            <button class="btn-filter" onclick="refreshDeployStatus()" style="background:var(--bg-card-hover);color:var(--text-primary);">
+                            <button class="btn-filter" data-on-click="refreshDeployStatus()" style="background:var(--bg-card-hover);color:var(--text-primary);">
                                 <i class="fas fa-rotate-right"></i> Durumu Yenile
                             </button>
                         </div>
@@ -11792,8 +11868,12 @@ async function loadSettingsPage() {
                 </div>
             </div>
         ` : ''}
+        <div id="whatsappApprovalsHost"></div>
+        <div id="inviteCodesHost"></div>
     `;
 
+    if (currentUser?.role === 'admin') renderWhatsappApprovalsCard();
+    if (currentUser?.role === 'admin') renderInviteCodesCard();
     if (showDeployTools) {
         refreshDeployStatus(true);
     }
@@ -11811,7 +11891,7 @@ async function loadNotifications() {
         const list = document.getElementById('notifList');
         list.innerHTML = (notifs || []).length > 0
             ? notifs.map(n => `
-                <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="API.markNotificationRead(${n.id})">
+                <div class="notif-item ${n.is_read ? '' : 'unread'}" data-on-click="API.markNotificationRead(${n.id})">
                     <div class="notif-title">${escapeHtml(n.title)}</div>
                     <div class="notif-body">${escapeHtml(n.body || '')}</div>
                     <div class="notif-time">${new Date(n.created_at).toLocaleString('tr-TR')}</div>
@@ -12475,7 +12555,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
                         <div class="rix-control-row">
                             <label class="rix-field">
                                 <span>İl seçimi</span>
-                                <select id="regionalIndexProvinceSelect" onchange="loadRegionalIndexProvinceDetail()">
+                                <select id="regionalIndexProvinceSelect" data-on-change="loadRegionalIndexProvinceDetail()">
                                     ${provinceOptionsHtml}
                                 </select>
                             </label>
@@ -12692,7 +12772,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
             </section>
 
             <section class="ai-action-bar rix-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('regional-province', window._regionalProvinceAiContext, 'rixAiPanel')">
+                <button class="ai-btn" data-on-click="requestAiAnalysis('regional-province', window._regionalProvinceAiContext, 'rixAiPanel')">
                     <i class="fas fa-brain"></i>
                     <span>AI il saha strateji raporu</span>
                 </button>
@@ -12801,27 +12881,27 @@ async function loadRegionalIndexPage() {
                             </div>
                             <div class="tmx-filter-body">
                                 <div class="tmx-filter-grid">
-                                    <select id="mapBrandFilter" onchange="updateMap()">
+                                    <select id="mapBrandFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Markalar</option>
                                         ${brandOptions}
                                     </select>
-                                    <select id="mapCabinFilter" onchange="updateMap()">
+                                    <select id="mapCabinFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Kabin</option>
                                         ${selectedOption(currentCabinValue, mfCabinLabels[currentCabinValue] || currentCabinValue)}
                                     </select>
-                                    <select id="mapDriveFilter" onchange="updateMap()">
+                                    <select id="mapDriveFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Çekiş</option>
                                         ${selectedOption(currentDriveValue, currentDriveValue)}
                                     </select>
-                                    <select id="mapGearFilter" onchange="updateMap()">
+                                    <select id="mapGearFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Şanzıman</option>
                                         ${selectedOption(currentGearValue, currentGearValue)}
                                     </select>
-                                    <select id="mapHpFilter" onchange="updateMap()">
+                                    <select id="mapHpFilter" data-on-change="updateMap()">
                                         <option value="">Tüm HP</option>
                                         ${selectedOption(currentHpValue, currentHpValue ? `${currentHpValue} HP` : '')}
                                     </select>
-                                    <select id="mapRegionFilter" onchange="updateMap()">
+                                    <select id="mapRegionFilter" data-on-change="updateMap()">
                                         <option value="">Tüm Bölgeler</option>
                                         <option value="Marmara">Marmara</option>
                                         <option value="Ege">Ege</option>
@@ -12839,8 +12919,8 @@ async function loadRegionalIndexPage() {
                             <div class="card-body tmx-map-body">
                                 <div class="tmx-map-stage">
                                     <div class="tmx-map-toolbar">
-                                        <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse onclick="toggleTurkeyMapFilters()"></button>
-                                        <button type="button" class="tmx-btn tmx-btn-ghost" onclick="fitTurkeyMapBounds()">
+                                        <button type="button" class="tmx-btn tmx-btn-secondary" data-turkey-map-collapse data-on-click="toggleTurkeyMapFilters()"></button>
+                                        <button type="button" class="tmx-btn tmx-btn-ghost" data-on-click="fitTurkeyMapBounds()">
                                             <i class="fas fa-crosshairs"></i><span>Haritayı Sığdır</span>
                                         </button>
                                     </div>
@@ -13313,7 +13393,7 @@ async function loadModelRegionPage() {
                     <div class="mrx-filter-grid">
                         <label class="mrx-field" style="grid-column: 1 / -1">
                             <span>Model</span>
-                            <select id="modelRegionModelFilter" onchange="onModelRegionModelChange()">
+                            <select id="modelRegionModelFilter" data-on-change="onModelRegionModelChange()">
                                 ${modelOptionsHtml}
                             </select>
                         </label>
@@ -13425,7 +13505,7 @@ async function loadModelRegionPage() {
                 </section>
 
                 <section class="ai-action-bar mrx-action-bar">
-                    <button class="ai-btn" onclick="requestAiAnalysis('model-region', window._mrxAiContext, 'mrxAiPanel')">
+                    <button class="ai-btn" data-on-click="requestAiAnalysis('model-region', window._mrxAiContext, 'mrxAiPanel')">
                         <i class="fas fa-brain"></i>
                         <span>AI model-bölge saha planı</span>
                     </button>
@@ -13733,11 +13813,11 @@ async function loadBenchmarkPage() {
             <div class="bm-header">
                 <div class="bm-sel" style="border-color:${c1}">
                     <div class="bm-badge" style="background:${c1}"><i class="fas fa-tractor"></i></div>
-                    <select class="bm-select" onchange="window._bm_brand1=parseInt(this.value);loadBenchmarkPage()">${b1Opts}</select>
+                    <select class="bm-select" data-on-change="window._bm_brand1=parseInt(this.value);loadBenchmarkPage()">${b1Opts}</select>
                 </div>
                 <div class="bm-vs-badge"><span>VS</span></div>
                 <div class="bm-sel" style="border-color:${c2}">
-                    <select class="bm-select" onchange="window._bm_brand2=parseInt(this.value);loadBenchmarkPage()">${b2Opts}</select>
+                    <select class="bm-select" data-on-change="window._bm_brand2=parseInt(this.value);loadBenchmarkPage()">${b2Opts}</select>
                     <div class="bm-badge" style="background:${c2}"><i class="fas fa-tractor"></i></div>
                 </div>
             </div>
@@ -13835,7 +13915,7 @@ async function loadBenchmarkPage() {
                                     <th>Segment</th>
                                     <th style="color:${c2}">Fiyat</th><th style="color:${c2}">Model</th>
                                 </tr></thead>
-                                <tbody>${priceRows||'<tr><td colspan="5" style="text-align:center;color:#64748b">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
+                                <tbody>${priceRows||'<tr><td colspan="5" style="text-align:center;color: #8f9fb7">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
                             </table>
                         </div>
                     </div>
@@ -13844,7 +13924,7 @@ async function loadBenchmarkPage() {
                         <div style="overflow-y:auto;max-height:350px;">
                             <table class="bm-tbl bm-tbl-venn">
                                 <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${escapeHtml(brand1.name)}</th><th style="color:${c2}">${escapeHtml(brand2.name)}</th></tr></thead>
-                                <tbody>${vennHtml||'<tr><td colspan="3" style="text-align:center;color:#64748b">Veri yok</td></tr>'}</tbody>
+                                <tbody>${vennHtml||'<tr><td colspan="3" style="text-align:center;color: #8f9fb7">Veri yok</td></tr>'}</tbody>
                             </table>
                         </div>
                     </div>
@@ -13852,7 +13932,7 @@ async function loadBenchmarkPage() {
             </div>
 
             <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('benchmark',{b1:${jsArg(brand1.name)},b2:${jsArg(brand2.name)},d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
+                <button class="ai-btn" data-on-click="requestAiAnalysis('benchmark',{b1:${jsArg(brand1.name)},b2:${jsArg(brand2.name)},d1:{avgHp:${d1.avgHp},costPerHp:${Math.round(d1.costPerHp)},currPartial:${d1.currPartial},yoyPartial:${d1.yoyPartial.toFixed(1)}},d2:{avgHp:${d2.avgHp},costPerHp:${Math.round(d2.costPerHp)},currPartial:${d2.currPartial},yoyPartial:${d2.yoyPartial.toFixed(1)}},year:${max_year}},'bmAiPanel')">
                     <i class="fas fa-robot"></i> AI Benchmark Raporu
                 </button>
                 <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
@@ -14394,7 +14474,7 @@ async function loadBrandComparePage() {
                             </div>
                             <div class="bcx-vs">VS</div>
                             <div class="bcx-selector" style="border-color:${c2}">
-                                <select class="bc-select" onchange="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
+                                <select class="bc-select" data-on-change="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
                                 <div class="bcx-brand-dot" style="background:${c2}"></div>
                             </div>
                         </div>
@@ -15006,7 +15086,7 @@ async function loadBrandComparePage() {
                 </div>
                 <div class="bc-vs">VS</div>
                 <div class="bc-sel-right">
-                    <select class="bc-select" onchange="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
+                    <select class="bc-select" data-on-change="onBrandCompareSecondaryChange(this.value)">${b2Opts}</select>
                     <div class="bc-brand-badge" style="background:${brand2.primary_color}"><i class="fas fa-tractor"></i></div>
                 </div>
             </div>
@@ -15134,7 +15214,7 @@ async function loadBrandComparePage() {
             </div>
 
             <div class="ai-action-bar">
-                <button class="ai-btn" onclick="requestAiAnalysis('brand-compare', {brand1:${jsArg(brand1.name)},brand2:${jsArg(brand2.name)},data1:${escapeHtml(JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models}))},data2:${escapeHtml(JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models}))},maxYear:${max_year}}, 'bcAiPanel')">
+                <button class="ai-btn" data-on-click="requestAiAnalysis('brand-compare', {brand1:${jsArg(brand1.name)},brand2:${jsArg(brand2.name)},data1:${escapeHtml(JSON.stringify({currPartial:d1.currPartial,prevPartial:d1.prevPartial,yoyGrowth:d1.yoyGrowth,marketShare:d1.marketShare,avgPrice:d1.avgPrice,models:d1.models}))},data2:${escapeHtml(JSON.stringify({currPartial:d2.currPartial,prevPartial:d2.prevPartial,yoyGrowth:d2.yoyGrowth,marketShare:d2.marketShare,avgPrice:d2.avgPrice,models:d2.models}))},maxYear:${max_year}}, 'bcAiPanel')">
                     <i class="fas fa-robot"></i> AI Karşılaştırma Raporu
                 </button>
                 <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
@@ -15842,7 +15922,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
     });
 
     const topProvinceChips = (provinceSales || []).slice(0, 6).map(item => `
-        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadWeatherDetail(${jsArg(item.province_id)})">
+        <button type="button" class="wcx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" data-on-click="loadWeatherDetail(${jsArg(item.province_id)})">
             <strong>${dashboardSafe(item.province_name)}</strong>
             <small>${fmtNum(item.total_sales)} adet</small>
         </button>
@@ -16010,7 +16090,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                         <div class="wcx-control-row">
                             <label class="wcx-field">
                                 <span>İl seçimi</span>
-                                <select id="weatherProvinceSelect" onchange="loadWeatherDetail()">
+                                <select id="weatherProvinceSelect" data-on-change="loadWeatherDetail()">
                                     ${provinceOptionsHtml}
                                 </select>
                             </label>
@@ -16962,7 +17042,7 @@ async function renderProvinceIntelligenceCenter(provinceId, provinceSales = []) 
         .filter(item => item.province_id)
         .slice(0, 8)
         .map(item => `
-            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" onclick="loadProvinceDetail(${jsArg(item.province_id)})">
+            <button type="button" class="pdx-quick-chip ${String(item.province_id) === String(provinceId) ? 'is-active' : ''}" data-on-click="loadProvinceDetail(${jsArg(item.province_id)})">
                 <strong>${dashboardSafe(item.province_name || '-')}</strong>
                 <small>${focusBrandId ? `${fmtNum(item.total_sales || 0)} adet / ${fmtPct(item.share_pct || 0, 1)} pay` : `${fmtNum(item.total_sales || 0)} adet toplam`}</small>
             </button>
@@ -17125,7 +17205,7 @@ async function renderProvinceIntelligenceCenter(provinceId, provinceSales = []) 
                     <div class="pdx-control-row">
                         <label class="pdx-field">
                             <span>İl seçimi</span>
-                            <select id="provinceIntelSelect" onchange="loadProvinceDetail()">
+                            <select id="provinceIntelSelect" data-on-change="loadProvinceDetail()">
                                 ${provinceOptionsHtml}
                             </select>
                         </label>
@@ -17911,7 +17991,7 @@ async function loadTarmakBirPage() {
                             <div class="tbx-control-row">
                                 <label class="tbx-field">
                                     <span>Veri yili</span>
-                                    <select id="tarmakCommandYearFilter" onchange="reloadTarmakCommand(this.value)">
+                                    <select id="tarmakCommandYearFilter" data-on-change="reloadTarmakCommand(this.value)">
                                         ${yearOptionsHtml}
                                     </select>
                                 </label>
@@ -18078,7 +18158,7 @@ async function loadTarmakBirPage() {
                 </section>
 
                 <section class="ai-action-bar tbx-action-bar">
-                    <button class="ai-btn" onclick="requestAiAnalysis('tarmakbir-command', window._tarmakAiContext, 'tbxAiPanel')">
+                    <button class="ai-btn" data-on-click="requestAiAnalysis('tarmakbir-command', window._tarmakAiContext, 'tbxAiPanel')">
                         <i class="fas fa-brain"></i>
                         <span>AI TarmakBir strateji brifi</span>
                     </button>
@@ -18150,7 +18230,7 @@ function showError(err) {
             <i class="fas fa-exclamation-circle" style="color:var(--danger)"></i>
             <h3>Bir hata oluştu</h3>
             <p>${escapeHtml(err.message || 'Bilinmeyen hata')}</p>
-            <button class="btn-filter" onclick="navigateTo(currentPage)" style="margin-top:16px">Tekrar Dene</button>
+            <button class="btn-filter" data-on-click="retryCurrentPage()" style="margin-top:16px">Tekrar Dene</button>
         </div>
     `;
 }
@@ -18162,3 +18242,117 @@ document.addEventListener('DOMContentLoaded', () => {
     initTurkishCopyGuard();
     init();
 });
+
+// ============================================
+// ADMIN: WHATSAPP NUMARA ONAYLARI
+// ============================================
+async function renderWhatsappApprovalsCard() {
+    const host = document.getElementById('whatsappApprovalsHost');
+    if (!host || currentUser?.role !== 'admin') return;
+    host.innerHTML = `
+        <div class="card" style="margin-top:24px;">
+            <div class="card-header"><h3><i class="fas fa-phone"></i> WhatsApp Numara Onayları</h3></div>
+            <div class="card-body" id="whatsappApprovalsBody" role="region" aria-label="WhatsApp numara onayları" aria-live="polite">Yükleniyor...</div>
+        </div>`;
+    const body = document.getElementById('whatsappApprovalsBody');
+    try {
+        const data = await API.get('/api/admin/whatsapp-phones?status=pending&_=' + Date.now());
+        const rows = (data && data.phones) || [];
+        if (!rows.length) { body.innerHTML = '<p style="color:var(--text-muted)">Onay bekleyen numara yok.</p>'; return; }
+        body.innerHTML = rows.map(p => `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--border-color,#33415555);">
+                <div>
+                    <div style="font-weight:600">${escapeHtml(p.user_email || '-')}${p.brand ? ' · ' + escapeHtml(p.brand) : ''}</div>
+                    <div style="font-size:13px;color:var(--text-muted)">${escapeHtml(p.phone_e164 || p.phone_masked || '')} · <span>Onay bekliyor</span></div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" class="btn-filter" aria-label="${escapeHtml((p.user_email || '') + ' numarasını onayla')}" data-wa-id="${escapeHtml(String(p.id))}" data-wa-action="approve">Onayla</button>
+                    <button type="button" class="btn-filter" style="background:var(--bg-card-hover);color:var(--text-primary);" aria-label="${escapeHtml((p.user_email || '') + ' numarasını reddet')}" data-wa-id="${escapeHtml(String(p.id))}" data-wa-action="reject">Reddet</button>
+                </div>
+            </div>`).join('');
+        body.querySelectorAll('button[data-wa-action]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    await API.post(`/api/admin/whatsapp-phones/${encodeURIComponent(btn.dataset.waId)}/${btn.dataset.waAction}`, {});
+                } catch (e) { alert(e.message || 'İşlem başarısız'); }
+                renderWhatsappApprovalsCard();
+            });
+        });
+    } catch (e) {
+        body.innerHTML = `<p style="color:var(--danger)">${escapeHtml(e.message || 'Yüklenemedi')}</p>`;
+    }
+}
+
+// ============================================
+// ADMIN: DAVET KODLARI
+// ============================================
+async function renderInviteCodesCard(createdCode) {
+    const host = document.getElementById('inviteCodesHost');
+    if (!host || currentUser?.role !== 'admin') return;
+    host.innerHTML = `
+        <div class="card" style="margin-top:24px;">
+            <div class="card-header"><h3><i class="fas fa-ticket"></i> Davet Kodları</h3></div>
+            <div class="card-body" role="region" aria-label="Davet kodları">
+                <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px">Kayıt için gerekli kodlar markaya bağlıdır. Kod yalnızca oluşturulduğunda bir kez gösterilir.</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+                    <div><label for="inviteBrandSel" style="font-size:12px;color:var(--text-muted);display:block">Marka</label>
+                        <select id="inviteBrandSel" aria-label="Davet kodu markası"><option value="">Yükleniyor...</option></select></div>
+                    <div><label for="inviteMaxUses" style="font-size:12px;color:var(--text-muted);display:block">Kullanım</label>
+                        <input id="inviteMaxUses" type="number" min="1" max="1000" value="1" style="width:80px" aria-label="Azami kullanım sayısı"></div>
+                    <div><label for="inviteDays" style="font-size:12px;color:var(--text-muted);display:block">Geçerlilik (gün)</label>
+                        <input id="inviteDays" type="number" min="1" max="3650" value="14" style="width:90px" aria-label="Geçerlilik süresi (gün)"></div>
+                    <div><label for="inviteNote" style="font-size:12px;color:var(--text-muted);display:block">Not</label>
+                        <input id="inviteNote" type="text" maxlength="200" style="width:180px" aria-label="Not"></div>
+                    <button type="button" class="btn-filter" id="inviteCreateBtn">Kod oluştur</button>
+                </div>
+                <div id="inviteCreatedBox" role="status" aria-live="polite"></div>
+                <div id="inviteListBox" style="overflow-x:auto">Yükleniyor...</div>
+            </div>
+        </div>`;
+    const box = document.getElementById('inviteCreatedBox');
+    if (createdCode) {
+        box.innerHTML = `<div style="padding:10px 12px;border-radius:10px;background:#22c55e22;border:1px solid #22c55e66;margin-bottom:12px">
+            <div style="font-size:12px;color:var(--text-muted)">Yeni kod (bir daha gösterilmeyecek)</div>
+            <code id="inviteCodeValue" style="font-size:16px;font-weight:700">${escapeHtml(createdCode)}</code>
+            <button type="button" class="btn-filter" id="inviteCopyBtn" style="margin-left:8px">Kopyala</button></div>`;
+        document.getElementById('inviteCopyBtn').addEventListener('click', async (ev) => {
+            try { await navigator.clipboard.writeText(createdCode); ev.target.textContent = 'Kopyalandı'; } catch (_) { ev.target.textContent = 'Kopyalanamadı'; }
+        });
+    }
+    API.getBrands().then(brands => {
+        const sel = document.getElementById('inviteBrandSel');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Marka seçin...</option>' + (brands || []).map(b => `<option value="${escapeHtml(String(b.id))}">${escapeHtml(b.name)}</option>`).join('');
+    }).catch(() => {});
+    document.getElementById('inviteCreateBtn').addEventListener('click', async (ev) => {
+        const brandId = Number(document.getElementById('inviteBrandSel').value);
+        if (!brandId) { box.textContent = 'Önce bir marka seçin.'; return; }
+        ev.target.disabled = true;
+        try {
+            const r = await API.createInvite({
+                brand_id: brandId,
+                max_uses: Number(document.getElementById('inviteMaxUses').value) || 1,
+                expires_in_days: Number(document.getElementById('inviteDays').value) || undefined,
+                note: document.getElementById('inviteNote').value.trim() || undefined
+            });
+            renderInviteCodesCard(r.code);
+        } catch (e) { box.textContent = e.message || 'Oluşturulamadı'; ev.target.disabled = false; }
+    });
+    const list = document.getElementById('inviteListBox');
+    try {
+        const rows = await API.get('/api/admin/invites?_=' + Date.now());
+        if (!rows || !rows.length) { list.innerHTML = '<p style="color:var(--text-muted)">Henüz davet kodu yok.</p>'; return; }
+        list.innerHTML = `<table class="data-table"><thead><tr><th>Marka</th><th>Kod</th><th>Kullanım</th><th>Son kullanma</th><th>Durum</th><th>Not</th><th></th></tr></thead><tbody>${rows.map(i => {
+            const exp = i.expires_at ? new Date(i.expires_at) : null;
+            const expired = exp && exp < new Date();
+            const state = !i.is_active ? 'İptal' : expired ? 'Süresi doldu' : (i.used_count >= i.max_uses ? 'Tükendi' : 'Aktif');
+            return `<tr><td>${escapeHtml(i.brand_name || '-')}</td><td>TSA-…${escapeHtml(i.code_hint)}</td><td>${escapeHtml(String(i.used_count))}/${escapeHtml(String(i.max_uses))}</td><td>${exp ? escapeHtml(exp.toLocaleDateString('tr-TR')) : '-'}</td><td>${escapeHtml(state)}</td><td>${escapeHtml(i.note || '')}</td><td>${i.is_active ? `<button type="button" class="btn-filter" data-invite-revoke="${escapeHtml(String(i.id))}" aria-label="${escapeHtml('Kodu iptal et: ' + (i.brand_name || '') + ' …' + i.code_hint)}">İptal</button>` : ''}</td></tr>`;
+        }).join('')}</tbody></table>`;
+        list.querySelectorAll('button[data-invite-revoke]').forEach(btn => btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try { await API.revokeInvite(btn.dataset.inviteRevoke); } catch (e) { alert(e.message || 'İptal edilemedi'); }
+            renderInviteCodesCard();
+        }));
+    } catch (e) { list.innerHTML = `<p style="color:var(--danger)">${escapeHtml(e.message || 'Yüklenemedi')}</p>`; }
+}

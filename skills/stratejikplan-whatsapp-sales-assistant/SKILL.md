@@ -11,6 +11,8 @@ Use this skill when working on the live StratejikPlan WhatsApp assistant.
 
 Inspect these files first:
 
+- `src/routes/public.js` (webhook and sales-query routes)
+- `src/lib/whatsapp-approval.js`
 - `server.js`
 - `railway.json`
 - `docker-compose.yml`
@@ -27,6 +29,8 @@ Read `references/live-context.md` before changing production endpoints, Meta set
 - Keep public production endpoints stable unless there is a migration plan.
 - Never hardcode new secrets in tracked files. Prefer Railway variables and document placeholders only.
 - Preserve Turkish tractor-sales use cases first: single-brand yearly totals and two-brand yearly comparisons.
+- The assistant answers **only approved numbers** (see "Security and Approval Gate" below). Never bypass `checkWhatsappAuthorization` in a new reply path.
+- Never log phone numbers or message text; use `last4()` / `maskPhone()` from `src/lib/whatsapp-approval.js`.
 
 ## Production Surface
 
@@ -39,6 +43,19 @@ Do not break these public routes without replacing them everywhere they are refe
 - `/data-deletion`
 - `/api/public/meta/data-deletion`
 
+## Security and Approval Gate (Ekim 2026)
+
+Authoritative detail: `../guvenlik-anayasasi/SKILL.md` section 8 and `../abonelik-odeme-anayasasi/SKILL.md` section 5. Routes live in `src/routes/public.js` (the old `server.js`-only layout no longer applies; `server.js` keeps the Graph API sender `sendWhatsAppTextMessage`).
+
+- **Signature is mandatory.** `POST /api/public/whatsapp/webhook` verifies `X-Hub-Signature-256` (HMAC-SHA256 over the raw body) with `WHATSAPP_APP_SECRET`. In production (`isProduction()`), a missing `WHATSAPP_APP_SECRET` makes the webhook answer `503`. In development a missing secret only logs a warning.
+- **GET verification** needs `WHATSAPP_VERIFY_TOKEN`; an empty configured token never matches (403).
+- **Approved-number gate** (`checkWhatsappAuthorization`, `src/lib/whatsapp-approval.js`): the sender must be registered in `whatsapp_phones`, `admin_approved`, phone active, user active, e-mail verified, and (non-admin) have an active/trialing subscription whose plan has `whatsapp_phones` > 0. Otherwise the webhook silently ignores the message and `sales-query` returns `403` (`Numara onaylı değil`); the LLM/SQL chain is not run.
+- **Admin approval API** (`adminOnly`): `GET /api/admin/whatsapp-phones?status=pending|approved`, `POST /api/admin/whatsapp-phones/:id/approve`, `POST /api/admin/whatsapp-phones/:id/reject`. A user adding a number (`POST /api/billing/whatsapp`) gets `approval: 'pending'`. Existing numbers were reset to unapproved by migration `007_whatsapp_approval.sql`; admins re-approve them.
+- **Log masking:** logs carry only `son4=<last 4 digits>`, message length and a reason code. No full numbers, no message bodies.
+- **Internal query route:** `POST /api/public/assistant/sales-query` requires `x-query-token` = `WHATSAPP_QUERY_API_KEY` (503 if unset, 401 if wrong), `question` string <= 1000 chars. If the caller (n8n) sends `from`, the approval gate applies; with no `from` (legacy callers) the old behaviour is kept.
+- **Environment variables read by the app:** `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_QUERY_API_KEY`, `WHATSAPP_GRAPH_API_BASE` (optional, default `https://graph.facebook.com/v21.0`; tests point it at a fake local Graph server), `N8N_WHATSAPP_PROCESSOR_URL`. `WHATSAPP_BUSINESS_ACCOUNT_ID` is only used on the n8n side.
+- Tests: `tests/whatsapp-approval.test.js`, `tests/security.test.js` (signature), `tests/security-regressions.test.js` (empty verify token, production 503).
+
 ## Working Pattern
 
 Follow this order:
@@ -47,7 +64,7 @@ Follow this order:
 2. Decide whether the change belongs in direct app logic, Meta setup support pages, or the optional n8n workflow artifact.
 3. Prefer extending shared helpers such as query resolution before adding new ad hoc route logic.
 4. Keep WhatsApp webhook handling fast: acknowledge promptly, then process and reply safely.
-5. Validate syntax locally with `node --check server.js`.
+5. Validate locally: `npm run lint:syntax`, `npm run lint:undef`, and `npm test` with `TEST_DATABASE_URL` set (DB tests are skipped otherwise).
 6. If the linked Railway project is available, verify variables or deploys with Railway CLI.
 7. Re-test the live webhook or sales-query endpoint after deploy when the task touches production behavior.
 
@@ -62,7 +79,7 @@ Follow this order:
 
 Use the lightest validation that proves the change:
 
-- `node --check server.js`
+- `npm run lint:syntax` and `npm test` (DB-backed, includes `tests/whatsapp-approval.test.js`)
 - Route smoke tests for `/api/public/assistant/sales-query`
 - Webhook verification test for `/api/public/whatsapp/webhook`
 - Railway deploy/log inspection only when the change affects live behavior
@@ -72,4 +89,5 @@ Use the lightest validation that proves the change:
 - Moving the live WhatsApp path back to n8n-only operation without confirming hosting capacity.
 - Replacing SQL-backed answers with free-form LLM output.
 - Storing access tokens in skill files or reference docs.
+- Replying to a number that has not passed the approval gate, or logging full phone numbers / message text.
 - Changing public URLs in Meta-facing settings without updating the live app and verification flow together.

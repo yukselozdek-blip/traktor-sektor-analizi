@@ -134,7 +134,7 @@ describe('password reset', { skip: SKIP_DB && SKIP_REASON }, () => {
     it('reset clears lockout and works for password-less (Google) accounts', async () => {
         const u = await srv.createUser();
         await srv.pool.query(`UPDATE users SET failed_login_count=5, locked_until=NOW()+INTERVAL '15 minutes' WHERE id=$1`, [u.id]);
-        assert.equal((await login(u.email, TEST_PASSWORD)).status, 423);
+        assert.equal((await login(u.email, TEST_PASSWORD)).status, 401); // kilitli hesap artık genel 401
         const token = await freshToken(u.email);
         assert.equal((await reset(token, NEW_PASSWORD)).status, 200);
         const row = (await srv.pool.query('SELECT failed_login_count, locked_until, password_changed_at FROM users WHERE id=$1', [u.id])).rows[0];
@@ -195,9 +195,10 @@ describe('signup verification mail', { skip: SKIP_DB && SKIP_REASON }, () => {
         try {
             const brand = (await srv.pool.query(`INSERT INTO brands (name, slug, is_active) VALUES ('B','b-${Date.now()}',true) RETURNING id`)).rows[0];
             const email = `s_${crypto.randomBytes(4).toString('hex')}@test.local`;
+            const inv = await srv.createInvite({ brandId: brand.id });
             const r = await srv.api('POST', '/api/auth/signup', {
                 headers: { 'X-Forwarded-For': '10.88.0.1' },
-                body: { email, password: TEST_PASSWORD, full_name: 'A B', brand_id: brand.id, company_name: 'C', job_title: 'J' }
+                body: { invite_code: inv.code, email, password: TEST_PASSWORD, full_name: 'A B', brand_id: brand.id, company_name: 'C', job_title: 'J' }
             });
             assert.equal(r.status, 201, r.text);
             await sleep(300);

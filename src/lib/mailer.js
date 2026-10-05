@@ -49,7 +49,7 @@ async function sendViaBrevoApi({ to, subject, text, html }) {
 }
 
 function outboxFile() {
-    return process.env.NODE_ENV !== 'production' && process.env.MAIL_OUTBOX_FILE ? process.env.MAIL_OUTBOX_FILE : '';
+    return !require('./env').isProduction() && process.env.MAIL_OUTBOX_FILE ? process.env.MAIL_OUTBOX_FILE : '';
 }
 
 function getTransporter() {

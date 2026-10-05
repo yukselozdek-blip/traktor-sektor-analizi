@@ -9,14 +9,15 @@ const ROOT = path.join(__dirname, '..');
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = (() => {
     if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-    if (process.env.NODE_ENV === 'production') {
+    if (require('./lib/env').isProduction()) {
         console.error('!!! GÜVENLİK UYARISI: JWT_SECRET ortam değişkeni tanımlı değil. Geçici rastgele anahtar üretildi; her yeniden başlatmada tüm oturumlar geçersiz olur. JWT_SECRET tanımlayın !!!');
     }
     return crypto.randomBytes(48).toString('hex');
 })();
 const SUPERUSER_EMAILS_LIST = (process.env.SUPERUSER_EMAILS || 'yukselozdek@gmail.com')
     .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const { isProduction } = require('./lib/env');
+const IS_PRODUCTION = isProduction();
 function safeEqualStr(a, b) {
     const ba = Buffer.from(String(a == null ? '' : a));
     const bb = Buffer.from(String(b == null ? '' : b));

@@ -1,0 +1,85 @@
+name: Yedek Geri Yükleme Tatbikatı
+
+# Her ay Storage Box'taki EN SON şifreli yedeği indirir, çözer ve geçici bir Postgres'e geri yükler;
+# tabloları doğrular. Üretim veritabanına dokunmaz. Başarısız olursa GitHub size e-posta gönderir.
+on:
+  schedule:
+    - cron: '43 2 1 * *'   # her ayın 1'i 02:43 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      SB_HOST: ${{ secrets.STORAGEBOX_HOST }}
+      SB_USER: ${{ secrets.STORAGEBOX_USER }}
+      SB_KEY: ${{ secrets.STORAGEBOX_SSH_KEY }}
+      SB_KNOWN_HOSTS: ${{ secrets.STORAGEBOX_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gerekli secret'lar tanımlı mı?
+        run: |
+          missing=0
+          for v in BACKUP_PASSPHRASE SB_HOST SB_USER SB_KEY SB_KNOWN_HOSTS; do
+            if [ -z "${!v}" ]; then echo "::error::Secret eksik: $v"; missing=1; fi
+          done
+          exit $missing
+
+      - name: PostgreSQL 18 istemcisini kur
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsS -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+
+      - name: En son yedeği indir
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SB_KEY" | tr -d '\r' > ~/.ssh/id_backup
+          printf '%s\n' "$SB_KNOWN_HOSTS" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' > ~/.ssh/known_hosts_backup
+          chmod 600 ~/.ssh/id_backup ~/.ssh/known_hosts_backup
+          SFTP="sftp -P 23 -i $HOME/.ssh/id_backup -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts_backup -o ConnectTimeout=20"
+          DEST="$SB_USER@$SB_HOST"
+          LATEST=$(printf 'ls -1 traktor-sektor-analizi-yedekler\n' | $SFTP -b - "$DEST" \
+            | grep -oE 'traktor-sektor-analizi_hetzner-storagebox_[0-9]{8}-[0-9]{4}\.dump\.gpg' | sort -u | tail -n 1)
+          [ -n "$LATEST" ] || { echo "::error::Storage Box'ta yedek bulunamadı"; exit 1; }
+          echo "En son yedek: $LATEST"
+          printf 'get traktor-sektor-analizi-yedekler/%s latest.dump.gpg\n' "$LATEST" | $SFTP -b - "$DEST"
+          # Yedek bayat mı? (dosya adındaki tarih 3 günden eskiyse tatbikat yine yapılır ama uyarı verilir)
+          D=$(echo "$LATEST" | grep -oE '[0-9]{8}' | head -n1)
+          AGE=$(( ( $(date -u +%s) - $(date -u -d "$D" +%s) ) / 86400 ))
+          echo "Yedek yaşı: $AGE gün"
+          if [ "$AGE" -gt 3 ]; then echo "::error::En son yedek $AGE günlük: gece yedeği çalışmıyor olabilir"; exit 1; fi
+
+      - name: Geçici veritabanına geri yükle ve doğrula
+        run: |
+          export PGPASSWORD=postgres
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE drill"
+          bash scripts/restore-drill.sh latest.dump.gpg "postgresql://postgres:postgres@localhost:5432/drill"
+
+      - name: Geçici dosyaları sil
+        if: always()
+        run: rm -f latest.dump.gpg ~/.ssh/id_backup ~/.ssh/known_hosts_backup

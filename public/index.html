@@ -4,18 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Traktör Sektör Analizi - Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha384-qJNkHwhlYywDHfyoEe1np+1lYvX/8x+3gHCKFhSSBMQyCFlvFnn+zXmaebXl21rV" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <link rel="stylesheet" href="style.css?v=5.60-mc">
+    <link href="/vendor/fonts/fonts.css" rel="stylesheet">
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
+    <script src="/inline-actions.js?v=1.0"></script>
+    <script src="/vendor/chart.umd.min.js"></script>
+    <script src="/vendor/chartjs-plugin-datalabels.min.js"></script>
+    <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+    <script src="/vendor/leaflet/leaflet.js"></script>
+    <script src="/vendor/purify.min.js"></script>
+    <link rel="stylesheet" href="style.css?v=6.6-a11y">
     <link rel="stylesheet" href="billing.css?v=1.3">
     <link rel="stylesheet" href="media-watch.css?v=1.0">
 </head>
 <body>
+    <a class="skip-link" href="#mainContent">İçeriğe geç</a>
     <!-- SIDEBAR -->
     <nav class="sidebar" id="sidebar">
         <div class="sidebar-header">
@@ -32,103 +34,103 @@
         </div>
 
         <div class="sidebar-menu">
-            <a class="menu-item" data-page="brand-hub" onclick="navigateTo('brand-hub')">
+            <a class="menu-item" data-page="brand-hub" data-on-click="navigateTo('brand-hub')">
                 <i class="fas fa-bolt"></i><span>Marka Merkezi</span>
             </a>
-            <a class="menu-item active" data-page="dashboard" onclick="navigateTo('dashboard')">
+            <a class="menu-item active" data-page="dashboard" data-on-click="navigateTo('dashboard')">
                 <i class="fas fa-chart-pie"></i><span>Dashboard</span>
             </a>
-            <a class="menu-item" data-page="map" onclick="navigateTo('map')">
+            <a class="menu-item" data-page="map" data-on-click="navigateTo('map')">
                 <i class="fas fa-map-marked-alt"></i><span>Türkiye Haritası</span>
             </a>
-            <a class="menu-item" data-page="historical" onclick="navigateTo('historical')">
+            <a class="menu-item" data-page="historical" data-on-click="navigateTo('historical')">
                 <i class="fas fa-chart-area"></i><span>Tarihsel Gelişim</span>
             </a>
-            <a class="menu-item" data-page="total-market" onclick="navigateTo('total-market')" style="display:none">
+            <a class="menu-item" data-page="total-market" data-on-click="navigateTo('total-market')" style="display:none">
                 <i class="fas fa-balance-scale"></i><span>Toplam Pazar</span>
             </a>
-            <a class="menu-item" data-page="brand-summary" onclick="navigateTo('brand-summary')">
+            <a class="menu-item" data-page="brand-summary" data-on-click="navigateTo('brand-summary')">
                 <i class="fas fa-industry"></i><span>Marka & Distribütör</span>
             </a>
             <template data-merged-page="distributor">
                 <i class="fas fa-building"></i><span>Distribütör</span>
             </template>
-            <a class="menu-item" data-page="hp-segment" onclick="navigateTo('hp-segment')">
+            <a class="menu-item" data-page="hp-segment" data-on-click="navigateTo('hp-segment')">
                 <i class="fas fa-horse-head"></i><span>HP Segment Merkezi</span>
             </a>
-            <a class="menu-item" data-page="hp-top" onclick="navigateTo('hp-top')" style="display:none">
+            <a class="menu-item" data-page="hp-top" data-on-click="navigateTo('hp-top')" style="display:none">
                 <i class="fas fa-trophy"></i><span>Top 10 HP&Marka</span>
             </a>
-            <a class="menu-item" data-page="hp-top-il" onclick="navigateTo('hp-top-il')">
+            <a class="menu-item" data-page="hp-top-il" data-on-click="navigateTo('hp-top-il')">
                 <i class="fas fa-map-pin"></i><span>Top 10 HP&İl</span>
             </a>
-            <a class="menu-item" data-page="hp-top-model" onclick="navigateTo('hp-top-model')" style="display:none">
+            <a class="menu-item" data-page="hp-top-model" data-on-click="navigateTo('hp-top-model')" style="display:none">
                 <i class="fas fa-tractor"></i><span>Top 10 HP&Model</span>
             </a>
-            <a class="menu-item" data-page="hp-top-il-cat" onclick="navigateTo('hp-top-il-cat')" style="display:none">
+            <a class="menu-item" data-page="hp-top-il-cat" data-on-click="navigateTo('hp-top-il-cat')" style="display:none">
                 <i class="fas fa-map-marked"></i><span>Top 10 HP&İl Seg.</span>
             </a>
-            <a class="menu-item" data-page="obt-hp" onclick="navigateTo('obt-hp')" style="display:none">
+            <a class="menu-item" data-page="obt-hp" data-on-click="navigateTo('obt-hp')" style="display:none">
                 <i class="fas fa-th"></i><span>OBT HP</span>
             </a>
-            <a class="menu-item" data-page="brand-hp" onclick="navigateTo('brand-hp')" style="display:none">
+            <a class="menu-item" data-page="brand-hp" data-on-click="navigateTo('brand-hp')" style="display:none">
                 <i class="fas fa-crosshairs"></i><span>Marka HP Detay</span>
             </a>
-            <a class="menu-item" data-page="hp-brand-matrix" onclick="navigateTo('hp-brand-matrix')" style="display:none">
+            <a class="menu-item" data-page="hp-brand-matrix" data-on-click="navigateTo('hp-brand-matrix')" style="display:none">
                 <i class="fas fa-border-all"></i><span>HP Marka Matris</span>
             </a>
-            <a class="menu-item" data-page="prov-top-brand" onclick="navigateTo('prov-top-brand')">
+            <a class="menu-item" data-page="prov-top-brand" data-on-click="navigateTo('prov-top-brand')">
                 <i class="fas fa-city"></i><span>İl Liderlik Merkezi</span>
             </a>
-            <a class="menu-item" data-page="brand-compare" onclick="navigateTo('brand-compare')">
+            <a class="menu-item" data-page="brand-compare" data-on-click="navigateTo('brand-compare')">
                 <i class="fas fa-exchange-alt"></i><span>Marka Karşılaştırma</span>
             </a>
-            <a class="menu-item" data-page="benchmark" onclick="navigateTo('benchmark')" style="display:none">
+            <a class="menu-item" data-page="benchmark" data-on-click="navigateTo('benchmark')" style="display:none">
                 <i class="fas fa-microscope"></i><span>Teknik Kıyaslama</span>
             </a>
-            <a class="menu-item" data-page="regional-index" onclick="navigateTo('regional-index')" style="display:none">
+            <a class="menu-item" data-page="regional-index" data-on-click="navigateTo('regional-index')" style="display:none">
                 <i class="fas fa-layer-group"></i><span>Bölgesel Mekanizasyon</span>
             </a>
-            <a class="menu-item" data-page="model-region" onclick="navigateTo('model-region')">
+            <a class="menu-item" data-page="model-region" data-on-click="navigateTo('model-region')">
                 <i class="fas fa-project-diagram"></i><span>Model-Bölge Analizi</span>
             </a>
-            <a class="menu-item" data-page="sales" onclick="navigateTo('sales')" style="display:none">
+            <a class="menu-item" data-page="sales" data-on-click="navigateTo('sales')" style="display:none">
                 <i class="fas fa-chart-bar"></i><span>Satış Analizi</span>
             </a>
-            <a class="menu-item" data-page="competitors" onclick="navigateTo('competitors')">
+            <a class="menu-item" data-page="competitors" data-on-click="navigateTo('competitors')">
                 <i class="fas fa-users"></i><span>Rakip Analizi</span>
             </a>
-            <a class="menu-item" data-page="models" onclick="navigateTo('models')">
+            <a class="menu-item" data-page="models" data-on-click="navigateTo('models')">
                 <i class="fas fa-tractor"></i><span>Model Karşılaştırma</span>
             </a>
-            <a class="menu-item" data-page="model-intel" onclick="navigateTo('model-intel')">
+            <a class="menu-item" data-page="model-intel" data-on-click="navigateTo('model-intel')">
                 <i class="fas fa-x-ray"></i><span>Model Kataloğu</span>
             </a>
-            <a class="menu-item" data-page="province" onclick="navigateTo('province')">
+            <a class="menu-item" data-page="province" data-on-click="navigateTo('province')">
                 <i class="fas fa-city"></i><span>İl Analizi</span>
             </a>
-            <a class="menu-item" data-page="weather" onclick="navigateTo('weather')">
+            <a class="menu-item" data-page="weather" data-on-click="navigateTo('weather')">
                 <i class="fas fa-cloud-sun"></i><span>İklim Komuta Merkezi</span>
             </a>
-            <a class="menu-item" data-page="media-watch" onclick="navigateTo('media-watch')">
+            <a class="menu-item" data-page="media-watch" data-on-click="navigateTo('media-watch')">
                 <i class="fas fa-satellite-dish"></i><span>Medya Takip</span>
             </a>
-            <a class="menu-item" data-page="ai-insights" onclick="navigateTo('ai-insights')">
+            <a class="menu-item" data-page="ai-insights" data-on-click="navigateTo('ai-insights')">
                 <i class="fas fa-robot"></i><span>AI Öngörüler</span>
             </a>
-            <a class="menu-item" data-page="subscription" onclick="navigateTo('subscription')">
+            <a class="menu-item" data-page="subscription" data-on-click="navigateTo('subscription')">
                 <i class="fas fa-credit-card"></i><span>Abonelik</span>
             </a>
-            <a class="menu-item" data-page="tarmakbir" onclick="navigateTo('tarmakbir')">
+            <a class="menu-item" data-page="tarmakbir" data-on-click="navigateTo('tarmakbir')">
                 <i class="fas fa-layer-group"></i><span>TarmakBir Komuta Merkezi</span>
             </a>
-            <a class="menu-item" data-page="tarmakbir2" onclick="navigateTo('tarmakbir')" style="display:none">
+            <a class="menu-item" data-page="tarmakbir2" data-on-click="navigateTo('tarmakbir')" style="display:none">
                 <i class="fas fa-table"></i><span>Tarmakbir2 (Bütün Mad.)</span>
             </a>
-            <a class="menu-item" data-page="model-images-admin" data-admin-only="true" onclick="navigateTo('model-images-admin')">
+            <a class="menu-item" data-page="model-images-admin" data-admin-only="true" data-on-click="navigateTo('model-images-admin')">
                 <i class="fas fa-images"></i><span>Model Görsel Yönetimi</span>
             </a>
-            <a class="menu-item" data-page="settings" onclick="navigateTo('settings')">
+            <a class="menu-item" data-page="settings" data-on-click="navigateTo('settings')">
                 <i class="fas fa-cog"></i><span>Ayarlar</span>
             </a>
         </div>
@@ -141,24 +143,25 @@
                     <span class="user-role" id="userRole">-</span>
                 </div>
             </div>
-            <button class="btn-logout" onclick="API.logout()">
+            <button class="btn-logout" data-on-click="API.logout()">
                 <i class="fas fa-sign-out-alt"></i>
             </button>
         </div>
     </nav>
 
     <!-- MAIN CONTENT -->
-    <main class="main-content" id="mainContent">
+    <main class="main-content" id="mainContent" tabindex="-1">
+        <h1 id="pageTitleSr" class="sr-only">Panel</h1>
         <!-- Top Bar -->
         <header class="top-bar">
-            <button class="btn-menu" data-sidebar-toggle onclick="toggleSidebar(event)"><i class="fas fa-bars"></i></button>
+            <button class="btn-menu" data-sidebar-toggle data-on-click="toggleSidebar(event)"><i class="fas fa-bars"></i></button>
             <div class="top-bar-title">
-                <h1 id="pageTitle">Dashboard</h1>
+                <h1 id="pageTitle" aria-hidden="true">Dashboard</h1>
                 <span id="pageSubtitle" class="page-subtitle"></span>
                 <span id="modelYearNote" class="model-year-note"></span>
             </div>
             <div class="top-bar-actions">
-                <select id="yearFilter" class="year-select" onchange="onYearChange()">
+                <select id="yearFilter" class="year-select" data-on-change="onYearChange()">
                     <option value="2025" selected>2025</option>
                     <option value="2024">2024</option>
                     <option value="2023">2023</option>
@@ -167,11 +170,11 @@
                     <option value="2020">2020</option>
                     <option value="2026">2026</option>
                 </select>
-                <button class="btn-icon" onclick="loadNotifications()" title="Bildirimler">
+                <button class="btn-icon" data-on-click="loadNotifications()" title="Bildirimler">
                     <i class="fas fa-bell"></i>
                     <span class="badge" id="notifBadge" style="display:none">0</span>
                 </button>
-                <button class="btn-icon" onclick="refreshData()" title="Yenile">
+                <button class="btn-icon" data-on-click="refreshData()" title="Yenile">
                     <i class="fas fa-sync-alt"></i>
                 </button>
             </div>
@@ -194,14 +197,15 @@
     <div class="notification-panel" id="notifPanel" style="display:none">
         <div class="notif-header">
             <h3>Bildirimler</h3>
-            <button onclick="document.getElementById('notifPanel').style.display='none'"><i class="fas fa-times"></i></button>
+            <button data-on-click="document.getElementById('notifPanel').style.display='none'"><i class="fas fa-times"></i></button>
         </div>
         <div class="notif-list" id="notifList"></div>
     </div>
 
-    <script src="api_v3.js?v=5.46-mc"></script>
+    <script src="api_v3.js?v=6.1-session"></script>
     <script src="brand_experience.js?v=1.1"></script>
     <script src="report_registry.js?v=1.4"></script>
-    <script src="app_v3.js?v=5.87-route"></script>
+    <script src="app_v3.js?v=6.6-a11y"></script>
+    <script src="/a11y.js?v=1.5"></script>
 </body>
 </html>

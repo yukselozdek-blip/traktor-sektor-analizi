@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Abone Ol - Traktör Sektör Analizi</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="/vendor/fonts/fonts.css" rel="stylesheet">
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
     <style>
         :root {
             --primary: #38bdf8;
@@ -34,12 +32,13 @@
             margin: 0 auto;
             padding: 32px 20px;
             display: grid;
-            grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+            grid-template-columns: minmax(0, 1.1fr) minmax(min(360px, 100%), 0.9fr);
             gap: 28px;
         }
         @media (max-width: 980px) {
-            .signup-shell { grid-template-columns: 1fr; }
+            .signup-shell { grid-template-columns: minmax(0, 1fr); padding: 20px 14px; }
         }
+        .signup-shell > * { min-width: 0; }
         .signup-hero {
             padding: 28px;
             border-radius: 22px;
@@ -164,7 +163,9 @@
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.18);
         }
-        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+        .field-row .field, .field input, .field select { min-width: 0; max-width: 100%; }
+        @media (max-width: 520px) { .field-row { grid-template-columns: minmax(0, 1fr); } }
         .signup-btn {
             margin-top: 8px;
             padding: 13px 18px;
@@ -204,7 +205,7 @@
     </style>
 </head>
 <body>
-    <div class="signup-shell">
+    <div class="signup-shell" role="main">
         <section class="signup-hero">
             <span class="signup-pill"><i class="fas fa-bolt"></i> 3 Paket · Anında Aktivasyon</span>
             <h1>Türkiye Traktör Pazarı sizin için saniyeler içinde açılıyor</h1>
@@ -232,7 +233,7 @@
                 </div>
                 <div class="field">
                     <label>Şifre (en az 8 karakter)</label>
-                    <input type="password" name="password" required minlength="8">
+                    <input type="password" name="password" required minlength="8" aria-label="Şifre">
                 </div>
                 <div class="field-row">
                     <div class="field">
@@ -245,134 +246,37 @@
                     </div>
                 </div>
                 <div class="field">
-                    <label>Marka</label>
+                    <label for="inviteCodeInput">Davet kodu</label>
+                    <input type="text" name="invite_code" id="inviteCodeInput" required autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="TSA-XXXX-XXXX-XXXX" aria-label="Davet kodu">
+                </div>
+                <div class="field">
+                    <label for="brandSelect">Marka</label>
                     <select name="brand_id" id="brandSelect" required>
                         <option value="">Marka seçin...</option>
                     </select>
                 </div>
                 <div class="field">
                     <label>Seçili Plan</label>
-                    <input type="text" id="selectedPlanLabel" readonly value="Önce sol panelden bir plan seçin">
+                    <input type="text" id="selectedPlanLabel" readonly value="Önce sol panelden bir plan seçin" aria-label="Seçilen plan">
                 </div>
                 <button type="submit" class="signup-btn" id="btnSignup" disabled>
                     <i class="fas fa-check-circle"></i>
                     <span>Aboneliği Başlat</span>
                 </button>
             </form>
+            <div id="verifyPanel" style="display:none" role="status">
+                <h2><i class="fas fa-envelope-circle-check"></i> Doğrulama e-postası gönderildi</h2>
+                <p style="color:var(--muted);font-size:14px;line-height:1.6"><strong id="verifyEmailLabel"></strong> adresine gönderdiğimiz bağlantıya tıklayarak hesabınızı doğrulayın (24 saat geçerlidir). Doğruladıktan sonra giriş yapıp abonelik adımına geçebilirsiniz.</p>
+                <button type="button" class="signup-btn" id="btnResend"><i class="fas fa-paper-plane"></i><span>Tekrar gönder</span></button>
+                <div class="signup-foot"><a href="/login.html">Giriş sayfasına git</a></div>
+            </div>
             <div class="signup-foot">Zaten üye misiniz? <a href="/login.html">Giriş yapın</a></div>
         </section>
     </div>
 
-    <script src="/api_v3.js?v=5.78-mc"></script>
-    <script>
-        let allPlans = [];
-        let selectedPlanSlug = null;
-
-        async function loadInitialData() {
-            try {
-                const [plans, brandsRes] = await Promise.all([
-                    fetch('/api/plans').then(r => r.json()),
-                    fetch('/api/brand-portals/directory').then(r => r.json()).catch(() => [])
-                ]);
-                allPlans = plans;
-                renderPlans(plans);
-                renderBrands(brandsRes);
-            } catch (err) {
-                showError('Sistem verisi yüklenemedi. Sayfayı yenileyin.');
-            }
-        }
-
-        function renderPlans(plans) {
-            const grid = document.getElementById('plansGrid');
-            grid.innerHTML = plans.map(p => {
-                const features = (() => { try { return typeof p.features === 'string' ? JSON.parse(p.features) : (p.features || []); } catch (e) { return []; } })();
-                return `
-                    <div class="plan-card" data-slug="${escapeHtml(p.slug)}" onclick="selectPlan(this.dataset.slug)">
-                        <div class="plan-tier">Tier ${p.tier_rank || 1}</div>
-                        <div class="plan-name">${escapeHtml(p.name)}</div>
-                        <div class="plan-price">₺${formatNumber(p.price_monthly)}<small>/ay</small></div>
-                        <div class="plan-desc">${escapeHtml(p.description || '')}</div>
-                        <ul class="plan-features">
-                            ${features.slice(0, 5).map(f => `<li><i class="fas fa-check"></i><span>${escapeHtml(f)}</span></li>`).join('')}
-                        </ul>
-                    </div>
-                `;
-            }).join('');
-
-            // Default Pro plan seçili
-            const defaultSlug = plans.find(p => p.slug === 'pro')?.slug || plans[0]?.slug;
-            if (defaultSlug) selectPlan(defaultSlug);
-        }
-
-        function renderBrands(directory) {
-            const sel = document.getElementById('brandSelect');
-            const list = (Array.isArray(directory) ? directory : []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'tr'));
-            sel.innerHTML = '<option value="">Marka seçin...</option>' +
-                list.map(b => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join('');
-        }
-
-        function selectPlan(slug) {
-            selectedPlanSlug = slug;
-            document.querySelectorAll('.plan-card').forEach(el => {
-                el.classList.toggle('is-active', el.dataset.slug === slug);
-            });
-            const plan = allPlans.find(p => p.slug === slug);
-            document.getElementById('selectedPlanLabel').value = plan ? `${plan.name} — ₺${formatNumber(plan.price_monthly)}/ay` : '';
-            document.getElementById('btnSignup').disabled = !slug;
-        }
-
-        function escapeHtml(str) {
-            return String(str || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-        }
-
-        function formatNumber(n) {
-            return new Intl.NumberFormat('tr-TR').format(Number(n) || 0);
-        }
-
-        function showError(msg) {
-            const el = document.getElementById('errorMsg');
-            el.textContent = msg;
-            el.style.display = 'block';
-        }
-
-        document.getElementById('signupForm').addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const btn = document.getElementById('btnSignup');
-            const errorEl = document.getElementById('errorMsg');
-            errorEl.style.display = 'none';
-            if (!selectedPlanSlug) { showError('Önce bir plan seçin'); return; }
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Hesap oluşturuluyor...</span>';
-
-            const fd = new FormData(event.target);
-            const payload = {
-                email: fd.get('email').trim().toLowerCase(),
-                password: fd.get('password'),
-                full_name: fd.get('full_name').trim(),
-                brand_id: Number(fd.get('brand_id')),
-                phone: fd.get('phone') || null,
-                company_name: fd.get('company_name') || null,
-                city: fd.get('city') || null,
-                plan_slug: selectedPlanSlug
-            };
-
-            try {
-                const data = await API.signup(payload);
-                if (data?.token) {
-                    // Yönlendirme: ödeme sayfasına geç (Subscription tab'ı checkout başlatır)
-                    window.location.href = `/?page=subscription&plan=${selectedPlanSlug}&billing=start`;
-                } else {
-                    showError('Kayıt yapıldı ancak oturum açılamadı. Giriş yapmayı deneyin.');
-                    btn.disabled = false;
-                }
-            } catch (err) {
-                showError(err.message || 'Kayıt başarısız');
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-check-circle"></i><span>Aboneliği Başlat</span>';
-            }
-        });
-
-        loadInitialData();
-    </script>
+    <script src="/inline-actions.js?v=1.0"></script>
+    <script src="/api_v3.js?v=6.1-session"></script>
+    <script src="/signup.js?v=1.0"></script>
+    <script src="/a11y.js?v=1.5"></script>
 </body>
 </html>

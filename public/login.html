@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Giriş & Üyelik · Traktör Sektör Analizi</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="/vendor/fonts/fonts.css" rel="stylesheet">
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
+    <script src="/inline-actions.js?v=1.0"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         :root {
@@ -42,7 +41,8 @@
             gap: 28px;
             align-items: start;
         }
-        @media (max-width: 1080px) { .auth-shell { grid-template-columns: 1fr; } }
+        /* Tek sütunda giriş formu önce gelir (hero'yu kaydırmadan giriş yapılabilsin). */
+        @media (max-width: 1080px) { .auth-shell { grid-template-columns: minmax(0, 1fr); } .auth-panel { order: -1; } }
 
         /* SOL: Plan Önizleme Paneli */
         .auth-hero {
@@ -51,8 +51,10 @@
             border: 1px solid var(--border);
             background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.85));
             box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
-            position: sticky; top: 28px;
+            position: static;
         }
+        /* Yalnızca iki sütunlu masaüstü düzeninde yapışkan; mobilde formun üstüne binip dokunmayı engelliyordu. */
+        @media (min-width: 1081px) { .auth-hero { position: sticky; top: 28px; } }
         .auth-pill {
             display: inline-flex;
             align-items: center;
@@ -565,7 +567,7 @@
     </style>
 </head>
 <body>
-    <div class="auth-shell">
+    <div class="auth-shell" role="main">
         <!-- SOL: Plan Önizleme Paneli -->
         <section class="auth-hero">
             <span class="auth-pill"><i class="fas fa-sparkles"></i> 3 Paket · Canlı Önizleme</span>
@@ -573,13 +575,13 @@
             <p>Üye olmadan önce hangi paketin size uygun olduğunu yan yana inceleyin. Hangi sekmeleri açıyor, hangi raporlar geliyor, ne kadar derinlik sunuyor — bir tıkla görün.</p>
 
             <div class="preview-toolbar">
-                <button class="preview-tab is-active tier-1" data-preview="starter" onclick="showPreview('starter')">
+                <button class="preview-tab is-active tier-1" data-preview="starter" data-on-click="showPreview('starter')">
                     <strong>STARTER</strong><small>₺990 / ay</small>
                 </button>
-                <button class="preview-tab tier-2" data-preview="growth" onclick="showPreview('growth')">
+                <button class="preview-tab tier-2" data-preview="growth" data-on-click="showPreview('growth')">
                     <strong>GROWTH</strong><small>₺2.990 / ay</small>
                 </button>
-                <button class="preview-tab tier-3" data-preview="enterprise" onclick="showPreview('enterprise')">
+                <button class="preview-tab tier-3" data-preview="enterprise" data-on-click="showPreview('enterprise')">
                     <strong>ENTERPRISE</strong><small>₺9.990 / ay</small>
                 </button>
             </div>
@@ -681,8 +683,8 @@
             </div>
 
             <div class="auth-tabs">
-                <button class="auth-tab is-active" data-tab="login" onclick="showTab('login')">Giriş Yap</button>
-                <button class="auth-tab" data-tab="signup" onclick="showTab('signup')">Üye Ol</button>
+                <button class="auth-tab is-active" data-tab="login" data-on-click="showTab('login')">Giriş Yap</button>
+                <button class="auth-tab" data-tab="signup" data-on-click="showTab('signup')">Üye Ol</button>
             </div>
 
             <div class="error-msg" id="errorMsg"></div>
@@ -696,8 +698,8 @@
                     <input type="email" name="email" required autocomplete="email" placeholder="Kurumsal e-posta adresiniz">
                 </div>
                 <div class="field compact password-field">
-                    <input type="password" name="password" required autocomplete="current-password" placeholder="Şifre">
-                    <button type="button" class="pw-toggle" aria-label="Şifreyi göster/gizle" onclick="togglePassword(this)"><i class="fas fa-eye"></i></button>
+                    <input type="password" name="password" required autocomplete="current-password" placeholder="Şifre" aria-label="Şifre">
+                    <button type="button" class="pw-toggle" aria-label="Şifreyi göster/gizle" data-on-click="togglePassword(this)"><i class="fas fa-eye"></i></button>
                 </div>
 
                 <div class="login-row">
@@ -705,12 +707,13 @@
                         <input type="checkbox" name="remember_me" id="rememberMe">
                         <span>Beni hatırla</span>
                     </label>
-                    <a class="forgot-link" onclick="onForgotPassword()" role="button" tabindex="0">Şifremi unuttum?</a>
+                    <a class="forgot-link" data-on-click="onForgotPassword()" role="button" tabindex="0">Şifremi unuttum?</a>
                 </div>
 
                 <button type="submit" class="btn-login-primary"><i class="fas fa-right-to-bracket"></i> Giriş Yap</button>
+                <button type="button" class="btn-google" id="btnResendLogin" style="display:none;" data-on-click="resendVerification(document.querySelector('#loginForm input[name=email]').value, this)"><i class="fas fa-envelope"></i> Doğrulama e-postasını tekrar gönder</button>
 
-                <button type="button" class="btn-google-strong" onclick="triggerGooglePrompt()">
+                <button type="button" class="btn-google-strong" data-on-click="triggerGooglePrompt()">
                     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                         <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -723,11 +726,11 @@
                 <div id="googleLoginContainer" style="display:none;"></div>
 
                 <div class="more-ways">
-                    <a onclick="showMoreSignInWays()">Diğer giriş yolları</a>
+                    <a data-on-click="showMoreSignInWays()">Diğer giriş yolları</a>
                 </div>
 
                 <div class="auth-foot">
-                    Hesabınız yok mu? <a onclick="showTab('signup')">Üye Ol</a>
+                    Hesabınız yok mu? <a data-on-click="showTab('signup')">Üye Ol</a>
                 </div>
             </form>
 
@@ -739,7 +742,7 @@
                     <input type="email" name="email" required autocomplete="email" maxlength="254" placeholder="E-posta adresiniz" id="forgotEmail">
                 </div>
                 <button type="submit" class="btn-login-primary" id="forgotSubmit"><i class="fas fa-paper-plane"></i> Sıfırlama Bağlantısı Gönder</button>
-                <div class="auth-foot"><a onclick="showTab('login')">Giriş ekranına dön</a></div>
+                <div class="auth-foot"><a data-on-click="showTab('login')">Giriş ekranına dön</a></div>
             </form>
 
             <!-- SIGNUP WIZARD -->
@@ -757,13 +760,13 @@
                     <p class="wizard-step-label">Sol panelde detayları inceleyebilirsiniz. Sonradan değiştirebilirsiniz.</p>
                     <div class="field">
                         <label>Plan</label>
-                        <select name="plan_slug" id="signupPlan" required onchange="syncPreview(this.value)">
+                        <select name="plan_slug" id="signupPlan" required data-on-change="syncPreview(this.value)">
                             <option value="starter">Starter — ₺990 / ay</option>
                             <option value="growth" selected>Growth — ₺2.990 / ay (en popüler)</option>
                             <option value="enterprise">Enterprise — ₺9.990 / ay</option>
                         </select>
                     </div>
-                    <button type="button" class="btn-primary" onclick="wizardNext(1)"><i class="fas fa-arrow-right"></i> Devam et</button>
+                    <button type="button" class="btn-primary" data-on-click="wizardNext(1)"><i class="fas fa-arrow-right"></i> Devam et</button>
                 </div>
 
                 <!-- ADIM 2: Hesap Bilgileri -->
@@ -784,27 +787,31 @@
                     </div>
                     <div class="field">
                         <label>Şifre (min 10 karakter, 1 büyük + 1 sayı + 1 özel)</label>
-                        <input type="password" name="password" required minlength="10" autocomplete="new-password" oninput="checkPasswordStrength(this)">
+                        <input type="password" name="password" required minlength="10" autocomplete="new-password" data-on-input="checkPasswordStrength(this)" aria-label="Şifre (en az 10 karakter, 1 büyük harf, 1 sayı, 1 özel karakter)">
                         <div class="password-strength" id="passwordStrength">Şifre güvenliği değerlendirilecek</div>
                     </div>
                     <div class="field-row">
-                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" onclick="wizardBack(2)"><i class="fas fa-arrow-left"></i> Geri</button>
-                        <button type="button" class="btn-primary" onclick="wizardNext(2)"><i class="fas fa-arrow-right"></i> Devam</button>
+                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" data-on-click="wizardBack(2)"><i class="fas fa-arrow-left"></i> Geri</button>
+                        <button type="button" class="btn-primary" data-on-click="wizardNext(2)"><i class="fas fa-arrow-right"></i> Devam</button>
                     </div>
                 </div>
 
                 <!-- ADIM 3: Marka Seçimi -->
                 <div class="wizard-stage" data-stage="3" style="display:none;">
                     <h2 class="wizard-title">3. Marka seçimi</h2>
-                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu).</p>
+                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu). Kayıt için markanızın size verdiği davet kodu gerekir; kod yalnızca ait olduğu marka için geçerlidir.</p>
                     <div class="field">
-                        <input type="text" id="brandSearch" placeholder="Marka ara..." onkeyup="filterBrands(this.value)">
+                        <label for="inviteCodeInput">Davet kodu</label>
+                        <input type="text" name="invite_code" id="inviteCodeInput" required autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="TSA-XXXX-XXXX-XXXX" aria-label="Davet kodu">
+                    </div>
+                    <div class="field">
+                        <input type="text" id="brandSearch" placeholder="Marka ara..." data-on-keyup="filterBrands(this.value)">
                     </div>
                     <div class="brand-grid-mini" id="brandGrid"></div>
                     <input type="hidden" name="brand_id" id="brandIdHidden" required>
                     <div class="field-row" style="margin-top: 10px;">
-                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" onclick="wizardBack(3)"><i class="fas fa-arrow-left"></i> Geri</button>
-                        <button type="button" class="btn-primary" onclick="wizardNext(3)"><i class="fas fa-arrow-right"></i> Devam</button>
+                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" data-on-click="wizardBack(3)"><i class="fas fa-arrow-left"></i> Geri</button>
+                        <button type="button" class="btn-primary" data-on-click="wizardNext(3)"><i class="fas fa-arrow-right"></i> Devam</button>
                     </div>
                 </div>
 
@@ -860,7 +867,7 @@
                         </div>
                     </div>
                     <div class="field-row">
-                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" onclick="wizardBack(4)"><i class="fas fa-arrow-left"></i> Geri</button>
+                        <button type="button" class="btn-google" style="background: rgba(15, 23, 42, 0.6);" data-on-click="wizardBack(4)"><i class="fas fa-arrow-left"></i> Geri</button>
                         <button type="submit" class="btn-primary" id="btnSignup"><i class="fas fa-check-circle"></i> Üyeliği Tamamla</button>
                     </div>
                     <div class="auth-foot" style="margin-top: 6px;">
@@ -868,371 +875,19 @@
                     </div>
                 </div>
             </form>
+
+            <!-- E-POSTA DOĞRULAMA BİLGİ EKRANI (kayıttan sonra) -->
+            <div id="verifyPanel" style="display:none; flex-direction:column; gap:12px;" role="status">
+                <h2 class="wizard-title"><i class="fas fa-envelope-circle-check"></i> Doğrulama e-postası gönderildi</h2>
+                <p class="wizard-step-label">Hesabınızı etkinleştirmek için <strong id="verifyEmailLabel"></strong> adresine gönderdiğimiz bağlantıya tıklayın (24 saat geçerlidir). Doğrulamadan sonra giriş yaparak abonelik adımına geçebilirsiniz.</p>
+                <button type="button" class="btn-google" id="btnResendSignup"><i class="fas fa-paper-plane"></i> Tekrar gönder</button>
+                <div class="auth-foot"><a href="/login.html" data-on-click="window.location.href='/login.html'; return false;">Giriş sayfasına dön</a></div>
+            </div>
         </section>
     </div>
 
-    <script src="/api_v3.js?v=5.85-mc"></script>
-    <script>
-        const SUPERUSER_HINT = ['yukselozdek@gmail.com'];
-        let allBrands = [];
-        let signupCurrentStage = 1;
-
-        function showPreview(slug) {
-            document.querySelectorAll('.preview-tab').forEach(t => t.classList.toggle('is-active', t.dataset.preview === slug));
-            document.querySelectorAll('.preview-content').forEach(c => c.classList.toggle('is-active', c.id === `preview-${slug}`));
-        }
-
-        function syncPreview(slug) { showPreview(slug); }
-
-        function showTab(name) {
-            document.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === name));
-            document.querySelectorAll('.auth-form').forEach(f => f.classList.toggle('is-active', f.dataset.form === name));
-            hideMessages();
-        }
-
-        function showError(msg) {
-            const el = document.getElementById('errorMsg');
-            el.textContent = msg; el.style.display = 'block';
-            document.getElementById('infoMsg').style.display = 'none';
-        }
-        function showInfo(msg) {
-            const el = document.getElementById('infoMsg');
-            el.textContent = msg; el.style.display = 'block';
-            document.getElementById('errorMsg').style.display = 'none';
-        }
-        function hideMessages() {
-            document.getElementById('errorMsg').style.display = 'none';
-            document.getElementById('infoMsg').style.display = 'none';
-        }
-
-        function checkPasswordStrength(input) {
-            const v = input.value;
-            const strength = document.getElementById('passwordStrength');
-            const len = v.length, hasUpper = /[A-ZÇĞİÖŞÜ]/.test(v), hasNum = /\d/.test(v), hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(v);
-            if (len === 0) { strength.textContent = 'Şifre güvenliği değerlendirilecek'; strength.className = 'password-strength'; return; }
-            if (len < 10 || !hasUpper || !hasNum || !hasSpecial) {
-                strength.textContent = `Eksik: ${[len<10?'10+ karakter':null, !hasUpper?'büyük harf':null, !hasNum?'rakam':null, !hasSpecial?'özel karakter':null].filter(Boolean).join(', ')}`;
-                strength.className = 'password-strength is-weak';
-            } else if (len < 14) {
-                strength.textContent = '✓ Güvenli — daha güçlü için 14+ karakter önerilir'; strength.className = 'password-strength is-medium';
-            } else {
-                strength.textContent = '✓ Çok güçlü'; strength.className = 'password-strength is-strong';
-            }
-        }
-
-        function checkSuperuserHint() {
-            const emailInput = document.querySelector('#loginForm input[name="email"]');
-            const banner = document.getElementById('superuserBanner');
-            if (!emailInput) return;
-            emailInput.addEventListener('input', () => {
-                const v = emailInput.value.trim().toLowerCase();
-                banner.style.display = SUPERUSER_HINT.includes(v) ? 'block' : 'none';
-            });
-        }
-
-        function wizardGoTo(stage) {
-            signupCurrentStage = stage;
-            document.querySelectorAll('.wizard-stage').forEach(s => s.style.display = (Number(s.dataset.stage) === stage ? 'flex' : 'none'));
-            document.querySelectorAll('.wizard-stage').forEach(s => s.style.flexDirection = 'column');
-            document.querySelectorAll('.wizard-stage').forEach(s => s.style.gap = '12px');
-            document.querySelectorAll('.wizard-step').forEach(el => {
-                const n = Number(el.dataset.step);
-                el.classList.toggle('is-done', n < stage);
-                el.classList.toggle('is-active', n === stage);
-            });
-            hideMessages();
-        }
-
-        function wizardNext(currentStage) {
-            const form = document.getElementById('signupForm');
-            const stage = form.querySelector(`.wizard-stage[data-stage="${currentStage}"]`);
-            // Validate stage inputs
-            if (currentStage === 2) {
-                const required = ['full_name', 'email', 'password'];
-                for (const f of required) {
-                    const inp = stage.querySelector(`[name="${f}"]`);
-                    if (!inp.value || !inp.checkValidity()) { showError(`${inp.previousElementSibling?.textContent || f} alanı eksik veya geçersiz`); return; }
-                }
-                const pw = stage.querySelector('[name="password"]').value;
-                const policy = /^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/;
-                if (!policy.test(pw)) { showError('Şifre politikasını karşılamıyor (10+ karakter, büyük harf, sayı, özel karakter)'); return; }
-            }
-            if (currentStage === 3) {
-                const brandId = document.getElementById('brandIdHidden').value;
-                if (!brandId) { showError('Marka seçimi zorunludur'); return; }
-            }
-            wizardGoTo(currentStage + 1);
-        }
-
-        function wizardBack(currentStage) {
-            wizardGoTo(currentStage - 1);
-        }
-
-        async function loadBrandsForSignup() {
-            try {
-                const r = await fetch('/api/brand-portals/directory').then(r => r.json());
-                allBrands = (Array.isArray(r) ? r : []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'tr'));
-                renderBrands(allBrands);
-            } catch (e) {
-                showError('Marka listesi yüklenemedi');
-            }
-        }
-
-        function renderBrands(list) {
-            const grid = document.getElementById('brandGrid');
-            grid.innerHTML = list.map(b => `<div class="brand-mini-card" data-brand-id="${Number(b.id)}" onclick="selectBrand(${Number(b.id)})">${escapeHtml(b.name || '')}</div>`).join('') || '<p style="color: var(--muted); font-size: 12px;">Marka bulunamadı.</p>';
-        }
-
-        function filterBrands(query) {
-            const q = String(query || '').toLowerCase();
-            renderBrands(allBrands.filter(b => (b.name || '').toLowerCase().includes(q)));
-        }
-
-        function selectBrand(id, name) {
-            document.getElementById('brandIdHidden').value = id;
-            document.querySelectorAll('.brand-mini-card').forEach(el => el.classList.toggle('is-selected', Number(el.dataset.brandId) === Number(id)));
-        }
-
-        function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-        function togglePassword(btn) {
-            const input = btn.parentElement.querySelector('input[type="password"], input[type="text"]');
-            if (!input) return;
-            const isHidden = input.type === 'password';
-            input.type = isHidden ? 'text' : 'password';
-            btn.querySelector('i').className = isHidden ? 'fas fa-eye-slash' : 'fas fa-eye';
-        }
-
-        function triggerGooglePrompt() {
-            if (!window.GOOGLE_OAUTH_CLIENT_ID) {
-                showError('Google girişi henüz yapılandırılmamış (GOOGLE_OAUTH_CLIENT_ID boş). Yönetici .env dosyasına Google OAuth Client ID ekledikten sonra çalışacak. Şu an kurumsal e-posta + şifre ile giriş yapabilir veya Üye Ol sekmesinden kayıt olabilirsiniz.');
-                return;
-            }
-            if (!window.google || !google.accounts || !google.accounts.id) {
-                showError('Google kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edip sayfayı yenileyin.');
-                return;
-            }
-            try {
-                // One-tap promptu tetikle; kullanıcı reddederse popup butonu fallback olarak görünür hale getir
-                google.accounts.id.prompt((notification) => {
-                    if (notification.isNotDisplayed && notification.isNotDisplayed()) {
-                        // Pop-up engellendi ya da kullanıcı zaten kapattı → görünür native butona geç
-                        const native = document.getElementById('googleLoginContainer');
-                        if (native) {
-                            native.style.display = 'flex';
-                            showInfo('Google penceresi açılmadı. Beyaz Google butonu yerine altta beliren resmi Google butonunu kullanın.');
-                        }
-                    }
-                });
-            } catch (e) {
-                console.warn('Google prompt hatası', e);
-                showError('Google penceresi açılamadı: ' + (e.message || 'bilinmeyen hata'));
-            }
-        }
-
-        function updateGoogleButtonState() {
-            const btn = document.querySelector('.btn-google-strong');
-            if (!btn) return;
-            if (!window.GOOGLE_OAUTH_CLIENT_ID) {
-                btn.classList.add('is-disabled');
-                btn.title = 'Google OAuth henüz yapılandırılmamış';
-            } else {
-                btn.classList.remove('is-disabled');
-                btn.title = '';
-            }
-        }
-
-        function onForgotPassword() {
-            showTab('forgot');
-            const lt = document.querySelector('.auth-tab[data-tab="login"]');
-            if (lt) lt.classList.add('is-active');
-            const le = document.querySelector('#loginForm input[name="email"]');
-            const fe = document.getElementById('forgotEmail');
-            if (le && fe && le.value && !fe.value) fe.value = le.value.trim();
-            if (fe) fe.focus();
-        }
-
-        document.getElementById('forgotForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessages();
-            const btn = document.getElementById('forgotSubmit');
-            const email = document.getElementById('forgotEmail').value.trim().toLowerCase();
-            if (!email) { showError('E-posta adresi gerekli'); return; }
-            btn.disabled = true;
-            try {
-                const res = await fetch('/api/auth/forgot-password', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email })
-                });
-                const data = await res.json().catch(() => ({}));
-                if (res.ok) {
-                    showInfo(data.message || 'Eğer bu e-posta kayıtlıysa, şifre sıfırlama bağlantısı gönderildi. Lütfen gelen kutunuzu kontrol edin.');
-                } else {
-                    showError(data.error || 'İstek gönderilemedi. Lütfen daha sonra tekrar deneyin.');
-                }
-            } catch (err) {
-                showError('Bağlantı hatası. Lütfen tekrar deneyin.');
-            } finally {
-                btn.disabled = false;
-            }
-        });
-
-        function showMoreSignInWays() {
-            showInfo('Şu anda Google ve kurumsal e-posta + şifre giriş yolları desteklenir. Kurumsal SSO/SAML Enterprise paketlere özel olarak yapılandırılabilir.');
-        }
-
-        // Login submit
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessages();
-            const fd = new FormData(e.target);
-            const email = fd.get('email').trim().toLowerCase();
-            const remember = !!fd.get('remember_me');
-            try {
-                const data = await API.login(email, fd.get('password'));
-                if (data?.token) {
-                    if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
-                    if (remember) localStorage.setItem('remember_email', email);
-                    else localStorage.removeItem('remember_email');
-                    window.location.href = '/';
-                }
-            } catch (err) {
-                showError(err.message || 'Giriş başarısız');
-            }
-        });
-
-        // Beni hatırla — sayfa açılışında doldur
-        (function prefillRememberedEmail() {
-            const remembered = localStorage.getItem('remember_email');
-            if (remembered) {
-                const emailInput = document.querySelector('#loginForm input[name="email"]');
-                const cb = document.getElementById('rememberMe');
-                if (emailInput) emailInput.value = remembered;
-                if (cb) cb.checked = true;
-            }
-        })();
-
-        // Signup submit (final stage)
-        document.getElementById('signupForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessages();
-            const btn = document.getElementById('btnSignup');
-            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Hesap oluşturuluyor...';
-            const fd = new FormData(e.target);
-            const payload = {
-                email: fd.get('email').trim().toLowerCase(),
-                password: fd.get('password'),
-                full_name: fd.get('full_name').trim(),
-                brand_id: Number(document.getElementById('brandIdHidden').value),
-                plan_slug: fd.get('plan_slug') || 'growth',
-                company_name: fd.get('company_name').trim(),
-                company_tax_office: fd.get('company_tax_office') || null,
-                company_tax_number: fd.get('company_tax_number') || null,
-                job_title: fd.get('job_title'),
-                dealer_or_distributor: fd.get('dealer_or_distributor'),
-                phone: fd.get('phone') || null,
-                city: fd.get('city') || null
-            };
-            try {
-                const data = await API.signup(payload);
-                if (data?.token) {
-                    showInfo('Üyeliğiniz oluşturuldu. Ödeme adımına yönlendiriliyorsunuz...');
-                    setTimeout(() => { window.location.href = `/?page=subscription&plan=${payload.plan_slug}&billing=start`; }, 800);
-                }
-            } catch (err) {
-                btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> Üyeliği Tamamla';
-                showError(err.message || 'Kayıt başarısız');
-            }
-        });
-
-        // Google Sign-in
-        function initGoogle() {
-            if (!window.google) return setTimeout(initGoogle, 500);
-            const clientId = window.GOOGLE_OAUTH_CLIENT_ID || '';
-            if (!clientId) {
-                document.getElementById('googleLoginContainer').innerHTML = '<small style="color: var(--muted); font-size: 11px;">Google OAuth yapılandırılmadı</small>';
-                document.getElementById('googleSignupContainer').innerHTML = '';
-                return;
-            }
-            try {
-                google.accounts.id.initialize({
-                    client_id: clientId,
-                    callback: handleGoogleCredential,
-                    auto_select: false,
-                    cancel_on_tap_outside: true
-                });
-                ['googleLoginContainer', 'googleSignupContainer'].forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el) {
-                        google.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', text: 'continue_with', shape: 'rectangular', width: 320 });
-                    }
-                });
-            } catch (e) {
-                console.warn('Google init hatası', e);
-            }
-        }
-
-        async function handleGoogleCredential(response) {
-            hideMessages();
-            try {
-                const fd = new FormData(document.getElementById('signupForm'));
-                const payload = {
-                    id_token: response.credential,
-                    brand_id: document.getElementById('brandIdHidden').value ? Number(document.getElementById('brandIdHidden').value) : null,
-                    plan_slug: fd.get('plan_slug') || 'growth',
-                    company_name: fd.get('company_name') || null,
-                    job_title: fd.get('job_title') || null
-                };
-                const r = await fetch('/api/auth/google', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await r.json();
-                if (r.status === 202 && data.code === 'GOOGLE_NEEDS_PROFILE') {
-                    showInfo(`Google hesabınız tanımlandı (${data.google_email}). Üye Ol sekmesinde marka ve firma bilgisi girin.`);
-                    showTab('signup');
-                    return;
-                }
-                if (!r.ok) { showError(data.error || 'Google girişi başarısız'); return; }
-                if (data?.token) {
-                    API.setToken(data.token);
-                    localStorage.setItem('user_data', JSON.stringify(data.user));
-                    if (data.user?.brand?.slug) localStorage.setItem('last_brand_slug', data.user.brand.slug);
-                    if (data.is_new && data.pending_subscription) {
-                        window.location.href = `/?page=subscription&plan=${data.pending_subscription.plan_slug || 'growth'}&billing=start`;
-                    } else {
-                        window.location.href = '/';
-                    }
-                }
-            } catch (err) {
-                showError(err.message || 'Google işlemi başarısız');
-            }
-        }
-
-        // Init
-        loadBrandsForSignup();
-        checkSuperuserHint();
-        initGoogle();
-
-        // Auto-redirect if already logged in
-        if (API.token) {
-            API.me().then(u => { if (u) window.location.href = '/'; }).catch(() => { localStorage.removeItem('auth_token'); API.token = null; });
-        }
-    </script>
-    <script>
-        // Backend'den Google client ID'sini opsiyonel olarak al, butonun durumunu güncelle
-        fetch('/api/auth/google-config')
-            .then(r => r.ok ? r.json() : {})
-            .then(c => {
-                if (c && c.client_id) {
-                    window.GOOGLE_OAUTH_CLIENT_ID = c.client_id;
-                    initGoogle();
-                }
-                if (typeof updateGoogleButtonState === 'function') updateGoogleButtonState();
-            })
-            .catch(() => { if (typeof updateGoogleButtonState === 'function') updateGoogleButtonState(); });
-    </script>
+    <script src="/api_v3.js?v=6.1-session"></script>
+    <script src="/login.js?v=1.0"></script>
+    <script src="/a11y.js?v=1.5"></script>
 </body>
 </html>

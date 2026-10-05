@@ -35,4 +35,38 @@ describe('isSafeSql', () => {
         assert.equal(isSafeSql(null), false);
         assert.equal(isSafeSql('  '), false);
     });
+
+    it('denetim bulgusu: fonksiyonla tablo okuma ve parantezli birleşim atlatmaları engellenir', () => {
+        for (const q of [
+            "SELECT query_to_xml('select email,password_hash from users',true,false,'')",
+            "SELECT table_to_xml('users',true,false,'')",
+            "SELECT database_to_xml(true,true,'')",
+            'SELECT * FROM (whatsapp_phones CROSS JOIN brands b)',
+            'SELECT * FROM (subscription_plans)',
+            "SELECT repeat('a',1000000000)",
+            'SELECT current_schema()',
+            "SELECT regexp_replace(name,'a','b') FROM brands",
+            'SELECT * FROM brands CROSS JOIN provinces',
+            'SELECT 1 FROM brands a JOIN brands b ON true JOIN brands c ON true JOIN brands d ON true JOIN brands e ON true JOIN brands f ON true JOIN brands g ON true JOIN brands h ON true',
+            "SELECT array_agg(name) FROM brands",
+        ]) {
+            assert.equal(isSafeSql(q), false, q);
+        }
+    });
+
+    it('meşru analiz sorguları (pencere, tarih, cast, alt sorgu) hâlâ geçer', () => {
+        for (const q of [
+            'SELECT brand_name, SUM(quantity) AS total, ROUND(100.0 * SUM(quantity) / NULLIF(SUM(SUM(quantity)) OVER (), 0), 1) AS pay FROM sales_view WHERE year = 2025 GROUP BY brand_name ORDER BY total DESC LIMIT 10',
+            'SELECT year, month, SUM(quantity) FROM sales_view GROUP BY 1,2 ORDER BY 1,2',
+            "SELECT EXTRACT(YEAR FROM CURRENT_DATE) AS y, UPPER(brand_name) FROM brands",
+            "SELECT brand_name, quantity::numeric(12,2), CAST(year AS varchar(4)) FROM sales_view LIMIT 5",
+            'SELECT x.* FROM (SELECT brand_name, SUM(quantity) q FROM sales_view GROUP BY 1) x WHERE x.q > 10',
+            'WITH t AS (SELECT brand_name, SUM(quantity) q FROM sales_view GROUP BY 1) SELECT * FROM t ORDER BY q DESC',
+            "SELECT brand_name, ROW_NUMBER() OVER (PARTITION BY year ORDER BY quantity DESC) rn FROM sales_view",
+            "SELECT COALESCE(b.name, 'x'), TRANSLATE(UPPER(b.name), 'İ', 'I') FROM brands b LEFT JOIN provinces p ON p.id = b.id",
+            "SELECT * FROM sales_view WHERE brand_name IN ('A','B') AND (year = 2024 OR year = 2025)",
+        ]) {
+            assert.equal(isSafeSql(q), true, q);
+        }
+    });
 });

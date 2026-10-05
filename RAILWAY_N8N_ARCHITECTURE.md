@@ -79,3 +79,40 @@ Beklenen temiz durum:
 ## Not
 
 WhatsApp callback adresi uygulama domain'i degil, ayri `n8n` domain'i olmalidir.
+
+---
+
+## Güvenlik ve sağlık denetimi (Ekim 2026)
+
+Kod incelemesiyle bulundu; n8n servisi canlıda çalıştırılarak doğrulanmadı. Önem sırasına göre:
+
+1. **İşlemci webhook'u gelen isteği doğrulamıyor (yüksek).** `whatsapp-sales-processor*.json` içindeki webhook
+   (`.../whatsapp-sales-assistant-process-v4`) yalnızca *dışarı* `x-query-token` gönderiyor; *gelen* istekte bu başlığı
+   kontrol etmiyor. Adresi bilen biri sahte mesaj olayı gönderip işletme numarası adına WhatsApp yanıtı tetikleyebilir.
+   Çözüm: workflow başına bir IF düğümü ekleyip `$json.headers['x-query-token'] === $env.WHATSAPP_QUERY_API_KEY`
+   değilse 401 döndürmek (uygulama zaten bu başlığı gönderiyor, `forwardWhatsAppEventToN8n`).
+2. **Meta imzası n8n tarafında doğrulanmıyor (orta).** Uygulamanın kendi webhook'unda `WHATSAPP_APP_SECRET` ile imza
+   doğrulaması var, ama Meta doğrudan n8n'in `whatsapp-sales-assistant` webhook'una bağlanırsa bu koruma atlanır.
+   Meta'yı uygulama webhook'una bağlayıp n8n'e uygulamanın iletmesi tercih edilmeli; ya da imza n8n'de doğrulanmalı.
+3. **Editör koruması (orta).** `docker-compose.yml` ve `docker/start-railway.sh` `N8N_BASIC_AUTH_*` kullanıyor; bu ayarlar
+   n8n 1.0'dan beri **etkisiz** (kaldırıldı). Editör, sahip hesabı oluşturulana kadar ya da hesap şifresine kadar açıktır.
+   Canlı n8n alan adında sahip hesabının oluşturulduğundan ve güçlü şifre taşıdığından emin olun; mümkünse editörü
+   Cloudflare Access/IP kısıtıyla koruyun.
+4. **Sürüm sabitleme (orta).** `railway-services/n8n/Dockerfile` `n8nio/n8n:latest` kullanıyor (compose `1.70.3`'e sabit).
+   Bir deploy sessizce büyük sürüme atlayabilir. Canlıda çalışan sürümü öğrenip Dockerfile'ı o sürüme sabitleyin.
+5. **Env erişimi (düşük).** `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` gerekli (workflow'lar `$env` kullanıyor) ama Code
+   düğümlerinden tüm sırlar okunabilir; editöre yalnızca güvenilir kişiler girmeli.
+6. **Dosya dağınıklığı (düşük).** `railway-services/n8n/` içinde 4 işlemci sürümü var; `start-n8n.sh` yalnızca
+   `whatsapp-sales-assistant` ve `processor-v2`'yi yüklüyor. v3/v4 kopyaları kullanılmıyorsa temizlenmeli.
+   `n8n-workflows/whatsapp-sales-assistant.json` ile `railway-services/n8n/` kopyası şu an aynı; ikisini senkron tutun.
+7. **Gömülü n8n yolu** (`RAILWAY_ENABLE_EMBEDDED_N8N`) varsayılan kapalı; kullanılmıyorsa kaldırılabilir.
+
+### Güncelleme (denetim sonrası)
+- Canlı n8n'de 5 akış var; `Processor v4/v3/v2` ve `Assistant` yayında. Her yayında webhook ayrı bir herkese açık adrestir:
+  **kullanılmayan sürümleri yayından kaldırın** (uygulamadaki `N8N_WHATSAPP_PROCESSOR_URL` hangi sürümü gösteriyorsa yalnızca o kalsın).
+- v2/v3'te gelen `x-query-token` kontrolü (`Forward Token Match`) vardı, **v4'te yoktu**: eklendi. Üç sürümde de
+  `WHATSAPP_QUERY_API_KEY` boşsa istek reddedilir (önceden boş anahtar + başlıksız istek geçebilirdi).
+- Repodaki JSON'lar canlıdaki akışı kendiliğinden güncellemez (`start-n8n.sh` yalnızca akış yoksa içe aktarır);
+  değişiklik n8n arayüzünde elle uygulanmalıdır.
+- n8n veritabanı bağlantı şifresi Railway referansına (`${{Postgres.PGPASSWORD}}`) çevrildi; eski elle yazılmış şifre
+  güncel olmadığı için n8n açılamıyordu (Ekim 2026).

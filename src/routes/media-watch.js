@@ -1,4 +1,5 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Media Watch routes (overview, sources registry, manual trigger, geo stats, translate),
 // moved verbatim from server.js. Registration order is preserved by the caller.
 module.exports = function registerMediaWatch(app, ctx) {
@@ -138,6 +139,10 @@ module.exports = function registerMediaWatch(app, ctx) {
                 windowDays: req.body.window_days || req.query.window_days || 14,
                 createdBy: req.user?.role || 'user'
             });
+            // Yalnızca gerçekten LLM kullanıldıysa say (kural tabanlı yedek özet kota harcamaz)
+            if (brief && brief.ai_model && brief.ai_model !== 'rule-based') {
+                await recordAiUsage(req.user.id, 'media_watch_brief', String(brief.ai_model).slice(0, 50), 0, 0, req);
+            }
             res.json(brief);
         } catch (err) {
             console.error('Media watch brief generate error:', err);
@@ -279,6 +284,7 @@ module.exports = function registerMediaWatch(app, ctx) {
             if (r && r.ok) return res.json(await r.json());
             res.json({ international: [], sector: [], oem_groups: {}, total: 0, languages: [], countries: [] });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/media-watch/sources');
             res.status(500).json({ error: 'Bridge erişilemedi' });
         }
     });
@@ -286,7 +292,8 @@ module.exports = function registerMediaWatch(app, ctx) {
     // Coğrafi/dil istatistikleri (DB tabanlı, son 30 gün)
     app.get('/api/media-watch/coverage', authMiddleware, requireFeature('media_watch'), async (req, res) => {
         try {
-            const brandId = req.query.brand_id ? Number(req.query.brand_id) : null;
+            // Marka kullanıcısı yalnızca kendi markasını görür (admin isteğe bağlı brand_id verebilir).
+            const brandId = resolveMediaWatchScopedBrandId(req, req.query.brand_id);
             const params = brandId ? [brandId] : [];
             const where = brandId ? 'WHERE brand_id = $1 AND' : 'WHERE';
             const [byCountry, byLanguage, bySource, totals] = await Promise.all([
@@ -326,7 +333,8 @@ module.exports = function registerMediaWatch(app, ctx) {
             if (!isElite) {
                 return res.status(402).json({ code: 'ENTERPRISE_REQUIRED', error: 'Manuel tarama Enterprise pakette' });
             }
-            const { pack, brand_id } = req.body || {};
+            const { pack } = req.body || {};
+            const brand_id = resolveMediaWatchScopedBrandId(req, (req.body || {}).brand_id);
             const packCode = ['pack-1','pack-2','pack-3','pack-4','pack-5','pack-6'].includes(pack) ? pack : null;
             const url = packCode
                 ? `${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/push-${packCode}`
@@ -347,11 +355,16 @@ module.exports = function registerMediaWatch(app, ctx) {
     });
 
     // AI çeviri (Türkçe olmayan haberleri TR'ye çevirip özet üret)
-    app.post('/api/media-watch/translate', authMiddleware, requireFeature('ai_brief', 'media_watch'), async (req, res) => {
+    app.post('/api/media-watch/translate', authMiddleware, requireFeature('ai_brief', 'media_watch'), requireAiQuota(), async (req, res) => {
         try {
             const { item_id } = req.body || {};
             if (!item_id) return res.status(400).json({ error: 'item_id zorunlu' });
-            const r = await pool.query(`SELECT id, language, title, summary, content_text FROM media_watch_items WHERE id = $1`, [item_id]);
+            const scopedBrandId = resolveMediaWatchScopedBrandId(req, null);
+            // Marka kullanıcısı yalnızca kendi markasının kaydını çevirebilir (başkasının kaydı 404 gibi davranır).
+            const r = await pool.query(
+                `SELECT id, language, title, summary, content_text FROM media_watch_items
+                 WHERE id = $1 AND ($2::int IS NULL OR brand_id = $2::int)`,
+                [Number.isInteger(Number(item_id)) ? Number(item_id) : -1, req.user.role === 'admin' ? null : scopedBrandId || -1]);
             if (r.rows.length === 0) return res.status(404).json({ error: 'Kayıt bulunamadı' });
             const item = r.rows[0];
             if ((item.language || 'tr') === 'tr') {
@@ -386,7 +399,7 @@ module.exports = function registerMediaWatch(app, ctx) {
                 // AI usage record (Enterprise/Growth kotası)
                 try {
                     if (typeof recordAiUsage === 'function') {
-                        await recordAiUsage(req.user.id, 'media_watch_translate', 'llama-3.3-70b-versatile', aiJson?.usage?.prompt_tokens || 0, aiJson?.usage?.completion_tokens || 0);
+                        await recordAiUsage(req.user.id, 'media_watch_translate', 'llama-3.3-70b-versatile', aiJson?.usage?.prompt_tokens || 0, aiJson?.usage?.completion_tokens || 0, req);
                     }
                 } catch (e) {}
             }

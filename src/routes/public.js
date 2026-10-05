@@ -1,8 +1,10 @@
 'use strict';
+const { logRouteError } = require('../lib/log-error');
 // Health check, public legal pages, public reports, debug and WhatsApp/assistant endpoints,
 // moved verbatim from server.js. Registration order is preserved (called at the original position).
 const crypto = require('crypto');
 const { safeEqualStr, errMsg, WHATSAPP_QUERY_API_KEY, WHATSAPP_VERIFY_TOKEN } = require('../config');
+const { checkWhatsappAuthorization, last4 } = require('../lib/whatsapp-approval');
 
 module.exports = function registerPublic(app, ctx) {
     const {
@@ -220,10 +222,13 @@ module.exports = function registerPublic(app, ctx) {
                 brands_error: brandsCheck.error || null
             });
         } catch (err) {
+            logRouteError(req, err, 'GET /api/debug/ciro-test');
             clearTimeout(timer);
             if (!res.headersSent) res.status(500).json({ error: errMsg(err) });
         }
     });
+
+    const MAX_QUESTION_LEN = 1000;
 
     app.post('/api/public/assistant/sales-query', async (req, res) => {
         try {
@@ -234,12 +239,31 @@ module.exports = function registerPublic(app, ctx) {
                 return res.status(401).json({ error: 'Gecersiz sorgu token' });
             }
 
-            const question = (req.body.question || '').toString().trim();
+            const rawQuestion = req.body && req.body.question;
+            if (typeof rawQuestion !== 'string') {
+                return res.status(400).json({ error: 'question alani gerekli (metin)' });
+            }
+            const question = rawQuestion.trim();
             if (!question) {
                 return res.status(400).json({ error: 'question alani gerekli' });
             }
+            if (question.length > MAX_QUESTION_LEN) {
+                return res.status(400).json({ error: `question en fazla ${MAX_QUESTION_LEN} karakter olabilir` });
+            }
 
-            const result = await resolveAssistantQuestion(question, null);
+            // n8n akışı `from` gönderir: gönderen onaylı/abonelikli değilse LLM/SQL zinciri çalıştırılmaz.
+            // `from` hiç yoksa (eski istemciler) mevcut davranış korunur.
+            const fromRaw = req.body && req.body.from;
+            let phoneCtx = null;
+            if (fromRaw !== undefined && fromRaw !== null && fromRaw !== '') {
+                const auth = await checkWhatsappAuthorization(pool, String(fromRaw));
+                if (!auth.ok) {
+                    console.warn(`WhatsApp sales-query reddedildi: son4=${last4(fromRaw)} neden=${auth.reason}`);
+                    return res.status(403).json({ answer: '', error: 'Numara onaylı değil' });
+                }
+                phoneCtx = String(fromRaw);
+            }
+            const result = await resolveAssistantQuestion(question, phoneCtx);
             return res.json(result);
         } catch (err) {
             console.error('Public sales query error:', err);
@@ -256,8 +280,9 @@ module.exports = function registerPublic(app, ctx) {
         const token = req.query['hub.verify_token'];
         const challenge = req.query['hub.challenge'];
 
-        if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
-            return res.status(200).send(challenge);
+        // Boş yapılandırma boş token ile eşleşmesin; challenge yalnızca düz metin (HTML olarak yansıtılmaz).
+        if (WHATSAPP_VERIFY_TOKEN && mode === 'subscribe' && safeEqualStr(token || '', WHATSAPP_VERIFY_TOKEN)) {
+            return res.status(200).type('text/plain').send(String(challenge ?? '').slice(0, 200));
         }
 
         return res.status(403).send('verify token mismatch');
@@ -270,6 +295,10 @@ module.exports = function registerPublic(app, ctx) {
     }
 
     app.post('/api/public/whatsapp/webhook', async (req, res) => {
+        // Üretimde imza anahtarı yoksa istek kabul edilmez: imzasız webhook, sahte mesajla LLM/SQL zincirini tetiklerdi.
+        if (!WHATSAPP_APP_SECRET && require('../lib/env').isProduction()) {
+            return res.status(503).json({ error: 'WhatsApp webhook yapılandırılmamış (WHATSAPP_APP_SECRET)' });
+        }
         if (WHATSAPP_APP_SECRET) {
             const sigHeader = String(req.headers['x-hub-signature-256'] || '');
             const expected = 'sha256=' + crypto.createHmac('sha256', WHATSAPP_APP_SECRET)
@@ -290,36 +319,42 @@ module.exports = function registerPublic(app, ctx) {
             // Eğer mesaj değilse sessizce çık
             if (!message || message.type !== 'text') return;
 
-            const question = message.text?.body?.trim();
+            const rawBody = message.text?.body;
+            if (typeof rawBody !== 'string') return;
+            const question = rawBody.trim();
             const from = message.from;
-            const profileName = value.contacts?.[0]?.profile?.name || 'Bilinmiyor';
 
-            if (!question || !from) return;
+            if (!question || !from || typeof from !== 'string') return;
+            if (question.length > MAX_QUESTION_LEN) {
+                console.warn(`WhatsApp mesajı çok uzun (${question.length}); yok sayıldı`);
+                return;
+            }
 
-            console.log(`\n🟢 YENİ MESAJ -> Kimden: ${profileName} (${from}) | Soru: "${question}"\n`);
+            // Yalnızca onaylı + aktif abonelikli numaralara cevap verilir; aksi halde sessizce yok say (PII loglanmaz).
+            const auth = await checkWhatsappAuthorization(pool, from);
+            if (!auth.ok) {
+                console.warn(`WhatsApp mesajı yok sayıldı: son4=${last4(from)} neden=${auth.reason}`);
+                return;
+            }
+
+            console.log(`🟢 Yeni WhatsApp mesajı: son4=${last4(from)} uzunluk=${question.length}`);
 
             // Kullanıcı mesajını konuşma hafızasına ekle
             addToConversation(from, 'user', question);
-            const historyCount = getConversationHistory(from).length;
-            console.log(`🧠 Konuşma hafızası: ${historyCount} mesaj (${from})`);
-
-            console.log("🤖 Node.js AI (resolveAssistantQuestion) devreye giriyor...");
 
             try {
                 // Yapay zeka soruyu SQL'e çevirip cevabı üretiyor (telefon numarası ile bağlam)
                 const result = await resolveAssistantQuestion(question, from);
-                console.log("✅ AI Cevabı Başarıyla Üretildi:", result.answer?.substring(0, 100));
+                console.log(`✅ AI cevabı üretildi: son4=${last4(from)} uzunluk=${(result.answer || '').length}`);
 
                 // Asistan cevabını konuşma hafızasına ekle
                 addToConversation(from, 'assistant', result.answer || '');
 
-                // Üretilen cevabı WhatsApp'a geri gönderiyor
-                console.log("📤 AI Cevabı WhatsApp'a gönderiliyor...");
-                const whatsappResponse = await sendWhatsAppTextMessage(from, result.answer || 'Anlayamadım, tekrar sorar mısınız?');
-                console.log("✅ WhatsApp Gönderim Başarılı!");
+                await sendWhatsAppTextMessage(from, result.answer || 'Anlayamadım, tekrar sorar mısınız?');
+                console.log(`✅ WhatsApp gönderimi başarılı: son4=${last4(from)}`);
 
             } catch (aiError) {
-                console.error('❌ YZ veya WhatsApp Gönderim Hatası:', aiError.message, aiError.response?.data);
+                console.error(`❌ YZ veya WhatsApp Gönderim Hatası: son4=${last4(from)}`, aiError.message);
             }
 
         } catch (err) {
