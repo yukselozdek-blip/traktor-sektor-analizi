@@ -11873,15 +11873,104 @@ async function loadSettingsPage() {
                 </div>
             </div>
         ` : ''}
+        <div id="mfaCardHost"></div>
         <div id="whatsappApprovalsHost"></div>
         <div id="inviteCodesHost"></div>
     `;
 
+    renderMfaCard();
     if (currentUser?.role === 'admin') renderWhatsappApprovalsCard();
     if (currentUser?.role === 'admin') renderInviteCodesCard();
     if (showDeployTools) {
         refreshDeployStatus(true);
     }
+}
+
+// ============================================
+// İKİ ADIMLI DOĞRULAMA (ayarlar kartı)
+// ============================================
+const mfaUi = { status: null, secret: null, uri: null, codes: null, msg: '', msgTone: 'muted' };
+
+function mfaSetMsg(msg, tone = 'muted') { mfaUi.msg = msg; mfaUi.msgTone = tone; }
+
+async function renderMfaCard() {
+    const host = document.getElementById('mfaCardHost');
+    if (!host) return;
+    try { mfaUi.status = await API.mfaStatus(); } catch (_) { mfaUi.status = null; }
+    const st = mfaUi.status;
+    if (!st) { host.innerHTML = ''; return; }
+    const color = { muted: 'var(--text-muted)', success: '#22c55e', danger: '#ef4444' }[mfaUi.msgTone] || 'var(--text-muted)';
+    let body;
+    if (mfaUi.codes) {
+        body = `
+            <p style="font-size:13px;margin:0 0 10px"><strong>Kurtarma kodlarınız.</strong> Her biri yalnızca bir kez çalışır; güvenli bir yerde saklayın. Bu liste tekrar gösterilmeyecek.</p>
+            <pre style="margin:0 0 12px;padding:12px;border-radius:8px;background:var(--bg-card-hover);user-select:all;line-height:1.7">${mfaUi.codes.map(escapeHtml).join('\n')}</pre>
+            <button class="btn-filter" data-on-click="mfaDismissCodes()"><i class="fas fa-check"></i> Kaydettim</button>`;
+    } else if (st.enabled) {
+        body = `
+            <p style="font-size:14px;margin:0 0 6px"><i class="fas fa-circle-check" style="color:#22c55e"></i> Etkin. Kalan kurtarma kodu: <strong>${Number(st.recovery_codes_remaining) || 0}</strong></p>
+            <div style="display:grid;gap:8px;max-width:360px;margin-top:12px">
+                <input type="password" id="mfaPw" autocomplete="current-password" placeholder="Şifre" aria-label="Şifre">
+                <input type="text" id="mfaCodeInput" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Doğrulama kodu" aria-label="Doğrulama kodu">
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button class="btn-filter" data-on-click="mfaRegenerate()"><i class="fas fa-rotate"></i> Kurtarma kodlarını yenile</button>
+                    ${st.required ? '' : '<button class="btn-filter" data-on-click="mfaDisable()" style="background:#ef4444;color:#fff"><i class="fas fa-ban"></i> Kapat</button>'}
+                </div>
+                ${st.required ? '<small style="color:var(--text-muted)">Yönetici hesaplarında iki adımlı doğrulama zorunludur ve kapatılamaz.</small>' : ''}
+            </div>`;
+    } else if (mfaUi.secret) {
+        body = `
+            <p style="font-size:13px;margin:0 0 8px">Doğrulayıcı uygulamanızda (Google/Microsoft Authenticator, 1Password vb.) "anahtar gir" ile ekleyin:</p>
+            <code style="display:block;padding:10px;border-radius:8px;background:var(--bg-card-hover);word-break:break-all;letter-spacing:1px;user-select:all">${escapeHtml(mfaUi.secret)}</code>
+            <p style="margin:6px 0 12px;font-size:12px"><a href="${escapeHtml(mfaUi.uri)}">Telefonda uygulamayı otomatik aç</a></p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;max-width:360px">
+                <input type="text" id="mfaCodeInput" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 haneli kod" aria-label="Doğrulama kodu">
+                <button class="btn-filter" data-on-click="mfaConfirmEnable()"><i class="fas fa-shield-halved"></i> Etkinleştir</button>
+            </div>`;
+    } else {
+        body = `
+            <p style="font-size:14px;margin:0 0 12px">Hesabınıza giriş yaparken şifreye ek olarak telefonunuzdaki uygulamadan 6 haneli kod istenir. Hesabınızı şifre sızıntılarına karşı korur.</p>
+            <button class="btn-filter" data-on-click="mfaBeginSetup()"><i class="fas fa-shield-halved"></i> Kurulumu başlat</button>`;
+    }
+    host.innerHTML = `
+        <div class="card" style="margin-top:24px">
+            <div class="card-header"><h3><i class="fas fa-shield-halved"></i> İki Adımlı Doğrulama</h3></div>
+            <div class="card-body">
+                ${body}
+                <div role="status" style="margin-top:12px;font-size:13px;color:${color}">${escapeHtml(mfaUi.msg)}</div>
+            </div>
+        </div>`;
+}
+
+async function mfaBeginSetup() {
+    try {
+        const r = await API.mfaSetup();
+        mfaUi.secret = r.secret; mfaUi.uri = r.otpauth_uri; mfaSetMsg('');
+    } catch (err) { mfaSetMsg(err.message, 'danger'); }
+    renderMfaCard();
+}
+async function mfaConfirmEnable() {
+    try {
+        const r = await API.mfaEnable(document.getElementById('mfaCodeInput')?.value.trim());
+        mfaUi.codes = r.recovery_codes; mfaUi.secret = null; mfaSetMsg('İki adımlı doğrulama etkinleştirildi.', 'success');
+    } catch (err) { mfaSetMsg(err.message, 'danger'); }
+    renderMfaCard();
+}
+function mfaDismissCodes() { mfaUi.codes = null; mfaSetMsg(''); renderMfaCard(); }
+async function mfaDisable() {
+    if (!confirm('İki adımlı doğrulama kapatılsın mı? Hesabınızın koruması azalır.')) return;
+    try {
+        await API.mfaDisable(document.getElementById('mfaPw')?.value || '', document.getElementById('mfaCodeInput')?.value.trim());
+        mfaSetMsg('İki adımlı doğrulama kapatıldı.', 'success');
+    } catch (err) { mfaSetMsg(err.message, 'danger'); }
+    renderMfaCard();
+}
+async function mfaRegenerate() {
+    try {
+        const r = await API.mfaRegenerateCodes(document.getElementById('mfaPw')?.value || '', document.getElementById('mfaCodeInput')?.value.trim());
+        mfaUi.codes = r.recovery_codes; mfaSetMsg('Yeni kurtarma kodları üretildi; eskileri geçersiz.', 'success');
+    } catch (err) { mfaSetMsg(err.message, 'danger'); }
+    renderMfaCard();
 }
 
 // ============================================

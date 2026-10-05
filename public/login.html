@@ -734,6 +734,27 @@
                 </div>
             </form>
 
+            <!-- İKİ ADIMLI DOĞRULAMA -->
+            <form class="auth-form" id="mfaForm" data-form="mfa" autocomplete="off">
+                <h2 class="login-welcome" id="mfaTitle">İki Adımlı Doğrulama</h2>
+                <div id="mfaSetupBox" style="display:none;flex-direction:column;gap:10px;">
+                    <p style="margin:0;color:var(--muted);font-size:13px;">Yönetici hesapları için iki adımlı doğrulama zorunludur. Bir doğrulayıcı uygulamada (Google Authenticator, Microsoft Authenticator, 1Password vb.) "anahtar gir" seçeneğiyle aşağıdaki anahtarı ekleyin:</p>
+                    <code id="mfaSecret" style="display:block;padding:10px;border-radius:8px;background:rgba(255,255,255,.06);word-break:break-all;letter-spacing:1px;text-align:center;user-select:all;"></code>
+                    <a id="mfaUri" href="#" style="font-size:12px;text-align:center;">Telefonda uygulamayı otomatik aç</a>
+                </div>
+                <p id="mfaHint" style="margin:0;color:var(--muted);font-size:13px;text-align:center;">Doğrulayıcı uygulamanızdaki 6 haneli kodu girin. Cihazınıza erişemiyorsanız kurtarma kodlarınızdan birini yazabilirsiniz.</p>
+                <div class="field compact">
+                    <input type="text" id="mfaCode" name="code" required inputmode="text" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="12" placeholder="123456" aria-label="Doğrulama kodu">
+                </div>
+                <button type="submit" class="btn-login-primary" id="mfaSubmit"><i class="fas fa-shield-halved"></i> Doğrula</button>
+                <div id="mfaRecoveryBox" style="display:none;flex-direction:column;gap:10px;" role="status">
+                    <p style="margin:0;font-size:13px;"><strong>Kurtarma kodlarınız.</strong> Cihazınızı kaybederseniz giriş için bu kodlar gerekir; her biri yalnızca bir kez çalışır. Güvenli bir yerde saklayın, bu ekran tekrar gösterilmeyecek.</p>
+                    <pre id="mfaRecoveryList" style="margin:0;padding:10px;border-radius:8px;background:rgba(255,255,255,.06);user-select:all;text-align:center;line-height:1.7;"></pre>
+                    <button type="button" class="btn-login-primary" id="mfaContinue"><i class="fas fa-check"></i> Kodları kaydettim, devam et</button>
+                </div>
+                <div class="auth-foot"><a href="/login.html">Giriş sayfasına dön</a></div>
+            </form>
+
             <!-- ŞİFRE SIFIRLAMA İSTEĞİ -->
             <form class="auth-form" id="forgotForm" data-form="forgot">
                 <h2 class="login-welcome">Şifrenizi Sıfırlayın</h2>
@@ -886,8 +907,8 @@
         </section>
     </div>
 
-    <script src="/api_v3.js?v=6.1-session"></script>
-    <script src="/login.js?v=1.0"></script>
+    <script src="/api_v3.js?v=6.2-mfa"></script>
+    <script src="/login.js?v=1.1"></script>
     <script src="/a11y.js?v=1.5"></script>
 </body>
 </html>

@@ -157,10 +157,23 @@ Kayıt (şifre veya Google) **geçerli bir davet koduyla** yapılır; marka kodd
 - [ ] `npm run lint:syntax`, `npm run lint:undef`, `npm test` (DB'li) ve `npm run e2e:auth` geçti mi?
 - [ ] Manuel test: yanlış şifre 5x → kilit → 15 dk bekleme; doğrulanmamış hesapla giriş → 403
 
+## 12a. İKİ ADIMLI DOĞRULAMA (TOTP) — CANLI
+
+**Karar:** isteğe bağlı; yönetici (`role=admin`) ve süper kullanıcı için zorunlu (üretimde varsayılan açık).
+
+- **Kod:** `src/lib/totp.js` (RFC 6238, SHA-1/6 hane/30 sn, ±1 adım, harici bağımlılık yok; RFC test vektörüyle doğrulanır), `src/lib/mfa.js` (kapı + ara token), `src/routes/mfa.js` (uç noktalar), `database/migrations/009_totp_2fa.sql`.
+- **Akış:** şifre doğru → 2FA etkinse `{mfa_required, mfa_token}` (oturum/çerez YOK) → `POST /api/auth/2fa/verify` {mfa_token, code} → oturum. Zorunlu ama kurulmamış yönetici: `mfa_setup_required` + `setup` token'ı → `/2fa/setup` + `/2fa/enable` (kurulum token'ıyla) → oturum yalnızca etkinleştirmeden sonra. Google girişi (mevcut ve yeni süper kullanıcı) aynı kapıdan geçer.
+- **Ara token** farklı anahtarla (`JWT_SECRET + ':mfa-step'`) ve `pur` (amaç) alanıyla imzalanır, 5 dk geçerlidir; oturum token'ı olarak ASLA kabul edilmez, `verify` token'ı ile kurulum yapılamaz.
+- **Saklama:** secret AES-256-GCM ile şifreli (`TOTP_ENC_KEY`, yoksa `JWT_SECRET`'tan türetilir; **anahtar değişirse kayıtlı secret'lar çözülemez** → kullanıcıların 2FA'sı sıfırlanmalı). Kurtarma kodları (10 adet, tek kullanımlık) yalnızca SHA-256 hash olarak.
+- **Saldırı korumaları:** aynı TOTP adımı ikinci kez kabul edilmez (`totp_last_step`, atomik); yanlış kod sayacı şifre kilidiyle ortak (5 hata → 15 dk); `LOGIN_LIMITER`; genel hata mesajı; tüm olaylar `auth_audit`'e (`mfa_*`).
+- **Kapatma/yenileme:** şifre + güncel kod ister; zorunluluk açıkken yönetici kapatamaz (403). Cihaz kaybı: süper kullanıcı `POST /api/admin/users/:id/2fa-reset` (kendi hesabı hariç); kullanıcı sonraki girişte yeniden kurar.
+- **Ortam:** `REQUIRE_ADMIN_2FA=0` zorunluluğu kapatır (acil geri alma), `=1` her ortamda açar; verilmezse yalnızca üretimde (`isProduction()`) açık. Testler `NODE_ENV=test` olduğundan etkilenmez.
+- **Bilinen sınır:** zorunluluk giriş anında uygulanır; zorunluluk açılmadan önce verilmiş (en çok 7 günlük) oturumlar sürer. QR kod yok; kullanıcı anahtarı elle girer ya da `otpauth://` bağlantısına dokunur.
+- **Ön yüz:** `login.html` `#mfaForm` (kod / kurulum / kurtarma kodları), `public/app_v3.js` ayarlar sayfasında "İki Adımlı Doğrulama" kartı. Doğrulama: `npm run e2e:mfa`, `tests/mfa.test.js`.
+
 ## 13. KAPSAM DIŞI
 
 - ~~Şifre sıfırlama~~ → **canlı** (bkz. şifre sıfırlama bölümü)
-- **2FA (TOTP)**: planlandı, henüz yok. Önerilen tasarım: isteğe bağlı + admin/superuser için zorunlu, kurtarma kodları, login'de ikinci adım. Karar ve ilerleme: `PROJE_DURUMU.md`
 - SSO/SAML kurumsal entegrasyonu (Enterprise+ talebine bağlı)
 - WebAuthn / passkey (uzun vade)
 - Marka claim için otomatik inceleme kuyruğu

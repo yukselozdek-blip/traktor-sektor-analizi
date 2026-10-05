@@ -44,7 +44,7 @@ const API = {
 
         const res = await this.fetchWithTimeout(`${this.baseURL}${path}`, opts);
         // Giriş/kayıt denemelerindeki 401 (yanlış şifre) oturum düşmesi değildir: hata mesajı gösterilsin.
-        if (res.status === 401 && !/^\/api\/auth\/(login|signup|google)/.test(path)) {
+        if (res.status === 401 && !/^\/api\/auth\/(login|signup|google|2fa\/(verify|enable|disable|recovery-codes))/.test(path)) {
             this.logout();
             return null;
         }
@@ -167,6 +167,14 @@ const API = {
         }
         return data;
     },
+
+    // İki adımlı doğrulama (TOTP)
+    mfaVerify(mfaToken, code) { return this.post('/api/auth/2fa/verify', { mfa_token: mfaToken, code }); },
+    mfaStatus() { return this.get('/api/auth/2fa/status'); },
+    mfaSetup(mfaToken) { return this.post('/api/auth/2fa/setup', mfaToken ? { mfa_token: mfaToken } : {}); },
+    mfaEnable(code, mfaToken) { return this.post('/api/auth/2fa/enable', mfaToken ? { mfa_token: mfaToken, code } : { code }); },
+    mfaDisable(password, code) { return this.post('/api/auth/2fa/disable', { password, code }); },
+    mfaRegenerateCodes(password, code) { return this.post('/api/auth/2fa/recovery-codes', { password, code }); },
 
     async me() { return this.get('/api/auth/me'); },
     async getBrandPortalDirectory() { return this.get('/api/brand-portals/directory'); },

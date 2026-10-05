@@ -198,6 +198,11 @@ module.exports = function registerSignupGoogle(app, ctx) {
                     await pool.query(`UPDATE users SET is_superuser = true, role = 'admin', email_verified = true WHERE id = $1`, [user.id]);
                     user.is_superuser = true; user.role = 'admin';
                 }
+                const challenge = require('../lib/mfa').mfaChallenge(user);
+                if (challenge) {
+                    await logAuthAudit(user.id, challenge.mfa_setup_required ? 'login_google_mfa_setup_required' : 'login_google_mfa_challenge', req);
+                    return res.json(challenge);
+                }
                 await logAuthAudit(user.id, 'login_google', req);
                 return res.json({ token: issueAuthToken(user), user: buildUserPayload(user), is_new: false });
             }
@@ -268,6 +273,8 @@ module.exports = function registerSignupGoogle(app, ctx) {
             }
 
             await logAuthAudit(newUser.id, 'signup_google', req, { brand_id: effectiveBrandId, invite_id: inviteId });
+            const newChallenge = require('../lib/mfa').mfaChallenge(newUser);
+            if (newChallenge) return res.status(201).json({ ...newChallenge, is_new: true });
             res.status(201).json({
                 token: issueAuthToken(newUser),
                 user: buildUserPayload(newUser),

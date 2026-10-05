@@ -189,7 +189,7 @@ app.use('/api/', limiter);
 {
     const { setSessionCookie } = require('./src/lib/session');
     require('./src/middleware/auth').setCsrfAllowedOrigins(CORS_ALLOWED_ORIGINS);
-    const SESSION_ISSUING = new Set(['/api/auth/login', '/api/auth/signup', '/api/auth/google']);
+    const SESSION_ISSUING = new Set(['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/2fa/verify', '/api/auth/2fa/enable']);
     app.use((req, res, next) => {
         if (req.method !== 'POST' || !SESSION_ISSUING.has(req.path)) return next();
         const origJson = res.json.bind(res);
@@ -4771,6 +4771,12 @@ app.post('/api/auth/login', LOGIN_LIMITER, async (req, res) => {
             user.is_superuser = true; user.role = 'admin';
         }
 
+        // İki adımlı doğrulama: etkinse kod istenir; yönetici/süper kullanıcıda (zorunluluk açıkken) kurulum zorunludur. Oturum henüz verilmez.
+        const challenge = require('./src/lib/mfa').mfaChallenge(user);
+        if (challenge) {
+            await logAuthAudit(user.id, challenge.mfa_setup_required ? 'login_mfa_setup_required' : 'login_mfa_challenge', req);
+            return res.json(challenge);
+        }
         await logAuthAudit(user.id, 'login_success', req);
         const token = issueAuthToken(user);
         res.json({ token, user: buildUserPayload(user) });
@@ -4801,6 +4807,7 @@ app.get('/api/auth/verify-email', async (req, res) => {
     } catch (err) { logRouteError(req, err, 'GET /api/auth/verify-email'); res.status(500).send('Hata'); }
 });
 
+require('./src/routes/mfa')(app, { pool, authMiddleware, adminOnly, LOGIN_LIMITER, logAuthAudit, issueAuthToken, buildUserPayload });
 require('./src/routes/invites')(app, { pool, authMiddleware, adminOnly, RESEND_LIMITER, logAuthAudit, escapeMailHtml });
 
 require('./src/routes/password-reset')(app, { pool, logAuthAudit, FORGOT_LIMITER, RESET_LIMITER });
