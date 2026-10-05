@@ -9,7 +9,7 @@ const { startServer, SKIP_DB, SKIP_REASON } = require('./helpers');
 const KEY = 'test-media-watch-key-' + 'x'.repeat(20);
 
 describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB && SKIP_REASON }, () => {
-    let s, bridge, realFetch, fakeBridge, fakeBridgeCalls = [], fakeBridgeBusy = false;
+    let s, bridge, realFetch, failIngest = false, fakeBridge, fakeBridgeCalls = [], fakeBridgeBusy = false;
     before(async () => {
         // Uygulamanın run-now yolunu sınamak için sahte köprü (gövdeyi kaydeder, meşgulse 409 döner)
         fakeBridge = http.createServer((req, res) => {
@@ -34,6 +34,7 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
         realFetch = global.fetch;
         // Yalnızca dış RSS adresleri sahtelenir; test sunucusuna giden istekler gerçek kalır.
         global.fetch = async (url, opts) => {
+            if (failIngest && String(url).includes('/api/media-watch/ingest')) return new Response(JSON.stringify({ error: 'Webhook yetkisiz' }), { status: 401 });
             if (String(url).startsWith(s.baseUrl)) return realFetch(url, opts);
             await new Promise(r => setTimeout(r, 120)); // taramanın 'sürüyor' durumunu gözlemlemek için
             return new Response(`<rss><channel><item><title>Kubota yeni traktörünü tanıttı</title><description>Lansman haberi</description>
@@ -114,6 +115,40 @@ describe('medya takip köprüsü → ingest → veritabanı', { skip: SKIP_DB &&
             assert.equal(st.last.ok, true, JSON.stringify(st.last));
             assert.ok(st.last.item_count >= 1);
             assert.ok(Number.isFinite(st.last.duration_ms));
+        } finally { await new Promise(r => srv.close(r)); }
+    });
+
+    it('kayıt reddedilirse (401) çalıştırma özetinde görünür: başarısız sayısı ve anahtar ipucu', async () => {
+        const srv = await new Promise(r => { const x = bridge.app.listen(0, '127.0.0.1', () => r(x)); });
+        const base = `http://127.0.0.1:${srv.address().port}`;
+        try {
+            failIngest = true;
+            const a = await realFetch(`${base}/api/media-watch/push-all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true, brand_name: 'Kubota' }) });
+            assert.equal(a.status, 202);
+            let st;
+            for (let i = 0; i < 100; i++) {
+                st = await (await realFetch(`${base}/api/media-watch/status`)).json();
+                if (!st.in_flight && st.last) break;
+                await new Promise(r => setTimeout(r, 200));
+            }
+            assert.ok(st.last.ingest_failed >= 1, JSON.stringify(st.last));
+            assert.equal(st.last.inserted_count, 0);
+            assert.ok(st.last.errors.some(e => e.pack === 'ingest' && /401/.test(e.error) && /MEDIA_WATCH_WEBHOOK_KEY/.test(e.error)), JSON.stringify(st.last.errors));
+        } finally { failIngest = false; await new Promise(r => srv.close(r)); }
+    });
+
+    it('başarılı çalıştırmada kaydedilen kayıt sayısı özete yansır', async () => {
+        const srv = await new Promise(r => { const x = bridge.app.listen(0, '127.0.0.1', () => r(x)); });
+        const base = `http://127.0.0.1:${srv.address().port}`;
+        try {
+            await realFetch(`${base}/api/media-watch/push-all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true, brand_name: 'Kubota' }) });
+            let st;
+            for (let i = 0; i < 100; i++) {
+                st = await (await realFetch(`${base}/api/media-watch/status`)).json();
+                if (!st.in_flight && st.last) break;
+                await new Promise(r => setTimeout(r, 200));
+            }
+            assert.ok(st.last.ingest_ok >= 1 && st.last.ingest_failed === 0, JSON.stringify(st.last));
         } finally { await new Promise(r => srv.close(r)); }
     });
 });

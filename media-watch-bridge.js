@@ -110,6 +110,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Çalıştırma durumu (yönetici panelinde görünür): sürüyor mu, son çalıştırma sonucu ve ilk hatalar.
 const runState = { in_flight: false, started_at: null, last: null };
 let runErrors = [];
+let ingestStats = { ok: 0, failed: 0, inserted: 0 };
 const noteError = (pack, where, err) => { if (runErrors.length < 200) runErrors.push({ pack, where: String(where).slice(0, 80), error: String((err && err.message) || err).slice(0, 160) }); };
 
 app.use(express.json({ limit: '4mb' }));
@@ -1011,6 +1012,8 @@ async function pushPayloadsDirectToApp(payloads = [], packCode = 'pack-1') {
         try {
             const ingestResult = await postJsonToApp('/api/media-watch/ingest', payload);
             const runId = ingestResult?.run_id || null;
+            ingestStats.ok++;
+            ingestStats.inserted += Number(ingestResult?.inserted_count || 0);
             const brandId = ingestResult?.brand_id || payload.brand_id;
             responses.push({
                 brand_id: brandId,
@@ -1026,6 +1029,9 @@ async function pushPayloadsDirectToApp(payloads = [], packCode = 'pack-1') {
                     .catch(err => console.warn(`Brief refresh skipped for brand ${brandId}: ${err.message}`));
             }
         } catch (err) {
+            ingestStats.failed++;
+            const hint = /HTTP 401/.test(err.message) ? ' — Webhook anahtarı reddedildi: MEDIA_WATCH_WEBHOOK_KEY değeri kontrol edilmeli' : '';
+            noteError('ingest', payload.brand_slug || payload.brand_name || payload.brand_id, err.message + hint);
             console.error(`Direct ingest failed for ${payload.brand_name || payload.brand_id}:`, err.message);
             responses.push({
                 brand_id: payload.brand_id,
@@ -1080,12 +1086,14 @@ async function runEnabledPacksAndPush(options = {}) {
     runState.in_flight = true;
     runState.started_at = new Date().toISOString();
     runErrors = [];
+    ingestStats = { ok: 0, failed: 0, inserted: 0 };
     const t0 = Date.now();
     try {
         const result = await runEnabledPacksAndPushInner(options);
         runState.last = {
             started_at: runState.started_at, finished_at: new Date().toISOString(), duration_ms: Date.now() - t0, ok: true,
             packs: result.packs, payload_count: result.payload_count, item_count: result.item_count,
+            ingest_ok: ingestStats.ok, ingest_failed: ingestStats.failed, inserted_count: ingestStats.inserted,
             error_count: runErrors.length, errors: runErrors.slice(0, 10)
         };
         return result;
