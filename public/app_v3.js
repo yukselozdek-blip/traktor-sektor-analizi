@@ -743,6 +743,7 @@ function getReportLoaders() {
         weather: loadWeatherPage,
         'media-watch': loadMediaWatchPage,
         'ai-insights': loadAIInsightsPage,
+        chatbot: loadChatbotPage,
         subscription: loadSubscriptionPage,
         tarmakbir: loadTarmakBirPage,
         settings: loadSettingsPage
@@ -784,6 +785,7 @@ function getPageLoaders() {
         weather: loadWeatherPage,
         'media-watch': loadMediaWatchPage,
         'ai-insights': loadAIInsightsPage,
+        chatbot: loadChatbotPage,
         subscription: loadSubscriptionPage,
         tarmakbir: loadTarmakBirPage,
         tarmakbir2: loadTarmakBirPage,
@@ -913,6 +915,7 @@ function navigateTo(page, opts = {}) {
         province: ['İl Analizi', 'Toprak, İklim ve Ekin Verileri'],
         weather: ['Hava & İklim', 'Hava Durumu ve 10 Yıllık İklim Analizi'],
         'ai-insights': ['AI Öngörüler', 'Yönetici savaş odası, rakip baskısı ve gelecek sinyalleri'],
+        chatbot: ['AI Asistan', 'Sektör hakkında doğal dilde soru sorun'],
         subscription: ['Abonelik', 'Plan ve Ödeme Yönetimi'],
         tarmakbir: ['TarmakBir', 'Model Yılı Bazlı Aylık Satış Analizi'],
         tarmakbir2: ['Bütün Model Yılları', 'Marka Bazlı Aylık Satış Raporu'],
@@ -951,7 +954,7 @@ function navigateTo(page, opts = {}) {
     }
 
     // Model yılı bilgi notu - analitik sayfalarda göster
-    const noNotePages = ['brand-hub', 'settings', 'subscription', 'media-watch', 'ai-insights', 'weather', 'province', 'models', 'model-intel', 'model-images-admin', 'hp-segment', 'tarmakbir', 'tarmakbir2'];
+    const noNotePages = ['brand-hub', 'settings', 'subscription', 'media-watch', 'ai-insights', 'chatbot', 'weather', 'province', 'models', 'model-intel', 'model-images-admin', 'hp-segment', 'tarmakbir', 'tarmakbir2'];
     const noteEl = document.getElementById('modelYearNote');
     if (noteEl) {
         if (noNotePages.includes(page)) {
@@ -996,7 +999,8 @@ function navigateTo(page, opts = {}) {
         'prov-top-brand': ['province_top_brand'],
         'model-region': ['model_region_analysis'],
         'weather': ['weather_data'],
-        'ai-insights': ['ai_insights', 'ai_insights_limited']
+        'ai-insights': ['ai_insights', 'ai_insights_limited'],
+        'chatbot': ['ai_insights', 'ai_insights_limited']
     };
     const requiredKeys = PAGE_FEATURE_GATES[page];
     if (requiredKeys && requiredKeys.length > 0) {
@@ -5205,6 +5209,7 @@ const PAGE_HERO_TITLES = {
     weather: 'İklim Komuta Merkezi',
     'media-watch': 'Marka Medya Radarı',
     'ai-insights': 'AI Öngörüler',
+    chatbot: 'AI Asistan',
     subscription: 'Abonelik',
     tarmakbir: 'TarmakBir Komuta Merkezi',
     settings: 'Hesap Ayarları'
@@ -11981,6 +11986,126 @@ async function mfaRegenerate() {
         mfaUi.codes = r.recovery_codes; mfaSetMsg('Yeni kurtarma kodları üretildi; eskileri geçersiz.', 'success');
     } catch (err) { mfaSetMsg(err.message, 'danger'); }
     renderMfaCard();
+}
+
+
+// ============================================
+// AI ASİSTAN (sohbet) — /api/chatbot/*
+// ============================================
+// Konuşma geçmişi SUNUCUDA kullanıcıya özel tutulur (istemci kimlik göndermez). Olaylar addEventListener ile bağlanır (CSP uyumlu).
+const CHATBOT_SUGGESTIONS = [
+    '2025 yılında en çok satan 5 marka hangileri?',
+    'New Holland ile Massey Ferguson 2024 satışlarını karşılaştır',
+    "Konya'da 70-79 HP segmentinde lider marka",
+    'Bahçe traktörlerinde en çok satan modeller',
+    'TÜMOSAN markasının 2024 yılı cirosu',
+    "İstanbul'da hangi marka önde?"
+];
+const chatbotState = { messages: [], busy: false };
+
+function chatbotFormatAnswer(text) {
+    // Önce kaçışla, sonra yalnızca *kalın* ve satır sonlarını biçimlendir.
+    return escapeHtml(text || '').replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+}
+
+function chatbotMessageHtml(m) {
+    const user = m.role === 'user';
+    const body = user ? escapeHtml(m.text || '').replace(/\n/g, '<br>') : chatbotFormatAnswer(m.text);
+    const meta = !user && m.elapsed_ms ? `<small class="chatbot-msg__meta">${Number(m.elapsed_ms) || 0} ms</small>` : '';
+    return `<div class="chatbot-msg chatbot-msg--${user ? 'user' : 'bot'}${m.error ? ' is-error' : ''}">
+        <div class="chatbot-msg__avatar" aria-hidden="true"><i class="fas ${user ? 'fa-user' : 'fa-robot'}"></i></div>
+        <div class="chatbot-msg__body"><div class="chatbot-msg__text">${body}</div>${meta}</div>
+    </div>`;
+}
+
+function chatbotRender() {
+    const stream = document.getElementById('chatbotStream');
+    if (!stream) return;
+    if (!chatbotState.messages.length) {
+        stream.innerHTML = `<div class="chatbot-empty">
+            <div class="chatbot-empty__icon" aria-hidden="true"><i class="fas fa-comments"></i></div>
+            <h3>Sektör hakkında sorun</h3>
+            <p>Doğal dilde sorabilirsiniz: satış, ciro, karşılaştırma, segment, marka, il ve model.</p>
+            <div class="chatbot-empty__suggestions">${CHATBOT_SUGGESTIONS.map(q => `<button type="button" class="chatbot-suggestion-chip" data-chatbot-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div>
+        </div>`;
+        return;
+    }
+    stream.innerHTML = chatbotState.messages.map(chatbotMessageHtml).join('')
+        + (chatbotState.busy ? '<div class="chatbot-typing" role="status"><span></span><span></span><span></span><em class="sr-only">Yanıt hazırlanıyor</em></div>' : '');
+    requestAnimationFrame(() => { stream.scrollTop = stream.scrollHeight; });
+}
+
+async function chatbotAsk(question) {
+    const q = String(question || '').trim();
+    if (!q || chatbotState.busy) return;
+    const input = document.getElementById('chatbotInput');
+    const send = document.getElementById('chatbotSend');
+    if (input) input.value = '';
+    chatbotState.messages.push({ role: 'user', text: q });
+    chatbotState.busy = true;
+    if (send) send.disabled = true;
+    chatbotRender();
+    try {
+        const r = await API.request('POST', '/api/chatbot/ask', { question: q });
+        if (r && r.answer) chatbotState.messages.push({ role: 'bot', text: r.answer, elapsed_ms: r.elapsed_ms, error: r.ok === false });
+        else chatbotState.messages.push({ role: 'bot', text: r?.error || 'Yanıt alınamadı.', error: true });
+    } catch (err) {
+        let msg = err.message || 'Bağlantı hatası';
+        if (err.status === 429) msg = 'Çok hızlı soruyorsunuz veya aylık AI kotanız doldu. Biraz sonra tekrar deneyin.';
+        if (err.status === 402) msg = 'Bu özellik mevcut paketinizde yok veya aboneliğiniz aktif değil.';
+        chatbotState.messages.push({ role: 'bot', text: msg, error: true });
+    } finally {
+        chatbotState.busy = false;
+        if (send) send.disabled = false;
+        chatbotRender();
+        if (input) input.focus();
+    }
+}
+
+async function chatbotClear() {
+    if (!confirm('Sohbet geçmişi temizlensin mi?')) return;
+    try { await API.request('DELETE', '/api/chatbot/history'); } catch (_) { /* sessiz */ }
+    chatbotState.messages = [];
+    chatbotRender();
+}
+
+async function loadChatbotPage() {
+    const content = document.getElementById('pageContent');
+    if (!content) return;
+    content.innerHTML = `
+        <div class="chatbot-page">
+            <div class="chatbot-header">
+                <div class="chatbot-header__title">
+                    <i class="fas fa-robot" aria-hidden="true"></i>
+                    <div><h2>AI Asistan</h2><p>Türkiye traktör sektörü hakkında doğal dilde soru sorun</p></div>
+                </div>
+                <button type="button" class="chatbot-clear-btn" id="chatbotClear" aria-label="Sohbeti temizle"><i class="fas fa-trash-can" aria-hidden="true"></i><span>Temizle</span></button>
+            </div>
+            <div class="chatbot-stream" id="chatbotStream" aria-live="polite"></div>
+            <form class="chatbot-input-bar" id="chatbotForm">
+                <label for="chatbotInput" class="sr-only">Sorunuz</label>
+                <input id="chatbotInput" type="text" placeholder="Sorunuzu yazın… (örn: 2024'te en çok satan marka)" maxlength="500" autocomplete="off">
+                <button type="submit" id="chatbotSend" class="chatbot-send-btn" aria-label="Gönder"><i class="fas fa-paper-plane" aria-hidden="true"></i></button>
+            </form>
+        </div>`;
+    document.getElementById('chatbotForm').addEventListener('submit', e => { e.preventDefault(); chatbotAsk(document.getElementById('chatbotInput').value); });
+    document.getElementById('chatbotClear').addEventListener('click', chatbotClear);
+    document.getElementById('chatbotStream').addEventListener('click', e => {
+        const chip = e.target.closest('[data-chatbot-q]');
+        if (chip) chatbotAsk(chip.getAttribute('data-chatbot-q'));
+    });
+    // Sunucudaki geçmişi yükle (kullanıcıya özel)
+    chatbotState.messages = [];
+    try {
+        const h = await API.request('GET', `/api/chatbot/history?_=${Date.now()}`); // istemci GET önbelleğini atla: geçmiş her açılışta tazedir
+        (h?.history || []).forEach(x => {
+            chatbotState.messages.push({ role: 'user', text: x.q });
+            chatbotState.messages.push({ role: 'bot', text: x.a });
+        });
+    } catch (_) { /* geçmiş yoksa boş başlar */ }
+    chatbotRender();
+    const input = document.getElementById('chatbotInput');
+    if (input) input.focus();
 }
 
 // ============================================

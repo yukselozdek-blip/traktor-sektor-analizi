@@ -6960,6 +6960,7 @@ function buildConversationContext(history) {
 }
 
 require('./src/routes/ai-analyze')(app, { authMiddleware, requireFeature, requireAiQuota, recordAiUsage, MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL, errMsg });
+require('./src/routes/chatbot')(app, { authMiddleware, requireFeature, requireAiQuota, recordAiUsage, resolveAssistantQuestion, normalizeSearchText });
 
 require('./src/routes/seed-admin')(app, { pool, authMiddleware, adminOnly, errMsg });
 

@@ -27,6 +27,51 @@ module.exports = function registerPublic(app, ctx) {
         }
     });
 
+    // Hazırlık kontrolü (yük dengeleyici/izleme için): yalnızca durum, ayrıntı yok. Sonuç 2 sn önbelleklenir,
+    // sık yoklamada veritabanı gereksiz yere yorulmaz. Kimlik doğrulaması istemez, sızıntı riski olmasın diye bilgi vermez.
+    let readyCache = { at: 0, ok: true };
+    app.get('/health/ready', async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        if (Date.now() - readyCache.at > 2000) {
+            try {
+                await Promise.race([pool.query('SELECT 1'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 2000))]);
+                readyCache = { at: Date.now(), ok: true };
+            } catch (_) { readyCache = { at: Date.now(), ok: false }; }
+        }
+        res.status(readyCache.ok ? 200 : 503).json({ status: readyCache.ok ? 'ok' : 'fail' });
+    });
+
+    // Ayrıntılı sağlık (yalnızca yönetici): veritabanı gecikmesi, havuz, bellek, olay döngüsü gecikmesi, çalışma süresi.
+    // Ayrıntılar saldırgana yol gösterebileceğinden herkese açık DEĞİLDİR.
+    const SERVICE_STARTED_AT = Date.now();
+    app.get('/health/deep', authMiddleware, adminOnly, async (req, res) => {
+        const start = Date.now();
+        const checks = {};
+        let overall = 'ok';
+        try {
+            const t = Date.now();
+            await Promise.race([pool.query('SELECT 1'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))]);
+            checks.database = { status: 'ok', latency_ms: Date.now() - t, pool_total: pool.totalCount, pool_idle: pool.idleCount, pool_waiting: pool.waitingCount };
+        } catch (e) {
+            checks.database = { status: 'fail', error: String(e.message || e).slice(0, 120) };
+            overall = 'fail';
+        }
+        const mem = process.memoryUsage();
+        checks.memory = { rss_mb: Math.round(mem.rss / 1048576), heap_used_mb: Math.round(mem.heapUsed / 1048576), heap_total_mb: Math.round(mem.heapTotal / 1048576) };
+        const lagStart = process.hrtime.bigint();
+        await new Promise(r => setImmediate(r));
+        checks.event_loop_lag_ms = Math.round(Number(process.hrtime.bigint() - lagStart) / 1e6);
+        res.status(overall === 'ok' ? 200 : 503).json({
+            status: overall,
+            service: 'traktor-sektor-analizi',
+            uptime_seconds: Math.floor((Date.now() - SERVICE_STARTED_AT) / 1000),
+            node_version: process.version,
+            checks,
+            total_ms: Date.now() - start,
+            timestamp: new Date().toISOString()
+        });
+    });
+
     app.get('/privacy-policy', (req, res) => {
         res.type('html').send(`<!doctype html>
 <html lang="tr">

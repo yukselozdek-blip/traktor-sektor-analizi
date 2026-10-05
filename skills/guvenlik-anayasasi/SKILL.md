@@ -296,3 +296,11 @@ DB gerektiren testler `TEST_DATABASE_URL` yoksa `SKIP` olur; **güvenlik değiş
 - [ ] Yeni bağımlılık `npm audit` temiz mi; xlsx kuralı çiğnenmedi mi?
 - [ ] Davranışı koruyan regresyon testi yazıldı mı (§14'teki uygun dosyaya)? Rota eklendiyse `UPDATE_SNAPSHOT=1` ile anlık görüntü bilinçli güncellendi mi (yalnızca koordinatör, bkz. kalite anayasası)?
 - [ ] `npm test` (DB'li), `npm run lint:syntax`, `npm run lint:undef` temiz mi; ön yüz değiştiyse `npm run e2e:xss` ve `npm run e2e:auth` çalıştırıldı mı?
+
+
+## Sohbet asistanı (`/api/chatbot/*`) güvenlik kuralları
+- Kimlik ve paket: `authMiddleware` + `requireFeature('ai_insights','ai_insights_limited')`; veri soruları `requireAiQuota` ile kotalıdır, **yardım/tanıtım yanıtları kotadan düşmez**; başarılı veri sorgusunda `recordAiUsage` ile kalıcı düşer, başarısızlıkta rezervasyon iade edilir.
+- Konuşma kimliği (`web:<userId>`) **sunucuda** türetilir; istemcinin `session_id`'si asla kabul edilmez (başkasının geçmişini okuma/silme yok). Geçmiş bellekte, kullanıcı başına en çok 10 kayıt, 30 dk TTL, en çok 5000 oturum.
+- Girdi: yalnızca metin, kontrol karakterleri atılır, en çok 500 karakter; kullanıcı başına dakikada 20 istek.
+- Çıktı: `sql` alanı yalnızca yöneticiye döner (şema bilgisi sızmaz). Ön yüz yanıtı önce kaçışlar, sonra yalnızca `*kalın*` ve satır sonu biçimler.
+- Ön yüzde GET önbelleği atlanır (`?_=<zaman>`): geçmiş her açılışta tazedir.
