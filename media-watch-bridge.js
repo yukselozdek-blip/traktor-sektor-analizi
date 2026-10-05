@@ -107,6 +107,11 @@ const FETCH_DELAY_MS = Math.max(0, Number(process.env.MEDIA_WATCH_BRIDGE_DELAY_M
 const MAX_RESPONSE_BYTES = 3 * 1024 * 1024;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Çalıştırma durumu (yönetici panelinde görünür): sürüyor mu, son çalıştırma sonucu ve ilk hatalar.
+const runState = { in_flight: false, started_at: null, last: null };
+let runErrors = [];
+const noteError = (pack, where, err) => { if (runErrors.length < 200) runErrors.push({ pack, where: String(where).slice(0, 80), error: String((err && err.message) || err).slice(0, 160) }); };
+
 app.use(express.json({ limit: '4mb' }));
 
 function setCorsHeaders(req, res) {
@@ -652,6 +657,7 @@ async function collectPackPayloads(packCode = 'pack-1', options = {}) {
 
                 collected.push(...parsed);
             } catch (err) {
+                noteError(packCode, `${brand.slug}/${family.family_code}`, err);
                 const familyMeta = normalizeFamilyMeta(family.family_code, '', '');
                 collected.push({
                     brand_id: brand.id,
@@ -802,7 +808,8 @@ async function collectFromRegistrySources(packCode, brand, registry, options = {
                 }));
             items.push(...matched);
         } catch (err) {
-            // Sessiz geç — bir kaynak çökerse diğerleri çalışsın
+            // Bir kaynak çökerse diğerleri çalışsın; hata çalıştırma özetine yazılır
+            noteError(packCode, source.code, err);
             console.warn(`[${packCode}] ${source.code} okunamadı: ${err.message}`);
         }
     }
@@ -906,6 +913,7 @@ async function collectPack6Payloads(options = {}) {
                     raw_payload: { ...it.raw_payload, bridge_source: 'oem-press-google-news' }
                 })));
             } catch (err) {
+                noteError('pack-6', `${brand.slug}/${family.family_code}`, err);
                 console.warn(`[pack-6] ${brand.slug}/${family.family_code} hatası: ${err.message}`);
             }
         }
@@ -1068,6 +1076,31 @@ async function runPackAndPush(packCode = 'pack-1', options = {}) {
 }
 
 async function runEnabledPacksAndPush(options = {}) {
+    if (runState.in_flight) throw Object.assign(new Error('Tarama zaten sürüyor'), { code: 'IN_FLIGHT' });
+    runState.in_flight = true;
+    runState.started_at = new Date().toISOString();
+    runErrors = [];
+    const t0 = Date.now();
+    try {
+        const result = await runEnabledPacksAndPushInner(options);
+        runState.last = {
+            started_at: runState.started_at, finished_at: new Date().toISOString(), duration_ms: Date.now() - t0, ok: true,
+            packs: result.packs, payload_count: result.payload_count, item_count: result.item_count,
+            error_count: runErrors.length, errors: runErrors.slice(0, 10)
+        };
+        return result;
+    } catch (err) {
+        runState.last = {
+            started_at: runState.started_at, finished_at: new Date().toISOString(), duration_ms: Date.now() - t0, ok: false,
+            error: String(err.message || err).slice(0, 200), error_count: runErrors.length, errors: runErrors.slice(0, 10)
+        };
+        throw err;
+    } finally {
+        runState.in_flight = false;
+    }
+}
+
+async function runEnabledPacksAndPushInner(options = {}) {
     const packs = BRIDGE_PACKS.length ? BRIDGE_PACKS : ['pack-1'];
     const results = [];
 
@@ -1083,6 +1116,20 @@ async function runEnabledPacksAndPush(options = {}) {
         results
     };
 }
+
+// Uzun süren taramayı arka planda başlatır (istemci beklemez): 202 {started:true}; zaten sürüyorsa 409.
+function startInBackground(res, options) {
+    if (runState.in_flight) return res.status(409).json({ error: 'Tarama zaten sürüyor', started_at: runState.started_at });
+    runEnabledPacksAndPush(options)
+        .then(r => console.log(`Media watch bridge tarama tamamlandi. Payload: ${r.payload_count}, kayit: ${r.item_count}, hata: ${runErrors.length}`))
+        .catch(err => console.error('Media watch bridge tarama hatasi:', err.message));
+    return res.status(202).json({ started: true, started_at: runState.started_at });
+}
+const wantsAsync = req => req.body?.async === true || req.query?.async === '1';
+
+app.get('/api/media-watch/status', (req, res) => {
+    res.json({ in_flight: runState.in_flight, started_at: runState.started_at, last: runState.last, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN, packs: BRIDGE_PACKS });
+});
 
 app.get('/health', async (req, res) => {
     res.json({
@@ -1233,12 +1280,14 @@ app.post('/api/media-watch/push-pack-3', async (req, res) => {
 
 app.post('/api/media-watch/push-all', async (req, res) => {
     try {
+        if (wantsAsync(req)) return startInBackground(res, { ...req.query, ...req.body });
         const result = await runEnabledPacksAndPush({
             ...req.query,
             ...req.body
         });
         res.json(result);
     } catch (err) {
+        if (err.code === 'IN_FLIGHT') return res.status(409).json({ error: err.message });
         console.error('Media watch bridge push-all error:', err);
         res.status(500).json({ error: err.message || 'Bridge push hatasi' });
     }

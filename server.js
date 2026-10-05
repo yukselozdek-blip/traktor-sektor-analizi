@@ -6365,6 +6365,7 @@ app.post('/api/insights', insightsWriteAuth, async (req, res) => {
 });
 
 require('./src/routes/media-watch')(app, {
+    adminOnly,
     pool, authMiddleware, requireFeature, requireAiQuota, recordAiUsage, errMsg,
     resolveMediaWatchScopedBrandId, resolveMediaWatchBrandId, buildMediaWatchOverview,
     isMediaWatchWebhookAuthorized, upsertMediaWatchRun, upsertMediaWatchItems,

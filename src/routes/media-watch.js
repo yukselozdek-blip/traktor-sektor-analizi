@@ -4,7 +4,7 @@ const { logRouteError } = require('../lib/log-error');
 // moved verbatim from server.js. Registration order is preserved by the caller.
 module.exports = function registerMediaWatch(app, ctx) {
     const {
-        pool, authMiddleware, requireFeature, requireAiQuota, recordAiUsage, errMsg,
+        pool, authMiddleware, adminOnly, requireFeature, requireAiQuota, recordAiUsage, errMsg,
         resolveMediaWatchScopedBrandId, resolveMediaWatchBrandId, buildMediaWatchOverview,
         isMediaWatchWebhookAuthorized, upsertMediaWatchRun, upsertMediaWatchItems,
         syncMediaWatchAlerts, generateMediaWatchBriefRecord
@@ -336,22 +336,33 @@ module.exports = function registerMediaWatch(app, ctx) {
             const { pack } = req.body || {};
             const brand_id = resolveMediaWatchScopedBrandId(req, (req.body || {}).brand_id);
             const packCode = ['pack-1','pack-2','pack-3','pack-4','pack-5','pack-6'].includes(pack) ? pack : null;
+            // Tarama dakikalar sürebilir: köprüye arka planda başlatma isteği gönderilir (async), yanıt hemen döner.
+            // Tek paket istenirse yalnızca o paket çalışır (köprü push-pack-N uç noktaları senkron kalır).
             const url = packCode
                 ? `${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/push-${packCode}`
                 : `${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/push-all`;
             const r = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ brand_id: brand_id || null }),
-                signal: AbortSignal.timeout(60000)
+                body: JSON.stringify({ brand_id: brand_id || null, async: !packCode }),
+                signal: AbortSignal.timeout(packCode ? 60000 : 10000)
             });
             const json = await r.json().catch(() => ({}));
             if (!r.ok) return res.status(r.status).json(json);
-            res.json(json);
+            res.status(r.status === 202 ? 202 : 200).json(json);
         } catch (err) {
             console.error('media-watch run-now error', err);
             res.status(500).json({ error: errMsg(err) || 'Bridge çağrı hatası' });
         }
+    });
+
+    // Tarama durumu (yalnızca yönetici): köprü çalışıyor mu, son çalıştırma sonucu ve ilk hatalar.
+    app.get('/api/admin/media-watch/bridge-status', authMiddleware, adminOnly, async (req, res) => {
+        try {
+            const r = await fetch(`${MEDIA_WATCH_BRIDGE_URL}/api/media-watch/status`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+            if (!r || !r.ok) return res.json({ reachable: false });
+            res.json({ reachable: true, ...(await r.json()) });
+        } catch (err) { logRouteError(req, err, 'GET /api/admin/media-watch/bridge-status'); res.status(500).json({ error: 'Sunucu hatası' }); }
     });
 
     // AI çeviri (Türkçe olmayan haberleri TR'ye çevirip özet üret)
