@@ -12237,8 +12237,9 @@ function govMwSelfTestHtml(t) {
         ['Türkiye sektör RSS (AA Tarım)', mark(t.sector_rss?.ok), net(t.sector_rss)],
         ['Uluslararası RSS (AgFunder)', mark(t.international_rss?.ok), net(t.international_rss)],
         ['Uygulamaya kayıt (webhook anahtarı)', mark(t.ingest?.ok), t.ingest?.ok ? 'Kabul edildi' : escapeHtml(t.ingest?.error || '')],
+        ['RSS kaynak sağlığı', mark(t.registry && !t.registry.error && t.registry.ok >= (t.registry.total * 0.7)), t.registry?.error ? t.registry.error : `${t.registry?.ok ?? 0} / ${t.registry?.total ?? 0} kaynak çalışıyor` + ((t.registry?.failed || []).length ? ' · hatalı: ' + t.registry.failed.map(f => f.code + ' (' + f.error + ')').join(', ') : '')],
         ['Aktif marka sayısı', mark(t.brands?.ok), t.brands?.ok ? String(t.brands.count) : escapeHtml(t.brands?.error || 'Marka bulunamadı')],
-        ['Ayarlar', mark(t.config?.key_set), `anahtar ${t.config?.key_set ? 'tanımlı (' + t.config.key_length + ' karakter)' : 'TANIMSIZ'} · ${t.config?.direct_mode ? 'doğrudan mod' : 'n8n modu'}`]
+        ['Ayarlar', mark(t.config?.key_set), `anahtar ${t.config?.key_set ? 'tanımlı (' + t.config.key_length + ' karakter' + (t.config.key_non_ascii ? ', Türkçe/özel karakter içeriyor' : '') + ')' : 'TANIMSIZ'} · ${t.config?.direct_mode ? 'doğrudan mod' : 'n8n modu'}`]
     ];
     const verdict = [];
     if (t.ingest && !t.ingest.ok) verdict.push(t.ingest.key_rejected ? 'Uygulama kayıtları reddediyor: MEDIA_WATCH_WEBHOOK_KEY değeri uygulama ve köprüde farklı görünüyor.' : 'Haberler uygulamaya yazılamıyor (yukarıdaki hataya bakın).');

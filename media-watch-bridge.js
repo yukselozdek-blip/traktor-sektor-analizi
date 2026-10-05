@@ -1045,7 +1045,8 @@ async function postJsonToApp(path = '', body = {}) {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'x-media-watch-key': MEDIA_WATCH_KEY
+            // Başlıklar yalnızca ASCII taşır: anahtar Türkçe/Unicode karakter içerebileceğinden SHA-256 özeti gönderilir.
+            'x-media-watch-key-sha256': require('crypto').createHash('sha256').update(MEDIA_WATCH_KEY, 'utf8').digest('hex')
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(Math.max(FETCH_TIMEOUT_MS, 25000))
@@ -1215,6 +1216,22 @@ async function timedFetch(url, ms = 8000) {
         return { ok: false, ms: Date.now() - t, error: (e.name === 'TimeoutError' ? 'zaman aşımı' : (code || e.message)).slice(0, 100) };
     }
 }
+async function registryHealth(ms = 8000) {
+    const all = [...INTERNATIONAL_SOURCE_REGISTRY, ...SECTOR_PUBLICATIONS_REGISTRY];
+    const failed = [];
+    let ok = 0;
+    const queue = [...all];
+    await Promise.all(Array.from({ length: 6 }, async () => {
+        while (queue.length) {
+            const src = queue.shift();
+            const r = await timedFetch(src.rss, ms);
+            if (r.ok && r.items > 0) ok++;
+            else failed.push({ code: src.code, error: r.ok ? 'haber bulunamadı' : (r.error || ('HTTP ' + r.status)) });
+        }
+    }));
+    return { total: all.length, ok, failed };
+}
+
 async function selfTest() {
     const [google, sector, intl] = await Promise.all([
         timedFetch(buildGoogleNewsUrl('"John Deere" traktor')),
@@ -1226,13 +1243,14 @@ async function selfTest() {
     catch (e) { out.ingest = { ok: false, error: String(e.message).slice(0, 160), key_rejected: /HTTP 401/.test(e.message) }; }
     try { const b = await loadBrands({}); out.brands = { ok: b.length > 0, count: b.length }; }
     catch (e) { out.brands = { ok: false, error: String(e.message).slice(0, 160) }; }
-    out.config = { key_set: !!MEDIA_WATCH_KEY, key_length: MEDIA_WATCH_KEY.length, direct_mode: DIRECT_MODE, packs: BRIDGE_PACKS, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN };
+    try { out.registry = await registryHealth(); } catch (e) { out.registry = { error: String(e.message).slice(0, 120) }; }
+    out.config = { key_set: !!MEDIA_WATCH_KEY, key_length: MEDIA_WATCH_KEY.length, key_non_ascii: /[^\x20-\x7e]/.test(MEDIA_WATCH_KEY), direct_mode: DIRECT_MODE, packs: BRIDGE_PACKS, schedule: BRIDGE_SCHEDULE, autorun: BRIDGE_AUTORUN };
     return out;
 }
 let selfTestCache = { at: 0, value: null };
 app.get('/api/media-watch/self-test', async (req, res) => {
     try {
-        if (Date.now() - selfTestCache.at > 10000) selfTestCache = { at: Date.now(), value: await selfTest() };
+        if (Date.now() - selfTestCache.at > 30000) selfTestCache = { at: Date.now(), value: await selfTest() };
         res.json(selfTestCache.value);
     } catch (err) { res.status(500).json({ error: String(err.message || err).slice(0, 200) }); }
 });
