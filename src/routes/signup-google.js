@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const { PASSWORD_POLICY, PASSWORD_POLICY_MESSAGE } = require('../config');
 
 const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
+const { SIGNUP_GLOBAL_LIMITER } = require('../middleware/limiters');
 const { INVITE_ERROR, consumeInviteCode } = require('../lib/invites');
 const { newVerifyToken, hashVerifyToken, verifyExpiry, sendVerificationEmail } = require('../lib/verify-email');
 
@@ -17,7 +18,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
     // ============================================
     // SIGNUP — güçlü şifre + zorunlu marka + firma alanları
     // ============================================
-    app.post('/api/auth/signup', SIGNUP_LIMITER, async (req, res) => {
+    app.post('/api/auth/signup', SIGNUP_GLOBAL_LIMITER, SIGNUP_LIMITER, async (req, res) => {
         try {
             const {
                 email: rawEmail, password, full_name, brand_id, plan_slug,

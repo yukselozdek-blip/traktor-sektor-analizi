@@ -73,3 +73,21 @@ describe('login zamanlama eşitleme (statik)', () => {
         assert.doesNotMatch(login, /423/);
     });
 });
+
+describe('kayıt: IP\'den bağımsız genel sınır (X-Forwarded-For sahteciliğine karşı)', { skip: SKIP_DB && SKIP_REASON }, () => {
+    let s;
+    before(async () => { s = await startServer({ env: { SIGNUP_GLOBAL_MAX: '4' } }); });
+    after(async () => { if (s) await s.stop(); });
+    it('her istekte farklı sahte IP gönderilse bile genel sınır 429 verir', async () => {
+        const codes = [];
+        for (let i = 0; i < 7; i++) {
+            const r = await s.api('POST', '/api/auth/signup', {
+                headers: { 'X-Forwarded-For': `198.51.100.${i + 1}` },
+                body: { email: `x${i}@test.local`, password: 'x', full_name: 'A', company_name: 'F', job_title: 'M' }
+            });
+            codes.push(r.status);
+        }
+        assert.ok(codes.slice(0, 4).every(c => c !== 429), 'ilk 4 istek sınıra takılmamalı: ' + codes);
+        assert.ok(codes.slice(4).every(c => c === 429), 'sonrakiler 429 olmalı: ' + codes);
+    });
+});

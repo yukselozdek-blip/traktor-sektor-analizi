@@ -68,3 +68,4 @@ Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: eskiden yeniye
 - Harita sayfalarından ayrılırken oluşan Leaflet `invalidateSize` yarışı giderildi (zamanlayıcılar haritanın hâlâ sayfada olduğunu kontrol eder).
 - İki adımlı doğrulama (TOTP): isteğe bağlı, yönetici/süper kullanıcı için zorunlu (üretimde); kurtarma kodları, tekrar kullanım engeli, süper kullanıcı sıfırlaması; ayrıntı `skills/kimlik-dogrulama-anayasasi` §12a. Yeni ortam değişkenleri: `REQUIRE_ADMIN_2FA`, `TOTP_ENC_KEY`.
 - Davet kodu marka uyuşmazlığı artık genel hata verir (kod geçerliliği sızdırılmaz); Google ile kayıt akışı için otomatik test (`GOOGLE_TOKENINFO_URL`, yalnızca üretim dışı).
+- Kayıt için IP'den bağımsız genel sınır (`SIGNUP_GLOBAL_MAX`, varsayılan 200/saat): X-Forwarded-For sahtelenirse bile toplu hesap açma/e-posta taraması sınırlanır. Sızma testi (yetki, enjeksiyon, kimlik/2FA) bulguları: bkz. bu günkü rapor.
