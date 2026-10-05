@@ -20,7 +20,8 @@
     "e2e:click": "node e2e/click-through.js",
     "e2e:refdata": "node e2e/ref-data-resilience.js",
     "e2e:mfa": "node e2e/mfa-flow.js",
-    "e2e:chatbot": "node e2e/chatbot.js"
+    "e2e:chatbot": "node e2e/chatbot.js",
+    "e2e:governance": "node e2e/governance.js"
   },
   "dependencies": {
     "axios": "^1.6.7",

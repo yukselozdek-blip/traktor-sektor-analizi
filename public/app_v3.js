@@ -744,6 +744,7 @@ function getReportLoaders() {
         'media-watch': loadMediaWatchPage,
         'ai-insights': loadAIInsightsPage,
         chatbot: loadChatbotPage,
+        governance: loadGovernancePage,
         subscription: loadSubscriptionPage,
         tarmakbir: loadTarmakBirPage,
         settings: loadSettingsPage
@@ -786,6 +787,7 @@ function getPageLoaders() {
         'media-watch': loadMediaWatchPage,
         'ai-insights': loadAIInsightsPage,
         chatbot: loadChatbotPage,
+        governance: loadGovernancePage,
         subscription: loadSubscriptionPage,
         tarmakbir: loadTarmakBirPage,
         tarmakbir2: loadTarmakBirPage,
@@ -805,7 +807,7 @@ function getPageLoaders() {
 // ============================================
 // HASH ROUTING  (#/<page>[?params])
 // ============================================
-const ADMIN_ONLY_PAGES = ['model-images-admin'];
+const ADMIN_ONLY_PAGES = ['model-images-admin', 'governance'];
 
 function parseRouteHash(hash) {
     const raw = String(hash || '').replace(/^#\/?/, '');
@@ -916,6 +918,7 @@ function navigateTo(page, opts = {}) {
         weather: ['Hava & İklim', 'Hava Durumu ve 10 Yıllık İklim Analizi'],
         'ai-insights': ['AI Öngörüler', 'Yönetici savaş odası, rakip baskısı ve gelecek sinyalleri'],
         chatbot: ['AI Asistan', 'Sektör hakkında doğal dilde soru sorun'],
+        governance: ['Yönetişim', 'Güvenlik, kullanım ve sistem sağlığı özeti'],
         subscription: ['Abonelik', 'Plan ve Ödeme Yönetimi'],
         tarmakbir: ['TarmakBir', 'Model Yılı Bazlı Aylık Satış Analizi'],
         tarmakbir2: ['Bütün Model Yılları', 'Marka Bazlı Aylık Satış Raporu'],
@@ -954,7 +957,7 @@ function navigateTo(page, opts = {}) {
     }
 
     // Model yılı bilgi notu - analitik sayfalarda göster
-    const noNotePages = ['brand-hub', 'settings', 'subscription', 'media-watch', 'ai-insights', 'chatbot', 'weather', 'province', 'models', 'model-intel', 'model-images-admin', 'hp-segment', 'tarmakbir', 'tarmakbir2'];
+    const noNotePages = ['brand-hub', 'settings', 'subscription', 'media-watch', 'ai-insights', 'chatbot', 'governance', 'weather', 'province', 'models', 'model-intel', 'model-images-admin', 'hp-segment', 'tarmakbir', 'tarmakbir2'];
     const noteEl = document.getElementById('modelYearNote');
     if (noteEl) {
         if (noNotePages.includes(page)) {
@@ -5210,6 +5213,7 @@ const PAGE_HERO_TITLES = {
     'media-watch': 'Marka Medya Radarı',
     'ai-insights': 'AI Öngörüler',
     chatbot: 'AI Asistan',
+    governance: 'Yönetişim',
     subscription: 'Abonelik',
     tarmakbir: 'TarmakBir Komuta Merkezi',
     settings: 'Hesap Ayarları'
@@ -12106,6 +12110,149 @@ async function loadChatbotPage() {
     chatbotRender();
     const input = document.getElementById('chatbotInput');
     if (input) input.focus();
+}
+
+
+// ============================================
+// YÖNETİŞİM (yalnızca yönetici) — /api/admin/governance/*, /health/deep
+// ============================================
+const govState = { tab: 'overview', auditEvent: '', auditItems: [], auditNext: null, auditMore: false };
+const govGet = path => API.request('GET', `${path}${path.includes('?') ? '&' : '?'}_=${Date.now()}`); // GET önbelleğini atla
+
+function govCard(icon, color, value, label, hint) {
+    return `<div class="stat-card">
+        <div class="stat-icon" style="background:${color}22;color:${color}"><i class="fas ${icon}" aria-hidden="true"></i></div>
+        <div class="stat-value">${escapeHtml(String(value))}</div>
+        <div class="stat-label">${escapeHtml(label)}</div>
+        ${hint ? `<div class="stat-change">${escapeHtml(hint)}</div>` : ''}
+    </div>`;
+}
+function govTable(headers, rows, empty = 'Kayıt yok') {
+    if (!rows.length) return `<p style="color:var(--text-muted);font-size:13px;margin:0">${escapeHtml(empty)}</p>`;
+    return `<div style="overflow-x:auto"><table class="data-table"><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(String(c ?? '-'))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+const govBox = (title, icon, inner) => `<div class="card"><div class="card-header"><h3><i class="fas ${icon}" aria-hidden="true"></i> ${escapeHtml(title)}</h3></div><div class="card-body">${inner}</div></div>`;
+
+async function govRenderOverview(host) {
+    const o = await govGet('/api/admin/governance/overview');
+    if (!o) return;
+    const u = o.users, n = v => formatNumber(Number(v) || 0);
+    const allMfa = u.privileged > 0 && u.privileged_with_2fa === u.privileged;
+    const statusTr = { active: 'Aktif', pending: 'Ödeme bekliyor', expired: 'Süresi doldu', cancelled: 'İptal', trialing: 'Deneme' };
+    host.innerHTML = `
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">
+            ${govCard('fa-users', '#3b82f6', n(u.active) + ' / ' + n(u.total), 'AKTİF / TOPLAM KULLANICI', n(u.active_7d) + ' kişi son 7 günde girdi')}
+            ${govCard('fa-shield-halved', allMfa ? '#22c55e' : '#f59e0b', n(u.privileged_with_2fa) + ' / ' + n(u.privileged), 'YÖNETİCİ 2FA', allMfa ? 'Tüm yöneticilerde etkin' : 'Etkin olmayan yönetici var')}
+            ${govCard('fa-lock', u.locked_now ? '#ef4444' : '#22c55e', n(u.locked_now), 'KİLİTLİ HESAP', 'Hatalı giriş kilidi şu an')}
+            ${govCard('fa-envelope', '#a855f7', n(u.unverified), 'DOĞRULANMAMIŞ E-POSTA', '')}
+            ${govCard('fa-hourglass-half', '#f59e0b', n(o.subscriptions.expiring_7d), '7 GÜNDE BİTECEK ABONELİK', '')}
+            ${govCard('fa-robot', '#06b6d4', n(o.ai_30d.queries), 'AI SORGUSU (30 GÜN)', '₺' + (Number(o.ai_30d.cost_tl) || 0).toFixed(2) + ' tahmini maliyet')}
+            ${govCard('fa-whatsapp fab', '#22c55e', n(o.whatsapp.pending), 'WHATSAPP ONAY BEKLEYEN', n(o.whatsapp.approved) + ' onaylı numara')}
+            ${govCard('fa-ticket', '#6366f1', n(o.invites.usable), 'KULLANILABİLİR DAVET KODU', '')}
+        </div>
+        <div class="grid-2" style="margin-top:20px">
+            ${govBox('Abonelik durumları', 'fa-credit-card', govTable(['Durum', 'Adet'], o.subscriptions.by_status.map(x => [statusTr[x.status] || x.status, x.n])))}
+            ${govBox('AI kullanımı (özellik, 30 gün)', 'fa-wand-magic-sparkles', govTable(['Özellik', 'Sorgu'], o.ai_30d.by_feature.map(x => [x.feature, x.n])))}
+        </div>
+        <div class="grid-2" style="margin-top:20px">
+            ${govBox('En çok AI kullananlar (30 gün)', 'fa-ranking-star', govTable(['Kullanıcı', 'Sorgu', 'Maliyet'], o.ai_30d.top_users.map(x => [x.email, x.n, '₺' + (Number(x.cost_tl) || 0).toFixed(2)])))}
+            ${govBox('Giriş olayları (7 gün)', 'fa-clipboard-list', govTable(['Olay', 'Adet'], o.auth_7d.events.map(x => [x.event, x.n])))}
+        </div>
+        <div style="margin-top:20px">
+            ${govBox('Şüpheli: en çok başarısız giriş yapan IP adresleri (24 saat)', 'fa-triangle-exclamation', govTable(['IP adresi', 'Başarısız deneme'], o.auth_7d.failed_by_ip_24h.map(x => [x.ip_address, x.n]), 'Son 24 saatte başarısız giriş yok'))}
+        </div>
+        <p style="color:var(--text-muted);font-size:12px;margin-top:12px">Oluşturulma: ${escapeHtml(new Date(o.generated_at).toLocaleString('tr-TR'))}</p>`;
+}
+
+function govAuditRows() {
+    return govState.auditItems.map(a => [new Date(a.created_at).toLocaleString('tr-TR'), a.event, a.email || '-', a.ip_address || '-', a.user_agent || '']);
+}
+async function govLoadAudit(host, more) {
+    const qs = new URLSearchParams({ limit: '50' });
+    if (govState.auditEvent) qs.set('event', govState.auditEvent);
+    if (more && govState.auditNext) qs.set('before', String(govState.auditNext));
+    const r = await govGet('/api/admin/governance/audit?' + qs.toString());
+    if (!r) return;
+    govState.auditItems = more ? govState.auditItems.concat(r.items) : r.items;
+    govState.auditNext = r.next_before; govState.auditMore = r.has_more;
+    const body = host.querySelector('#govAuditBody');
+    if (body) body.innerHTML = govTable(['Zaman', 'Olay', 'Kullanıcı', 'IP', 'Tarayıcı'], govAuditRows());
+    const btn = host.querySelector('#govAuditMore');
+    if (btn) btn.style.display = govState.auditMore ? '' : 'none';
+}
+async function govRenderAudit(host) {
+    const events = await govGet('/api/admin/governance/audit-events') || [];
+    host.innerHTML = `<div class="card"><div class="card-header"><h3><i class="fas fa-clipboard-list" aria-hidden="true"></i> Giriş denetim kaydı</h3></div>
+        <div class="card-body">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+                <label for="govAuditEvent" style="font-size:13px;color:var(--text-secondary)">Olay:</label>
+                <select id="govAuditEvent" class="year-select"><option value="">Tümü</option>${events.map(e => `<option value="${escapeHtml(e)}"${e === govState.auditEvent ? ' selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
+            </div>
+            <div id="govAuditBody"></div>
+            <div style="margin-top:14px"><button type="button" class="btn-filter" id="govAuditMore" style="display:none">Daha fazla göster</button></div>
+        </div></div>`;
+    host.querySelector('#govAuditEvent').addEventListener('change', e => { govState.auditEvent = e.target.value; govLoadAudit(host, false); });
+    host.querySelector('#govAuditMore').addEventListener('click', () => govLoadAudit(host, true));
+    await govLoadAudit(host, false);
+}
+
+async function govRenderHealth(host) {
+    let h;
+    try { h = await govGet('/health/deep'); } catch (err) { host.innerHTML = govBox('Sistem sağlığı', 'fa-heart-pulse', `<p style="color:var(--danger)">Sağlık bilgisi alınamadı: ${escapeHtml(err.message)}</p>`); return; }
+    if (!h) return;
+    const c = h.checks || {};
+    const up = Number(h.uptime_seconds) || 0;
+    const upText = up >= 86400 ? Math.floor(up / 86400) + ' gün ' + Math.floor((up % 86400) / 3600) + ' sa' : up >= 3600 ? Math.floor(up / 3600) + ' sa ' + Math.floor((up % 3600) / 60) + ' dk' : Math.floor(up / 60) + ' dk';
+    host.innerHTML = `
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">
+            ${govCard('fa-database', c.database?.status === 'ok' ? '#22c55e' : '#ef4444', c.database?.status === 'ok' ? 'Sağlıklı' : 'Sorunlu', 'VERİTABANI', (c.database?.latency_ms ?? '-') + ' ms yanıt')}
+            ${govCard('fa-memory', '#3b82f6', (c.memory?.rss_mb ?? '-') + ' MB', 'BELLEK (RSS)', 'Heap: ' + (c.memory?.heap_used_mb ?? '-') + ' / ' + (c.memory?.heap_total_mb ?? '-') + ' MB')}
+            ${govCard('fa-gauge-high', (c.event_loop_lag_ms ?? 0) > 100 ? '#f59e0b' : '#22c55e', (c.event_loop_lag_ms ?? '-') + ' ms', 'OLAY DÖNGÜSÜ GECİKMESİ', 'Düşük olması iyi')}
+            ${govCard('fa-clock', '#a855f7', upText, 'ÇALIŞMA SÜRESİ', 'Node ' + (h.node_version || ''))}
+            ${govCard('fa-plug', '#06b6d4', (c.database?.pool_total ?? '-') + ' / ' + (c.database?.pool_idle ?? '-'), 'BAĞLANTI HAVUZU', 'Toplam / boşta · bekleyen: ' + (c.database?.pool_waiting ?? '-'))}
+        </div>
+        <div style="margin-top:14px"><button type="button" class="btn-filter" id="govHealthRefresh"><i class="fas fa-rotate" aria-hidden="true"></i> Yenile</button></div>`;
+    host.querySelector('#govHealthRefresh').addEventListener('click', () => govRenderHealth(host));
+}
+
+async function govShowTab(tab) {
+    govState.tab = tab;
+    document.querySelectorAll('#govTabs [role="tab"]').forEach(b => {
+        const on = b.dataset.tab === tab;
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.classList.toggle('is-active', on);
+    });
+    const host = document.getElementById('govTabBody');
+    if (!host) return;
+    host.innerHTML = '<p style="color:var(--text-muted)">Yükleniyor…</p>';
+    try {
+        if (tab === 'audit') await govRenderAudit(host);
+        else if (tab === 'health') await govRenderHealth(host);
+        else await govRenderOverview(host);
+    } catch (err) {
+        host.innerHTML = `<p style="color:var(--danger)">Yüklenemedi: ${escapeHtml(err.message || 'hata')}</p>`;
+    }
+}
+
+function loadGovernancePage() {
+    const content = document.getElementById('pageContent');
+    if (!content) return;
+    content.innerHTML = `
+        <div class="gov-page">
+            <div id="govTabs" class="gov-tabs" role="tablist" aria-label="Yönetişim bölümleri">
+                <button type="button" role="tab" data-tab="overview" aria-selected="true" class="is-active">Özet</button>
+                <button type="button" role="tab" data-tab="audit" aria-selected="false">Denetim Kaydı</button>
+                <button type="button" role="tab" data-tab="health" aria-selected="false">Sistem Sağlığı</button>
+            </div>
+            <div id="govTabBody" role="tabpanel"></div>
+        </div>`;
+    document.getElementById('govTabs').addEventListener('click', e => {
+        const b = e.target.closest('[role="tab"]');
+        if (b) govShowTab(b.dataset.tab);
+    });
+    govState.auditEvent = ''; govState.auditItems = [];
+    govShowTab('overview');
 }
 
 // ============================================
