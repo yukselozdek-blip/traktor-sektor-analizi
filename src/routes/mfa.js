@@ -91,8 +91,16 @@ module.exports = function registerMfa(app, ctx) {
             const user = await loadUser(req.mfaActorId);
             if (!user) return res.status(401).json({ error: 'Geçersiz oturum' });
             if (user.totp_enabled) return res.status(409).json({ error: 'İki adımlı doğrulama zaten etkin' });
-            const secret = totp.generateSecret();
-            await pool.query('UPDATE users SET totp_secret_enc = $1, totp_last_step = NULL WHERE id = $2', [totp.encryptSecret(secret), user.id]);
+            // Kurulum tamamlanana kadar aynı (bekleyen) secret döner: sayfa yenilenir ya da yeniden giriş yapılırsa
+            // telefona eklenmiş anahtar geçersiz kalmasın. Yeni anahtar yalnızca açıkça istenirse üretilir.
+            let secret = null;
+            if (user.totp_secret_enc && req.body?.regenerate !== true) {
+                try { secret = totp.decryptSecret(user.totp_secret_enc); } catch (_) { secret = null; }
+            }
+            if (!secret) {
+                secret = totp.generateSecret();
+                await pool.query('UPDATE users SET totp_secret_enc = $1, totp_last_step = NULL WHERE id = $2', [totp.encryptSecret(secret), user.id]);
+            }
             await logAuthAudit(user.id, 'mfa_setup_started', req);
             res.json({ secret, otpauth_uri: totp.otpauthUri(secret, user.email) });
         } catch (err) { logRouteError(req, err, 'POST /api/auth/2fa/setup'); res.status(500).json({ error: 'Sunucu hatası' }); }

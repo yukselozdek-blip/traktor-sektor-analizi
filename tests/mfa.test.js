@@ -61,6 +61,19 @@ describe('2FA HTTP akışı', { skip: SKIP_DB && SKIP_REASON }, () => {
         assert.ok(!JSON.stringify(row.totp_recovery_hashes).includes(ok.json.recovery_codes[0]));
     });
 
+    it('kurulum tamamlanana kadar aynı secret döner (yenileme/yeniden giriş telefondaki anahtarı geçersiz kılmaz)', async () => {
+        const u = await s.createUser();
+        const t1 = (await login(u)).json.token;
+        const a = await post('/api/auth/2fa/setup', {}, t1);
+        const t2 = (await login(u)).json.token;
+        const b = await post('/api/auth/2fa/setup', {}, t2);
+        assert.equal(a.json.secret, b.json.secret);
+        const c = await post('/api/auth/2fa/setup', { regenerate: true }, t2);
+        assert.notEqual(c.json.secret, a.json.secret);
+        const ok = await post('/api/auth/2fa/enable', { code: codeFor(c.json.secret) }, t2);
+        assert.equal(ok.status, 200, ok.text);
+    });
+
     it('etkin kullanıcı girişte oturum değil mfa_token alır; kod doğrulanınca oturum verilir; aynı kod tekrar kullanılamaz', async () => {
         const u = await s.createUser();
         const { secret } = await enroll(u);
