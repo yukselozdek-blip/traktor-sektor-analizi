@@ -1,6 +1,6 @@
 # Yönetim (Admin) Paneli ve Kurumsal Sözleşme Planı
 
-> Durum: **Faz 1 uygulanıyor** (2026-10-17). Bu belge hem ürün planı hem de uygulayan ajanlar için **bağlayıcı teknik sözleşmedir** (tablo/sütun/rota/fonksiyon adları buradan alınır).
+> Durum: **Faz 1 uygulandı (2026-10-17)**. Bu belge hem ürün planı hem de uygulayan ajanlar için **bağlayıcı teknik sözleşmedir** (tablo/sütun/rota/fonksiyon adları buradan alınır).
 
 ## 1. Amaç
 
@@ -256,3 +256,60 @@ Org_admin olmayan → `403`. Her yazma `admin_audit_log`'a (`org_self.*`) yazıl
 - `requirePermission(permKey | null)` — Express ara katmanı (adı: `requirePermission`); `authMiddleware`'den sonra. Admin değil/aktif değil/izin yok → `403 { error: 'Yetkisiz erişim' }`. Başarıda `req.staff = getStaffContext(...)`.
 - `requireSuperuser` — ara katman; superuser değilse `403`.
 - `isFullAdmin(staffCtx)` → boolean (superuser veya super_admin).
+
+## 11. Kullanım kılavuzu (yönetici için)
+
+Bu bölüm arayüzdeki gerçek etiketleri kullanır. §8'deki sekme adları uygulamada şöyle adlandırıldı: **Genel & Sözleşme**, **Üyeler**, **Alan adları**, **Özellik & Limitler**.
+
+### 11.1 Yönetim paneline giriş
+- Uygulamaya süper kullanıcı hesabıyla (e-postası `SUPERUSER_EMAILS` ortam değişkeninde) ya da ekip rolü verilmiş bir hesapla girin.
+- Ana menüdeki **Yönetim Paneli** bağlantısı (yalnızca yöneticilere görünür) veya doğrudan `/admin` adresi kullanılır.
+- Giriş yoksa `/login.html`'e yönlendirilirsiniz. Yetkisi olmayan hesap **"Bu alana erişim yetkiniz yok"** ekranını görür.
+- Sol menüde yalnızca yetkiniz olan bölümler görünür: Genel Bakış, Kurumlar, Kullanıcılar, Ekip & Roller, Özellikler, Denetim Kaydı.
+
+### 11.2 Ekip üyesi ekleme
+1. Kişi önce normal kayıt olur (`/signup.html`) ve e-posta adresini doğrular. Kayıtlı olmayan kişiye rol verilemez (`404`); doğrulanmamış hesaba da verilemez (`400`).
+2. Yönetim Paneli → **Ekip & Roller** → **Ekip üyesi ekle**: e-posta ve rol seçilir.
+3. Sistem rolleri: **Süper Yönetici** (yalnızca süper kullanıcı atayabilir), **Müşteri Yöneticisi**, **Destek**, **Finans**, **Salt Okunur**. Rollerin yetkileri §3 ve `migration 010` içindeki tohum listesinde yazılıdır.
+4. Rol oluşturma ve düzenleme yalnızca süper kullanıcıya açıktır. Kimse kendi rolünü değiştiremez; süper kullanıcı hedef olamaz.
+5. Ekip yetkisini kaldırmak için **Ekip üyesini kaldır** kullanılır. Müşteri hesabı silinmez; hesap normal müşteri olarak kalır.
+
+### 11.3 Kurumsal sözleşme kurulumu (örnek: John Deere, 20 kullanıcı)
+1. **Marka** hazır olmalıdır. Kurum formundaki marka listesi yalnızca aktif markaları gösterir.
+2. Yönetim Paneli → **Kurumlar** → **Yeni kurum**.
+3. Alanları doldurun:
+   - **Kurum adı**: `John Deere`
+   - **Marka**: kurumun bağlanacağı marka
+   - **Plan**: sözleşmedeki plan (ör. `enterprise`)
+   - **Koltuk sayısı**: `20`
+   - **Durum**: `Aktif`
+   - **Ödeme türü**: `Sözleşme`
+   - **Sözleşme başlangıcı / bitişi**: bitiş günü dahildir. Boş bırakılırsa süresiz olur.
+   - **Sözleşme / referans no** ve **Yetkili kişi** (isteğe bağlı)
+   - **Kurum alan adları**: `deere.com` (birden fazla ise virgülle ayrılır)
+   - **Alan adı eşleşen e-postalar davet kodsuz katılabilsin** seçili bırakılır.
+4. **Kurumu oluştur**. Kurum detayında **Genel & Sözleşme** sekmesi açılır.
+5. Çalışanlar `@deere.com` adresiyle `/signup.html` üzerinden kayıt olur ve **davet kodu alanını boş bırakır**. Google ile kayıtta da aynı kural geçerlidir; firma adı ve unvan da girilmelidir. Kayıt sonrası e-postayı doğrulamaları gerekir. Doğrulanınca giriş yapabilirler; hesapları kurumun markasına bağlanır ve kurumun planından yararlanırlar. Kişisel abonelik açılmaz.
+6. Koltuk dolunca yeni kayıt reddedilir (`403`, kod `ORG_SEATS_FULL`) ve kişiye **"Kurumunuzun kullanıcı kotası dolu. Kurum yöneticinizle iletişime geçin."** mesajı gösterilir.
+7. Koltuk sayısı istediğiniz zaman artırılabilir: Kurum → **Genel & Sözleşme** → **Koltuk sayısı** → **Kaydet**. Koltuk sayısı mevcut üye sayısının altına düşürülemez.
+8. Müşteri tarafında bir **kurum yöneticisi** (`org_admin`) atayın: kişi önce kuruma üye olmalıdır. Kurum → **Üyeler** tablosunda kişinin **Kurum rolü** seçimini **Kurum yöneticisi** yapın. Bu kişi `/kurum` sayfasından koltuk kullanımını görür, üye davet eder, üye çıkarır ve bekleyen davetleri iptal eder.
+9. Alan adı dışındaki kişiler (ör. danışman, `@gmail.com`) için Kurum → **Üyeler** → **Üye ekle**: e-postayı girin. Kullanıcı kayıtlıysa doğrudan kuruma bağlanır. Değilse bu e-posta için kurum daveti oluşur ve kişi o adresle kayıt olduğunda kuruma katılır.
+10. Alan adındaki mevcut kullanıcıları toplu bağlamak için Üyeler sekmesinde **Alan adındaki mevcut kullanıcıları bağla** kullanılır. Koltuk dolana kadar bağlanır; sonuç mesajı kaç kişinin bağlandığını ve koltuk yetersizliği nedeniyle kaç kişinin bağlanamadığını söyler.
+11. Sözleşme bittiğinde erişim kendiliğinden kapanır (zamanlanmış iş gerekmez). Yenilemek için **Sözleşme bitişi** tarihini güncelleyin.
+
+### 11.4 Bir özelliği uygulama genelinde kapatma
+1. Yönetim Paneli → **Özellikler**.
+2. İlgili satırdaki anahtarı **Kapalı** konumuna getirin. Kapalı özellik admin dışı herkes için kapanır; özelliği gerektiren uçlar `403` ve kod `FEATURE_DISABLED` ("Bu özellik şu anda kullanıma kapalı.") döner.
+3. Değişiklik çalıştığı sunucuda hemen geçerlidir. Birden fazla sunucu varsa diğerlerinde en fazla 30 saniye gecikebilir.
+4. Yeniden açmak için anahtarı **Açık** konumuna getirin.
+
+### 11.5 Denetim kaydını görüntüleme
+- Yönetim Paneli → **Denetim Kaydı**: kim (işlemi yapan), ne (işlem adı, ör. `org.create`, `staff.role.set`, `feature.toggle`), hangi kayıt, ne zaman ve hangi IP adresinden.
+- İşlem adı ve yapan kullanıcıya göre filtrelenir; sayfa başına 50 kayıt gösterilir.
+- Kurum yöneticisinin `/kurum` üzerindeki işlemleri `org_self.*` olarak kaydedilir.
+- Denetim kaydı arayüzden silinemez ve düzenlenemez. Kayıt yazılamazsa işlem yine tamamlanır; yalnızca sunucu uyarısı yazılır.
+
+### 11.6 Kararlar (varsayılanlar)
+- **Bir kullanıcı en fazla bir kuruma üye olur** (`organization_members.user_id` tekil). Başka bir kuruma eklemek `409` döner.
+- **Kurum sözleşmesi kişisel kartlı aboneliğe önceliklidir.** Kullanıcı hem kurum üyesiyse hem kişisel aboneliği varsa kurum planı geçerlidir. Bu durumda kartla ödeme, iptal ve plan değiştirme `409 ORG_MANAGED` döner.
+- **Doğrulanmamış kayıtlar koltuk tutar.** Yönetici bunları panelde "Doğrulanmadı" olarak görür ve kurumdan çıkarabilir.

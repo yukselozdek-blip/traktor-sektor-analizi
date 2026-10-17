@@ -179,6 +179,7 @@ Ayrıntı: `../stratejikplan-whatsapp-sales-assistant/SKILL.md`.
 
 Ayrıntı: `../kimlik-dogrulama-anayasasi/SKILL.md`.
 - **Davet kodu zorunlu kayıt:** `src/lib/invites.js`; kod düz metin saklanmaz (SHA-256), tüketim tek atomik `UPDATE`, kayıt transaction'ında (kayıt başarısız olursa kod harcanmaz). Hata mesajı tek ve genel (`INVITE_ERROR`).
+- **Kurumsal kayıt istisnası:** davet kodu boşsa alan adı veya bekleyen kurum daveti ile kayıt yapılabilir; koltuk kotası `ORG_SEATS_FULL` ile denetlenir. Ayrıntı: `../kimlik-dogrulama-anayasasi/SKILL.md` §1.1.
 - **E-posta doğrulaması zorunlu:** doğrulanmamış kullanıcı giriş yapamaz (şifre doğruysa `403 EMAIL_NOT_VERIFIED`; yanlış şifrede 401 → numaralandırma yok). Süper kullanıcı e-postaları muaf. Kayıt oturum/çerez/token VERMEZ.
 - **Genel 401:** bilinmeyen e-posta, yanlış şifre ve kilitli hesap aynı gövdeyi döner (`LOGIN_FAIL_MESSAGE`); kalan deneme sayısı sızdırılmaz. Kilitliyse yalnızca `Retry-After` başlığı eklenir.
 - **Zamanlama eşitleme:** olmayan kullanıcıda bile `bcrypt.compare` sahte hash ile çalıştırılır (`DUMMY_PASSWORD_HASH`).
@@ -311,3 +312,13 @@ DB gerektiren testler `TEST_DATABASE_URL` yoksa `SKIP` olur; **güvenlik değiş
 - Mevcut tablolardan okur (`users`, `subscriptions`, `ai_usage_log`, `auth_audit`, `whatsapp_phones`, `invite_codes`); şifre/özet/gizli alanlar seçilmez.
 - Denetim kaydı: olay adı `^[a-z0-9_]{1,50}$` ile doğrulanır, `limit` en çok 100, imleç (`before`) tamsayı; kullanıcı aracısı 160 karaktere kısaltılır.
 - Ön yüz: sayfa `ADMIN_ONLY_PAGES`'tedir (marka kullanıcısı menüde görmez, adresle de giremez); tüm değerler kaçışlanır.
+
+## Yönetim konsolu ve ekip yetkileri (`/api/admin/console/*`, `/api/org/*`)
+- **Zincir:** `authMiddleware` → `requirePermission('<izin>')` (`src/middleware/permissions.js`). Yetki her istekte DB'den (`getStaffContext`) okunur. Yönetici değilse, pasifse veya izni yoksa `403 { error: 'Yetkisiz erişim' }`.
+- **Yetki kataloğu** (`PERMISSIONS`, 9 anahtar): `dashboard.view`, `orgs.read`, `orgs.write`, `members.write`, `users.read`, `users.write`, `features.manage`, `staff.manage`, `audit.read`. Özel rollerde yalnızca katalog anahtarları kabul edilir; `*` ve bilinmeyen anahtarlar `400 Geçersiz izin anahtarı`. `*` yalnızca sistem rolü `super_admin`'dedir.
+- **Rol düzenleme yalnızca superuser:** `POST/PUT/DELETE /api/admin/console/roles*` → `requireSuperuser` (ayrıca `staff.manage` gerekir). `super_admin` değiştirilemez, sistem rolü silinemez, kullanılan rol silinemez (`409`).
+- **Ekip atamaları:** `super_admin` yalnızca superuser tarafından verilir ve alınır; kimse kendi `staff_role`'ünü değiştiremez; superuser hedef olamaz. Ekip yetkisi kaldırılınca `role='brand_user'`, `staff_role=NULL` olur.
+- **Pasife alma:** `POST /api/admin/console/users/:id/status` kullanıcının önbelleğini `invalidatePasswordChangedCache` ile temizler; mevcut token sonraki istekte `401` alır. Kendi hesabı ve superuser pasife alınamaz.
+- **Denetim kaydı** (`admin_audit_log`, `src/lib/admin-audit.js` → `logAdminAudit`): her yönetim yazma işlemi (kurum, üye, alan adı, rol, ekip, özellik bayrağı, kullanıcı durumu, elle abonelik) kaydedilir; IP `req.ip`. Yazma hatası işlemi bozmaz, yalnızca uyarı loglanır; kayıt bu nedenle eksik kalabilir. Okuma: `GET /api/admin/console/audit` (`audit.read`). Kayıt silen ya da düzenleyen uç yoktur.
+- **Kurum self-servis** (`/api/org/*`): kapsam oturumdaki üyelikten türetilir; istemciden kurum kimliği alınmaz, üye ve davet silme sorguları `organization_id` ile sınırlıdır. Yalnızca `org_admin` yazabilir; kişi kendini kurumdan çıkaramaz. İşlemler `org_self.*` olarak kaydedilir.
+- Testler: `tests/admin-console.test.js` (9 test), `tests/organizations.test.js` (11 test).

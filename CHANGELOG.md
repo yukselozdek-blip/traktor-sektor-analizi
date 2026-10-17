@@ -1,8 +1,19 @@
 # Değişiklik Günlüğü
 
+## Ekim 2026 — yönetim paneli ve kurumsal sözleşme
+
+### 17 Ekim 2026 — yönetim paneli (Faz 1) ve kurumsal sözleşme
+- Yönetim konsolu `/admin` (Genel Bakış, Kurumlar, Kullanıcılar, Ekip & Roller, Özellikler, Denetim Kaydı) ve kurum yöneticisi sayfası `/kurum`. Kılavuz: `ADMIN_PANEL_PLAN.md` §11.
+- Ekip rolleri: 5 sistem rolü (`super_admin`, `account_manager`, `support`, `finance`, `viewer`), 9 izinlik katalog, `requirePermission` ara katmanı. Rol oluşturma ve düzenleme yalnızca süper kullanıcıya açık. `adminOnly` rotaları yalnızca süper kullanıcı, `super_admin` ve eski (`staff_role` NULL) yöneticiler için açık.
+- Kurumsal sözleşme: marka, plan, koltuk sayısı, sözleşme tarihleri (bitiş günü dahil), ödeme türü, alan adları. Alan adı eşleşen kişiler davet kodu olmadan kayıt olur; koltuk dolunca `403 ORG_SEATS_FULL`. Kurum sözleşmesi kişisel aboneliğe önceliklidir; kurum aboneliğinde kartla ödeme/iptal/plan değişimi `409 ORG_MANAGED` ile kapalıdır.
+- Küresel özellik bayrakları (kapalı özellik için `403 FEATURE_DISABLED`) ve yönetim denetim kaydı (`admin_audit_log`).
+- Migration `010_admin_console.sql`. Yeni npm betiği: `npm run e2e:admin` (`e2e/admin-console.js`).
+- Testler: `tests/organizations.test.js` (11), `tests/admin-console.test.js` (9). `npm test`: 257/257 yeşil, 0 başarısız.
+- Henüz yapılmadı: tarayıcı denetimi (`e2e/admin-console.js`) bu kayıtta çalıştırılmadı. Kod `claude/lucid-hawking-31ypnl` dalında commit'li; `master`'a birleşme bekliyor.
+
 ## Ekim 2026 sertleştirme dönemi
 
-Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: eskiden yeniye. Commit kimlikleri yazılmamıştır; ilgili ayrıntı için skill belgelerine bakın (`skills/guvenlik-anayasasi`, `skills/kalite-ve-ajan-koordinasyon-anayasasi`, `skills/erisilebilirlik-tasarim-anayasasi`).
+Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: en yeni dönem üstte; dönem içinde eskiden yeniye. Commit kimlikleri yazılmamıştır; ilgili ayrıntı için skill belgelerine bakın (`skills/guvenlik-anayasasi`, `skills/kalite-ve-ajan-koordinasyon-anayasasi`, `skills/erisilebilirlik-tasarim-anayasasi`).
 
 ### 3 Ekim 2026 — temel altyapı
 - Faz 0 güvenlik sertleştirmesi (backend, ön yüz, depo).

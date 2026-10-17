@@ -28,6 +28,15 @@ Kayıt (şifre veya Google) **geçerli bir davet koduyla** yapılır; marka kodd
 - Super kullanıcı e-postasıyla şifreli kayıt **otomatik yetki almaz** (normal doğrulama akışı). Süper kullanıcı e-postasında marka istekten gelir (davet kodu aranmaz); diğerlerinde marka koddan gelir.
 - Kayıt alanları `validateProfileText` ile doğrulanır (`<`/`>` yasak, uzunluk sınırı) ve `SAFE_EMAIL` ile e-posta biçimi denetlenir.
 
+### 1.1 Kurumsal kayıt (davet kodu olmadan)
+
+- Davet kodu **boşsa** (`/api/auth/signup` ve `/api/auth/google`) e-posta için kurum aranır: (a) o e-postaya ait bekleyen `organization_invitations` kaydı, yoksa (b) alan adı eşleşmesi (`organization_domains`, `auto_join = true`). Kurum geçerli olmalıdır (abonelik kuralları §2.6). Eşleşme yoksa eski davranış: `400 INVITE_ERROR`.
+- Davet kodu **verilmişse** kurum araması yapılmaz; eski davet kodu akışı aynen çalışır.
+- Google ile kayıtta kurum eşleşmesi ancak `company_name` ve `job_title` gönderilmişse kullanılır; eksikse `202 GOOGLE_NEEDS_PROFILE` döner.
+- **Koltuk kontrolü**: kayıt transaction'ında kurum satırı `FOR UPDATE` ile kilitlenir (`addMemberWithSeatCheck`). Üye sayısı `seat_limit`'e ulaşmışsa `403 { code: 'ORG_SEATS_FULL' }` döner ve kullanıcı oluşmaz. Doğrulanmamış üyeler de koltuk tutar.
+- Kullanıcının `brand_id`'si kurumdan gelir; kişisel `pending` abonelik açılmaz. E-posta doğrulaması aynen zorunludur; kayıt oturum vermez.
+- Testler: `tests/organizations.test.js` (2, 3 ve 4 numaralı testler).
+
 ## 2. ŞİFRE POLİTİKASI
 
 `PASSWORD_POLICY` (`src/config.js`): `/^(?=.*[A-ZÇĞİÖŞÜ])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,}$/`
@@ -63,6 +72,13 @@ Kayıt (şifre veya Google) **geçerli bir davet koduyla** yapılır; marka kodd
 - Doğrulanmış superuser e-postası ile giriş → `role = 'admin'`, `is_superuser = true`. Superuser e-postaları e-posta doğrulaması zorunluluğundan **muaftır**.
 - Preview: `POST /api/auth/preview-plan { plan_slug: 'starter' | 'growth' | 'enterprise' | null }`; `null` → tüm yetkiler. `requireFeature` ve `getPlanLimits` preview planına göre kısıtlanır.
 - Frontend'de banner üstünde "Önizleme" seçici çıkar.
+
+### 5.1 Ekip rolleri ve `adminOnly`
+
+- `adminOnly` (`src/middleware/auth.js`) artık yalnızca şu kullanıcılara açıktır: `is_superuser = true`, `staff_role` NULL (eski yönetici) veya `staff_role = 'super_admin'`. `account_manager`, `support`, `finance` ve `viewer` ekip rolleri davet kodu, WhatsApp onayı gibi `adminOnly` rotalarına **403** alır.
+- Ekip rolleri yalnızca `requirePermission` ile korunan yönetim konsolu uçlarında geçer (`src/middleware/permissions.js`; ayrıntı `guvenlik-anayasasi`, "Yönetim konsolu" bölümü). Hesap pasifse veya `role !== 'admin'` ise reddedilir.
+- Rol ve yetki her istekte DB'den okunur (`authMiddleware` ilkesi); rol değişikliği bir sonraki istekte geçerlidir.
+- Testler: `tests/admin-console.test.js` (1, 2 ve 3 numaralı testler).
 
 ## 6. E-POSTA DOĞRULAMASI — ZORUNLU
 
