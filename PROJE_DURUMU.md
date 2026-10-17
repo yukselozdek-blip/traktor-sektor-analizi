@@ -2,7 +2,7 @@
 
 > Sonraki çalışmalar buradan devam eder. Önce `skills/operasyon-altyapi-anayasasi/SKILL.md` ve `skills/traktor_anayasasi/SKILL.md` okunur. Bu dosya **canlı bir kayıttır**: iş bitince ilgili satır güncellenir, tarih eklenir.
 >
-> Son güncelleme: **2026-10-04**
+> Son güncelleme: **2026-10-17**
 
 ## 1. Hedef
 
@@ -22,8 +22,10 @@ Uygulamayı **müşterilere hizmet verecek kalite ve güvenlik düzeyine** getir
 | **E-posta** | Brevo domain doğrulandı; **HTTPS API** ile gönderim (Railway SMTP'yi engelliyor); Cloudflare Email Routing (`destek@`, `info@`, `iletisim@`) | PR #17-#18; şifre sıfırlama maili Gmail'e ulaştı |
 | **Google ile giriş** | Yeni alan adında çalışıyor (silinmiş istemci geri getirildi, yetkili kaynak eklendi) | |
 | **Hata düzeltme** | `change-plan` kendine geri dönüp 429 veriyordu → `checkout` işleyicisini doğrudan çağırıyor | PR #22, `billing-change-plan.test.js` |
+| **Yönetim paneli + kurumsal sözleşme (Faz 1)** | Migration `010`; `/admin` konsolu (ekip rolleri, kurumlar, alan adı ile davetsiz kayıt ve koltuk kotası, kullanıcılar, özellik bayrakları, denetim kaydı); `/kurum` (kurum yöneticisi); org-first abonelik, `ORG_MANAGED`, `FEATURE_DISABLED`; `adminOnly` yalnızca süper kullanıcı / `super_admin` | `tests/organizations.test.js` (11), `tests/admin-console.test.js` (9); `ADMIN_PANEL_PLAN.md` §11 kılavuz; tarayıcı denetimi `npm run e2e:admin` (15/15 OK: tüm ekranlar, UI ile kurum oluşturma, mobil taşma yok, konsol/API hatası yok) |
+| **Tanıtım sayfası ve kamuya açık yüzler (ikinci bölüm)** | Oturumsuz `/` ve `/tanitim` (`public/landing.html|css|js`, `serveLandingForAnonymous`); gerçek veriden ekran görüntüleri `public/img/landing/`; `favicon.svg`, `robots.txt`; süper kullanıcı plan önizlemesi kayan kutudan Ayarlar kartına taşındı (aktifken başlıkta rozet); grafik, sayı, kontrast ve Türkçe kopya düzeltmeleri; yön farkındalıklı marka hikâye kartları (`src/lib/brand-storyline.js`) | `tests/landing-route.test.js` (5), `tests/brand-storyline.test.js` (14); `CHANGELOG.md` 17 Ekim 2026 (ikinci bölüm) |
 
-Test durumu: **40/40 yeşil**, CI yeşil, `master` = canlı.
+Test durumu (2026-10-17, `npm test`, yerel Postgres ile): **274/274 yeşil**, 54 suite, 0 başarısız, 0 atlanan. Yönetim paneli kodu `claude/lucid-hawking-31ypnl` dalında commit'lidir (son commit `c7f59c7`); bu doküman güncellemeleri ve `master`'a birleşme henüz yapılmadı. CI ve `master` = canlı durumu 2026-10-04 kaydına aittir.
 
 ## 3. Mevcut canlı durum
 
@@ -65,6 +67,14 @@ Test durumu: **40/40 yeşil**, CI yeşil, `master` = canlı.
 10. `getLatestSalesPeriod` çift tanımı sadeleştirilir (davranışı koruyan ayrı PR).
 11. Ölü kod: `getPlanFeatureKeys`, `userHasFeature` (hiçbir yerde çağrılmıyor).
 12. Ana alan adı yönlendirmesi + `www`.
+
+### D. Yönetim paneli Faz 2 (`ADMIN_PANEL_PLAN.md` §9)
+13. **Kurumsal giriş**: SSO (SAML/OIDC, Azure AD) ve alan adı doğrulaması (DNS TXT). Şu an alan adı yalnızca yönetici girişiyle bağlanır.
+14. **Kurum raporu ve kota havuzu**: kurum bazlı AI sorgu/export kullanımı; koltuk yerine kurum toplamı.
+15. **Sözleşme uyarıları**: bitişe 30 ve 7 gün kala e-posta (kuruma ve hesap yöneticisine).
+16. **Fatura ve sözleşme dosyası**: havale/ödeme takibi, e-fatura, sözleşme PDF'i yükleme.
+17. **Ekip güvenliği**: ekip için zorunlu 2FA, IP kısıtlama, denetimli "kullanıcı adına görüntüleme".
+18. **Planları panelden düzenleme**: önce `src/init-db.js` tohumlaması (her açılışta planları koddan yeniden yazar) değiştirilmeli.
 
 ## 6. Bilinen açık noktalar / riskler
 

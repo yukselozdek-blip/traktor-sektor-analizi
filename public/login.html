@@ -821,10 +821,10 @@
                 <!-- ADIM 3: Marka Seçimi -->
                 <div class="wizard-stage" data-stage="3" style="display:none;">
                     <h2 class="wizard-title">3. Marka seçimi</h2>
-                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu). Kayıt için markanızın size verdiği davet kodu gerekir; kod yalnızca ait olduğu marka için geçerlidir.</p>
+                    <p class="wizard-step-label">Hangi markanın yetkilisi olduğunuzu seçin (zorunlu). Kurumsal e-posta ile kayıt oluyorsanız davet kodu gerekmez. Diğer durumlarda markanızın size verdiği davet kodunu girin; kod yalnızca ait olduğu marka için geçerlidir.</p>
                     <div class="field">
-                        <label for="inviteCodeInput">Davet kodu</label>
-                        <input type="text" name="invite_code" id="inviteCodeInput" required autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="TSA-XXXX-XXXX-XXXX" aria-label="Davet kodu">
+                        <label for="inviteCodeInput">Davet kodu (kurumsal e-posta ile kayıt oluyorsanız boş bırakabilirsiniz)</label>
+                        <input type="text" name="invite_code" id="inviteCodeInput" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="TSA-XXXX-XXXX-XXXX" aria-label="Davet kodu (kurumsal e-posta ile kayıt oluyorsanız boş bırakabilirsiniz)">
                     </div>
                     <div class="field">
                         <input type="text" id="brandSearch" placeholder="Marka ara..." data-on-keyup="filterBrands(this.value)">

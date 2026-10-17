@@ -147,11 +147,11 @@ module.exports = {
         }
     ],
     commodityCatalog: [
-        { commodity_code: 'WHEAT', commodity_name: 'Bugday' },
-        { commodity_code: 'CORN', commodity_name: 'Misir' },
-        { commodity_code: 'SUNFLOWER', commodity_name: 'Aycicegi' },
+        { commodity_code: 'WHEAT', commodity_name: 'Buğday' },
+        { commodity_code: 'CORN', commodity_name: 'Mısır' },
+        { commodity_code: 'SUNFLOWER', commodity_name: 'Ayçiçeği' },
         { commodity_code: 'COTTON', commodity_name: 'Pamuk' },
-        { commodity_code: 'SUGAR_BEET', commodity_name: 'Seker Pancari' },
+        { commodity_code: 'SUGAR_BEET', commodity_name: 'Şeker Pancarı' },
         { commodity_code: 'BARLEY', commodity_name: 'Arpa' }
     ]
 };

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <title>Yönetim Paneli · Traktör Sektör Analizi</title>
+    <link href="/vendor/fonts/fonts.css" rel="stylesheet">
+    <link href="/vendor/fontawesome/css/all.min.css" rel="stylesheet">
+    <link href="/admin.css?v=1.0" rel="stylesheet">
+</head>
+<body class="admin-body">
+    <a class="skip-link" href="#mainContent">İçeriğe geç</a>
+
+    <div class="admin-shell">
+        <aside class="sidebar" aria-label="Yönetim menüsü">
+            <div class="sidebar-brand">
+                <i class="fas fa-chart-line" aria-hidden="true"></i>
+                <span>Traktör Sektör Analizi · Yönetim</span>
+            </div>
+            <nav class="side-nav" aria-label="Yönetim bölümleri">
+                <ul class="nav-list">
+                    <li><a class="nav-link" href="#/overview" data-route="overview" hidden><i class="fas fa-gauge-high" aria-hidden="true"></i><span>Genel Bakış</span></a></li>
+                    <li><a class="nav-link" href="#/orgs" data-route="orgs" hidden><i class="fas fa-building" aria-hidden="true"></i><span>Kurumlar</span></a></li>
+                    <li><a class="nav-link" href="#/users" data-route="users" hidden><i class="fas fa-users" aria-hidden="true"></i><span>Kullanıcılar</span></a></li>
+                    <li><a class="nav-link" href="#/staff" data-route="staff" hidden><i class="fas fa-user-shield" aria-hidden="true"></i><span>Ekip &amp; Roller</span></a></li>
+                    <li><a class="nav-link" href="#/features" data-route="features" hidden><i class="fas fa-toggle-on" aria-hidden="true"></i><span>Özellikler</span></a></li>
+                    <li><a class="nav-link" href="#/audit" data-route="audit" hidden><i class="fas fa-clipboard-list" aria-hidden="true"></i><span>Denetim Kaydı</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <div class="admin-main">
+            <header class="topbar">
+                <div class="topbar-user">
+                    <span class="user-avatar" id="userAvatar" aria-hidden="true"></span>
+                    <div class="user-meta">
+                        <span class="user-name" id="userName"></span>
+                        <span class="user-role" id="userRole"></span>
+                    </div>
+                </div>
+                <div class="topbar-actions">
+                    <a class="btn btn-ghost" href="/"><i class="fas fa-arrow-left" aria-hidden="true"></i><span>Uygulamaya dön</span></a>
+                    <button type="button" class="btn btn-ghost" id="btnLogout"><i class="fas fa-right-from-bracket" aria-hidden="true"></i><span>Çıkış</span></button>
+                </div>
+            </header>
+
+            <main id="mainContent" class="content" tabindex="-1">
+                <h1 id="pageTitle" class="page-title">Yönetim Paneli</h1>
+                <div id="view"></div>
+            </main>
+        </div>
+    </div>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+    <script src="/inline-actions.js?v=1.0"></script>
+    <script src="/admin.js?v=1.0"></script>
+    <script src="/a11y.js?v=1.5"></script>
+</body>
+</html>

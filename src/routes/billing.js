@@ -7,6 +7,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const billingProviders = require('../../billing/providers');
 const { getRequestToken } = require('../lib/session');
+const { getDisabledFeatureKeys } = require('../lib/org-entitlements');
 
 // Sahte (MOCK) ödeme akışı ücretsiz abonelik aktive eder: yalnızca geliştirme ortamında ya da
 // açıkça ALLOW_MOCK_BILLING=1 verildiğinde çalışır. Üretimde gerçek aktivasyon yalnızca imzalı webhook ile yapılır.
@@ -34,6 +35,18 @@ module.exports = function registerBilling(app, ctx) {
         } catch (err) { console.error('[billing] expire sweep hatası:', err.message); }
     }
     app.locals.expireStaleSubscriptions = expireStaleSubscriptions;
+
+    // Kurum sözleşmesi kapsamındaki abonelik kartla ödenmez / iptal edilmez / plan değiştirilmez (plan §5).
+    // Admin rolü muaftır. true dönerse yanıt zaten gönderilmiştir.
+    async function rejectIfOrgManaged(req, res) {
+        if (req.user?.role === 'admin') return false;
+        const cur = await getUserSubscriptionAnyStatus(req.user.id);
+        if (cur && cur.source === 'organization') {
+            res.status(409).json({ code: 'ORG_MANAGED', error: 'Aboneliğiniz kurumsal sözleşmeniz kapsamında yönetiliyor.' });
+            return true;
+        }
+        return false;
+    }
     const sweepMs = Math.max(500, parseInt(process.env.BILLING_SWEEP_INTERVAL_MS, 10) || 60 * 60 * 1000);
     setTimeout(expireStaleSubscriptions, Math.min(sweepMs, 30 * 1000)).unref();
     setInterval(expireStaleSubscriptions, sweepMs).unref();
@@ -78,7 +91,13 @@ module.exports = function registerBilling(app, ctx) {
                     if (m.plan_slug) pending_change = { plan_slug: m.plan_slug, period: m.period === 'yearly' ? 'yearly' : 'monthly' };
                 }
             }
-            res.json({ ...sub, feature_keys: keys, is_entitled: entitled, payment_pending: sub.status === 'pending', pending_change });
+            // Global kapalı (feature_flags) özellikler yanıtta yer almaz.
+            const disabled = await getDisabledFeatureKeys(pool);
+            keys = keys.filter(k => !disabled.has(k));
+            const orgFields = sub.source === 'organization'
+                ? { source: 'organization', organization_id: sub.organization_id, organization_name: sub.organization_name }
+                : {};
+            res.json({ ...sub, ...orgFields, feature_keys: keys, is_entitled: entitled, payment_pending: sub.status === 'pending', pending_change });
         } catch (err) {
             logRouteError(req, err, 'GET /api/subscription');
             res.status(500).json({ error: 'Sunucu hatası' });
@@ -153,6 +172,7 @@ module.exports = function registerBilling(app, ctx) {
 
     const startCheckout = async (req, res) => {
         try {
+            if (await rejectIfOrgManaged(req, res)) return;
             const { plan_slug, provider, period } = req.body || {};
             if (!plan_slug || !provider) return res.status(400).json({ error: 'plan_slug ve provider zorunlu' });
             const periodNorm = period === 'yearly' ? 'yearly' : 'monthly';
@@ -429,6 +449,7 @@ h1{font-size:24px;margin:0 0 20px;}.row{display:flex;justify-content:space-betwe
     // Aboneliği iptal et
     app.post('/api/billing/cancel', authMiddleware, async (req, res) => {
         try {
+            if (await rejectIfOrgManaged(req, res)) return;
             const sub = await getUserSubscriptionAnyStatus(req.user.id);
             if (!sub) return res.status(404).json({ error: 'Aktif abonelik yok' });
             await pool.query(

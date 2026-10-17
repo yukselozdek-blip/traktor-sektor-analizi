@@ -85,7 +85,6 @@ function wizardNext(currentStage) {
     if (currentStage === 3) {
         const brandId = document.getElementById('brandIdHidden').value;
         if (!brandId) { showError('Marka seçimi zorunludur'); return; }
-        if (!document.getElementById('inviteCodeInput').value.trim()) { showError('Davet kodu zorunludur'); return; }
     }
     wizardGoTo(currentStage + 1);
 }

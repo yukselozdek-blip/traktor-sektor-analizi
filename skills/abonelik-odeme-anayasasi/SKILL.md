@@ -81,6 +81,17 @@ app.get('/api/insights', authMiddleware,
 
 ---
 
+### 2.6 Kurumsal sözleşme (organization) yetkilendirmesi
+- Kaynak: `src/lib/org-entitlements.js` (tek doğru kaynak). `getUserActiveSubscription` (`server.js`) önce kullanıcının kurum üyeliğine bakar; üyelik geçerliyse kişisel aboneliğe bakılmaz. Kurum sözleşmesi kişisel kartlı aboneliğe önceliklidir.
+- **Geçerli kurum**: `status IN ('trial','active')` VE (`contract_start` boş veya bugünden önce) VE (`contract_end` boş veya **bugün dahil** ileride). Sözleşme bitince erişim kendiliğinden kapanır (zamanlanmış iş yok); kişisel abonelik silinmez.
+- **Türetilmiş abonelik**: `source: 'organization'`, `id: null`, `status: 'active'`, `cancel_at_period_end: false`; dönem = sözleşme tarihleri (bitiş günü 23:59:59).
+- **Özellikler**: `plan.feature_keys ∪ feature_overrides.add − feature_overrides.remove`. **Limitler**: `{...plan_limits, ...limit_overrides}` (yalnızca sayısal değerler; `-1` = sınırsız). `getPlanLimits` kurum aboneliğinde bu nesneyi doğrudan kullanır.
+- **Küresel kapatma**: `requireFeature`, admin olmayan kullanıcı için, istenen anahtarların **tamamı** kapalıysa `403 FEATURE_DISABLED`. `/api/subscription` yanıtındaki `feature_keys` kapalı anahtarları içermez. Kapalı liste 30 sn önbellekte tutulur; `invalidateFeatureFlagCache()` ile hemen temizlenir.
+- **Kartla işlem yok**: kurum kaynaklı abonelikte `/api/billing/checkout`, `/api/billing/change-plan` ve `/api/billing/cancel` → `409 ORG_MANAGED`.
+- Testler: `tests/organizations.test.js` (5, 6, 7 ve 8 numaralı testler).
+
+---
+
 ## 3. ÜÇ ÖDEME SAĞLAYICISI
 
 | Sağlayıcı | Code | Aktivasyon | Webhook |
