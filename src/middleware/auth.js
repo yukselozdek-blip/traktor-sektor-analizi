@@ -82,9 +82,12 @@ async function authMiddleware(req, res, next) {
 async function adminOnly(req, res, next) {
     try {
         if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
-        const r = await pool.query('SELECT role, is_active FROM users WHERE id = $1', [req.user.id]);
+        const r = await pool.query('SELECT role, is_active, is_superuser, staff_role FROM users WHERE id = $1', [req.user.id]);
         const u = r.rows[0];
-        if (!u || u.role !== 'admin' || u.is_active === false) {
+        // Ekip rolleri (account_manager, support, finance, viewer) yalnızca yönetim konsolu yetkileriyle çalışır;
+        // bu rotalar için yalnızca superuser, super_admin veya eski (staff_role NULL) yöneticiler geçer (plan §3).
+        const isFullAdmin = !!u && (u.is_superuser === true || u.staff_role == null || u.staff_role === 'super_admin');
+        if (!u || u.role !== 'admin' || u.is_active === false || !isFullAdmin) {
             return res.status(403).json({ error: 'Yetkisiz erişim' });
         }
         next();

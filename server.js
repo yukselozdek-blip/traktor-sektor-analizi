@@ -31,6 +31,9 @@ const buildModelRegionMission = (...a) => geoHelpers.buildModelRegionMission(...
 const parseHpBand = (...a) => geoHelpers.parseHpBand(...a);
 const { isSafeSql } = require('./src/lib/sql-guard');
 const { logRouteError, fiveXxLogger, globalErrorHandler } = require('./src/lib/log-error');
+const { getOrgSubscriptionForUser, getDisabledFeatureKeys } = require('./src/lib/org-entitlements');
+const { SAFE_EMAIL } = require('./src/lib/validate');
+const { getBaseUrl } = require('./src/lib/app-url');
 process.on('unhandledRejection', (reason) => {
     console.error('unhandledRejection:', reason && reason.stack ? reason.stack : reason);
 });
@@ -122,7 +125,7 @@ app.use((req, res, next) => {
 // under the original URLs so HTML and ?v= cache-busting keep working.
 const MINIFIED_ASSETS = new Map();
 if (process.env.NODE_ENV === 'production' || process.env.SERVE_MINIFIED === '1') {
-    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js', 'style.css', 'billing.css', 'media-watch.css']) {
+    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js', 'style.css', 'billing.css', 'media-watch.css', 'admin.js', 'kurum.js', 'admin.css']) {
         const min = f.replace(/\.(js|css)$/, '.min.$1');
         if (fs.existsSync(path.join(__dirname, 'public', 'dist', min))) MINIFIED_ASSETS.set('/' + f, '/dist/' + min);
     }
@@ -174,6 +177,8 @@ app.use((req, res, next) => {
 app.get(['/giris/:brandSlug', '/login/:brandSlug', '/portal/:brandSlug'], (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
+app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get(['/kurum', '/kurum/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'kurum.html')));
 
 // Genel API sınırı (IP başına). Bir sayfa yüklemesi onlarca çağrı yapar ve aynı ofisteki kullanıcılar
 // IP paylaşır; bu yüzden dakikalık pencere. Ayar: API_RATE_LIMIT_MAX / API_RATE_LIMIT_WINDOW_MS.
@@ -219,7 +224,7 @@ app.use('/api/', limiter);
 // ============================================
 // AUTH MIDDLEWARE
 // ============================================
-const { authMiddleware, adminOnly } = require('./src/middleware/auth');
+const { authMiddleware, adminOnly, invalidatePasswordChangedCache } = require('./src/middleware/auth');
 const { LOGIN_LIMITER, SIGNUP_LIMITER, FORGOT_LIMITER, RESET_LIMITER, RESEND_LIMITER } = require('./src/middleware/limiters');
 
 app.get('/api/auth/diagnostic', authMiddleware, adminOnly, async (req, res) => {
@@ -4703,6 +4708,31 @@ function buildUserPayload(user) {
 
 function escapeMailHtml(v) { return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+// Kurum daveti e-postası (ADMIN_PANEL_PLAN §7.2). Hata akışı bozmaz; yalnızca uyarı yazar.
+function sendOrgInviteEmail(req, { email, organizationName, inviterName, organization_name, invited_by_name } = {}) {
+    // org-self.js snake_case alan adlarıyla çağırır; iki biçim de kabul edilir.
+    organizationName = organizationName || organization_name;
+    inviterName = inviterName || invited_by_name;
+    try {
+        const base = getBaseUrl(req);
+        const link = `${base}/signup.html`;
+        const org = String(organizationName || '');
+        const inviter = String(inviterName || '');
+        const subject = `${org} kurumuna davet edildiniz - Traktör Sektör Analizi`;
+        const text = `Merhaba,\n\n${org} kurumuna Traktör Sektör Analizi üzerinden davet edildiniz${inviter ? ` (davet eden: ${inviter})` : ''}.\n\n` +
+            `Davet kodu gerekmez. Aşağıdaki bağlantıdan, bu e-posta adresiyle (${email}) kayıt olun:\n${link}\n\n` +
+            `Bu daveti beklemiyorsanız bu e-postayı yok sayabilirsiniz.`;
+        const html = `<p>Merhaba,</p><p><strong>${escapeMailHtml(org)}</strong> kurumuna Traktör Sektör Analizi üzerinden davet edildiniz${inviter ? ` (davet eden: ${escapeMailHtml(inviter)})` : ''}.</p>` +
+            `<p>Davet kodu gerekmez. Aşağıdaki bağlantıdan, bu e-posta adresiyle (${escapeMailHtml(email)}) kayıt olun:</p>` +
+            `<p><a href="${escapeMailHtml(link)}">Kayıt olun</a></p>` +
+            `<p>Bu daveti beklemiyorsanız bu e-postayı yok sayabilirsiniz.</p>`;
+        require('./src/lib/mailer').sendMail({ to: email, subject, text, html })
+            .catch((err) => console.warn('[org-invite] e-posta gönderilemedi:', err && err.message ? err.message : err));
+    } catch (err) {
+        console.warn('[org-invite] e-posta hazırlanamadı:', err && err.message ? err.message : err);
+    }
+}
+
 function issueAuthToken(user) {
     return jwt.sign(
         { id: user.id, email: user.email, role: user.role, brand_id: user.brand_id, sup: !!user.is_superuser },
@@ -6405,6 +6435,9 @@ const SUBSCRIPTION_SELECT = `
 // ve dönemi dolmamış abonelik. current_period_end NULL ise (süresiz/tanımsız) dolmuş sayılmaz.
 async function getUserActiveSubscription(userId) {
     if (!userId) return null;
+    // Kurum sözleşmesi kişisel kartlı aboneliğe önceliklidir (ADMIN_PANEL_PLAN §5).
+    const orgSub = await getOrgSubscriptionForUser(pool, userId);
+    if (orgSub) return orgSub;
     const r = await pool.query(`${SUBSCRIPTION_SELECT}
         WHERE s.user_id = $1 AND s.status IN ('active', 'trialing')
           AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
@@ -6417,6 +6450,8 @@ async function getUserActiveSubscription(userId) {
 // Bu sonuç YETKİ/limit kararında kullanılmaz.
 async function getUserSubscriptionAnyStatus(userId) {
     if (!userId) return null;
+    const orgSub = await getOrgSubscriptionForUser(pool, userId);
+    if (orgSub) return orgSub;
     const r = await pool.query(`${SUBSCRIPTION_SELECT}
         WHERE s.user_id = $1 AND s.status IN ('active', 'trialing', 'pending')
         ORDER BY s.created_at DESC LIMIT 1
@@ -6464,7 +6499,9 @@ async function userHasFeature(userId, featureKey, userRole) {
     try {
         keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
     } catch (e) { keys = []; }
-    return keys.includes(featureKey);
+    if (!keys.includes(featureKey)) return false;
+    const disabled = await getDisabledFeatureKeys(pool);
+    return !disabled.has(featureKey);
 }
 
 // requireFeature middleware (bir veya birden çok özellik anahtarı verilebilir; biri varsa geçer)
@@ -6499,7 +6536,16 @@ function requireFeature(...featureKeys) {
             try {
                 keys = typeof sub.feature_keys === 'string' ? JSON.parse(sub.feature_keys) : (Array.isArray(sub.feature_keys) ? sub.feature_keys : []);
             } catch (e) { keys = []; }
-            const hasAccess = featureKeys.some(k => keys.includes(k));
+            // Küresel olarak kapatılmış özellikler (feature_flags) admin dışı herkese kapalıdır.
+            const disabled = await getDisabledFeatureKeys(pool);
+            if (featureKeys.length && featureKeys.every(k => disabled.has(k))) {
+                return res.status(403).json({
+                    code: 'FEATURE_DISABLED',
+                    error: 'Bu özellik şu anda kullanıma kapalı.',
+                    required_features: featureKeys
+                });
+            }
+            const hasAccess = featureKeys.some(k => keys.includes(k) && !disabled.has(k));
             if (!hasAccess) {
                 return res.status(402).json({
                     error: 'Bu özellik için planınızı yükseltmeniz gerekiyor',
@@ -6549,6 +6595,8 @@ async function getPlanLimits(userId, userRole) {
     }
     const sub = await getUserActiveSubscription(userId);
     if (!sub) return { max_rivals: 0, history_months: 0, ai_queries_monthly: 0, export_rows_monthly: 0, api_requests_monthly: 0, whatsapp_phones: 0 };
+    // Kurum aboneliğinde limitler (plan + limit istisnaları) türetilmiş nesnede hazır gelir.
+    if (sub.plan_limits && typeof sub.plan_limits === 'object' && sub.source === 'organization') return sub.plan_limits;
     const r = await pool.query(`SELECT plan_limits FROM subscription_plans WHERE id = $1`, [sub.plan_id]);
     try {
         const raw = r.rows[0]?.plan_limits;
@@ -6965,6 +7013,8 @@ function buildConversationContext(history) {
 
 require('./src/routes/ai-analyze')(app, { authMiddleware, requireFeature, requireAiQuota, recordAiUsage, MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL, errMsg });
 require('./src/routes/governance')(app, { pool, authMiddleware, adminOnly });
+require('./src/routes/admin-console')(app, { pool, authMiddleware, invalidatePasswordChangedCache, SAFE_EMAIL });
+require('./src/routes/org-self')(app, { pool, authMiddleware, SAFE_EMAIL, sendOrgInviteEmail });
 require('./src/routes/chatbot')(app, { authMiddleware, requireFeature, requireAiQuota, recordAiUsage, resolveAssistantQuestion, normalizeSearchText });
 
 require('./src/routes/seed-admin')(app, { pool, authMiddleware, adminOnly, errMsg });

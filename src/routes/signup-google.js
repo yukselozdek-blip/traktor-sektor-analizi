@@ -8,6 +8,16 @@ const { validateProfileText, SAFE_EMAIL } = require('../lib/validate');
 const { SIGNUP_GLOBAL_LIMITER } = require('../middleware/limiters');
 const { INVITE_ERROR, consumeInviteCode } = require('../lib/invites');
 const { newVerifyToken, hashVerifyToken, verifyExpiry, sendVerificationEmail } = require('../lib/verify-email');
+const { findSignupOrganization, addMemberWithSeatCheck } = require('../lib/org-entitlements');
+
+// Kurum kaydı için ortak yardımcı: kurum markası + üyelik (koltuk kontrollü). Transaction içinde çağrılır.
+async function resolveOrgForSignup(client, email) {
+    const orgFound = await findSignupOrganization(client, email);
+    if (!orgFound) return null;
+    const orgRow = (await client.query('SELECT brand_id FROM organizations WHERE id = $1', [orgFound.organization_id])).rows[0];
+    if (!orgRow) return null;
+    return { ...orgFound, brand_id: orgRow.brand_id };
+}
 
 module.exports = function registerSignupGoogle(app, ctx) {
     const {
@@ -32,7 +42,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
             if (!email || !password || !full_name || !company_name || !job_title) {
                 return res.status(400).json({ error: 'E-posta, şifre, ad-soyad, firma adı ve unvan zorunludur' });
             }
-            if (!isSuperEmail && !inviteCode) return res.status(400).json({ error: INVITE_ERROR });
+            // Davet kodu yoksa kurum eşleşmesi transaction içinde aranır (ADMIN_PANEL_PLAN §6); eşleşme yoksa INVITE_ERROR.
             if (!brand_id && isSuperEmail) return res.status(400).json({ error: 'Marka seçimi zorunludur' });
             if (!PASSWORD_POLICY.test(String(password))) {
                 return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
@@ -55,11 +65,17 @@ module.exports = function registerSignupGoogle(app, ctx) {
 
             // Davet kodu tüketimi, kullanıcı/abonelik kayıtlarıyla aynı transaction'da: kayıt başarısız olursa kod harcanmaz.
             const client = await pool.connect();
-            let newUser, pendingSub = null, effectiveBrandId, effectivePlan = plan_slug, inviteId = null;
+            let newUser, pendingSub = null, effectiveBrandId, effectivePlan = plan_slug, inviteId = null, orgId = null;
             try {
                 await client.query('BEGIN');
                 effectiveBrandId = brand_id ? Number(brand_id) : null;
-                if (!isSuperEmail) {
+                let orgFound = null;
+                if (!isSuperEmail && !inviteCode) {
+                    orgFound = await resolveOrgForSignup(client, email);
+                    if (!orgFound) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
+                    effectiveBrandId = orgFound.brand_id;
+                    orgId = orgFound.organization_id;
+                } else if (!isSuperEmail) {
                     const invite = await consumeInviteCode(client, inviteCode);
                     if (!invite) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
                     if (effectiveBrandId && effectiveBrandId !== invite.brand_id) {
@@ -91,8 +107,20 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 );
                 newUser = userInsert.rows[0];
 
-                // Plan seçimi varsa pending abonelik aç
-                if (effectivePlan) {
+                // Kurum üyeliği: koltuk kontrolü kurum satırını kilitleyerek yapılır (ORG_SEATS_FULL → 403).
+                if (orgId) {
+                    const seat = await addMemberWithSeatCheck(client, orgId, newUser.id, { memberRole: orgFound.member_role, joinedVia: orgFound.joined_via });
+                    if (!seat.ok) {
+                        await client.query('ROLLBACK');
+                        if (seat.code === 'ORG_SEATS_FULL') {
+                            return res.status(403).json({ code: 'ORG_SEATS_FULL', error: 'Kurumunuzun kullanıcı kotası dolu. Kurum yöneticinizle iletişime geçin.' });
+                        }
+                        return res.status(400).json({ error: INVITE_ERROR });
+                    }
+                }
+
+                // Plan seçimi varsa pending abonelik aç (kurum kaydında kişisel abonelik açılmaz)
+                if (effectivePlan && !orgId) {
                     const planRes = await client.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1 AND is_active = true', [String(effectivePlan).toLowerCase()]);
                     if (planRes.rows.length > 0) {
                         const subInsert = await client.query(
@@ -114,7 +142,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 client.release();
             }
 
-            await logAuthAudit(newUser.id, 'signup_password', req, { brand_id: effectiveBrandId, plan: effectivePlan || null, invite_id: inviteId });
+            await logAuthAudit(newUser.id, 'signup_password', req, { brand_id: effectiveBrandId, plan: orgId ? null : (effectivePlan || null), invite_id: inviteId, organization_id: orgId });
             // E-posta doğrulama bağlantısı: hata/SMTP yokluğu kayıt akışını asla etkilemez.
             sendVerificationEmail(req, newUser, verifyToken, escapeMailHtml);
             // Oturum/çerez VERİLMEZ: giriş, e-posta doğrulandıktan sonra yapılır.
@@ -214,7 +242,10 @@ module.exports = function registerSignupGoogle(app, ctx) {
             if (textErr) return res.status(400).json({ error: textErr });
             const isSuperuser = SUPERUSER_EMAILS.has(profile.email);
             const inviteCode = typeof invite_code === 'string' ? invite_code : '';
-            if (!company_name || !job_title || (isSuperuser ? !brand_id : !inviteCode)) {
+            // Davet kodu yoksa, e-posta bir kurumla eşleşiyorsa (bekleyen davet / alan adı) davet kodu istenmez (plan §6).
+            const preOrg = !isSuperuser && !inviteCode && company_name && job_title
+                ? await findSignupOrganization(pool, profile.email) : null;
+            if (!company_name || !job_title || (isSuperuser ? !brand_id : (!inviteCode && !preOrg))) {
                 return res.status(202).json({
                     code: 'GOOGLE_NEEDS_PROFILE',
                     google_email: profile.email,
@@ -224,12 +255,18 @@ module.exports = function registerSignupGoogle(app, ctx) {
             }
 
             const client = await pool.connect();
-            let newUser, pendingSub = null, effectiveBrandId, inviteId = null;
+            let newUser, pendingSub = null, effectiveBrandId, inviteId = null, orgId = null;
             try {
                 await client.query('BEGIN');
                 effectiveBrandId = brand_id ? Number(brand_id) : null;
                 let invitePlan = null;
-                if (!isSuperuser) {
+                let orgFound = null;
+                if (!isSuperuser && !inviteCode) {
+                    orgFound = await resolveOrgForSignup(client, profile.email);
+                    if (!orgFound) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
+                    effectiveBrandId = orgFound.brand_id;
+                    orgId = orgFound.organization_id;
+                } else if (!isSuperuser) {
                     const invite = await consumeInviteCode(client, inviteCode);
                     if (!invite) { await client.query('ROLLBACK'); return res.status(400).json({ error: INVITE_ERROR }); }
                     if (effectiveBrandId && effectiveBrandId !== invite.brand_id) {
@@ -254,8 +291,21 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 );
                 newUser = ins.rows[0];
 
+                // Kurum üyeliği: koltuk kontrolü kurum satırını kilitleyerek yapılır (ORG_SEATS_FULL → 403).
+                if (orgId) {
+                    const seat = await addMemberWithSeatCheck(client, orgId, newUser.id, { memberRole: orgFound.member_role, joinedVia: orgFound.joined_via });
+                    if (!seat.ok) {
+                        await client.query('ROLLBACK');
+                        if (seat.code === 'ORG_SEATS_FULL') {
+                            return res.status(403).json({ code: 'ORG_SEATS_FULL', error: 'Kurumunuzun kullanıcı kotası dolu. Kurum yöneticinizle iletişime geçin.' });
+                        }
+                        return res.status(400).json({ error: INVITE_ERROR });
+                    }
+                }
+
                 const planSlug = plan_slug || invitePlan;
-                if (planSlug) {
+                // Kurum kaydında kişisel pending abonelik açılmaz.
+                if (planSlug && !orgId) {
                     const planRes = await client.query('SELECT id, slug, name FROM subscription_plans WHERE slug = $1', [String(planSlug).toLowerCase()]);
                     if (planRes.rows.length > 0) {
                         const subIns = await client.query(
@@ -274,7 +324,7 @@ module.exports = function registerSignupGoogle(app, ctx) {
                 client.release();
             }
 
-            await logAuthAudit(newUser.id, 'signup_google', req, { brand_id: effectiveBrandId, invite_id: inviteId });
+            await logAuthAudit(newUser.id, 'signup_google', req, { brand_id: effectiveBrandId, invite_id: inviteId, organization_id: orgId });
             const newChallenge = require('../lib/mfa').mfaChallenge(newUser);
             if (newChallenge) return res.status(201).json({ ...newChallenge, is_new: true });
             res.status(201).json({
