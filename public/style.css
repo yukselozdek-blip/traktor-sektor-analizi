@@ -14188,3 +14188,85 @@ body.is-brand-banner .be-kpi-grid {
 .gov-tabs [role="tab"]:hover { color: var(--text-primary); }
 .gov-tabs [role="tab"].is-active { color: var(--text-primary); border-bottom-color: var(--brand-primary); }
 .gov-tabs [role="tab"]:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: -2px; }
+
+/* Superuser paket önizlemesi: üst çubukta kompakt durum hapı */
+.superuser-preview-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 4px 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.14);
+    color: #fde68a;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.superuser-preview-pill-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.superuser-preview-pill-close {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(251, 191, 36, 0.5);
+    background: rgba(2, 6, 23, 0.6);
+    color: #fde68a;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.superuser-preview-pill-close:hover { background: rgba(251, 191, 36, 0.25); }
+.superuser-preview-pill-close:focus-visible { outline: 2px solid #fde68a; outline-offset: 2px; }
+
+/* Ayarlar kartı: paket önizleme alanları */
+.settings-card-note {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+.settings-field-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.settings-select {
+    min-width: 240px;
+    max-width: 100%;
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.settings-select:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+
+/* Rakip tablosu: marka adı okunur metinle, marka rengi küçük nokta olarak gösterilir */
+.comp-brand-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.comp-brand-dot {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--brand-dot, #64748b);
+    box-shadow: 0 0 0 2px rgba(241, 245, 249, 0.18);
+}
+.rank.comp-rank {
+    background: color-mix(in srgb, var(--brand-dot, #64748b) 24%, transparent);
+    color: var(--text-primary);
+}

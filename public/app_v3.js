@@ -664,6 +664,14 @@ function applyReadableBrandText() {
     if (!current || contrastRatio(current, primary) < 4.5) root.style.setProperty('--brand-text', `rgb(${on})`);
 }
 
+// Marka adı metin rengi: koyu marka rengi (ör. lacivert) koyu yüzeyde okunmaz; okunur ton kullanılır
+function readableBrandTextColor(color) {
+    const rgb = parseCssColor(color);
+    if (!rgb) return '#f1f5f9';
+    if (contrastRatio(rgb, [15, 23, 42]) >= 4.5) return `rgb(${rgb.join(', ')})`;
+    return `rgb(${rgb.map(c => Math.round(c + (255 - c) * 0.6)).join(', ')})`;
+}
+
 function applyBrandTheme(brand) {
     const theme = window.BrandExperience?.applyTheme
         ? window.BrandExperience.applyTheme(document.documentElement, brand || {}, 'brand')
@@ -1410,7 +1418,7 @@ async function loadHistoricalPage() {
                         ticks: {
                             color: brandColor,
                             font: { size: 11 },
-                            callback: v => '%' + v.toFixed(1)
+                            callback: v => formatAxisPercent(v)
                         },
                         min: 0
                     }
@@ -1891,7 +1899,7 @@ async function loadBrandEcosystemPage() {
                 data: {
                     labels: topBrandSlice.map(item => item.name),
                     datasets: [{
-                        label: 'Pazar payi %',
+                        label: 'Pazar payı %',
                         data: topBrandSlice.map(item => item.market_share_pct || 0),
                         backgroundColor: topBrandSlice.map((item, index) => palette[index % palette.length] + 'bb'),
                         borderRadius: 8
@@ -1916,7 +1924,7 @@ async function loadBrandEcosystemPage() {
                             grid: { display: false }
                         },
                         y: {
-                            ticks: { color: '#94a3b8', callback: value => `%${value}` },
+                            ticks: { color: '#94a3b8', callback: value => formatAxisPercent(value) },
                             grid: { color: 'rgba(148,163,184,0.08)' }
                         }
                     }
@@ -1944,7 +1952,7 @@ async function loadHpCommandCenterPage() {
         const data = await API.getHpCommandCenter(requestedBrandId);
         if (!data) return;
 
-        const monthNames = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik'];
+        const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
         const fmtPct = (value, digits = 1) => value === null || value === undefined ? '-' : `%${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
         const fmtSignedPct = (value, digits = 1) => value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}%${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
         const fmtSignedPoints = (value, digits = 1) => value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}${Number(value).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits })} puan`;
@@ -1970,12 +1978,12 @@ async function loadHpCommandCenterPage() {
             {
                 icon: 'fas fa-wave-square',
                 title: `${data.concentration?.dominant_segment || '-'} lider segment`,
-                text: `${fmtPct(data.concentration?.dominant_share_pct)} pay ile HP hacminin merkezini tasiyor.`
+                text: `${fmtPct(data.concentration?.dominant_share_pct)} pay ile HP hacminin merkezini taşıyor.`
             },
             {
                 icon: 'fas fa-arrow-trend-up',
                 title: `${data.concentration?.fastest_segment || '-'} ivmeli buyuyor`,
-                text: `${fmtSignedPct(data.concentration?.fastest_segment_yoy_pct)} ile onceki döneme gore en hızlı hareket eden segment.`
+                text: `${fmtSignedPct(data.concentration?.fastest_segment_yoy_pct)} ile önceki döneme göre en hızlı hareket eden segment.`
             },
             {
                 icon: 'fas fa-seedling',
@@ -1984,8 +1992,8 @@ async function loadHpCommandCenterPage() {
             },
             {
                 icon: 'fas fa-crosshairs',
-                title: `${spotlight.brand_name || 'Seçili marka'} odak noktasi`,
-                text: `${spotlight.dominant_segment || '-'} segmentinde portföy agirligi ${fmtPct(spotlight.dominant_segment_weight_pct)} seviyesinde.`
+                title: `${spotlight.brand_name || 'Seçili marka'} odak noktası`,
+                text: `${spotlight.dominant_segment || '-'} segmentinde portföy ağırlığı ${fmtPct(spotlight.dominant_segment_weight_pct)} seviyesinde.`
             }
         ];
 
@@ -2065,7 +2073,7 @@ async function loadHpCommandCenterPage() {
                     <span class="${segment.yoy_pct !== null && segment.yoy_pct < 0 ? 'tm-delta-neg' : 'tm-delta-pos'}">${fmtSignedPct(segment.yoy_pct)}</span>
                 </div>
                 <div class="hpx-seg-value">${formatNumber(segment.curr_partial)}</div>
-                <div class="hpx-seg-share">${fmtPct(segment.share_pct)} pazar payi</div>
+                <div class="hpx-seg-share">${fmtPct(segment.share_pct)} pazar payı</div>
                 <div class="hpx-seg-meta">Marka: ${segment.top_brand ? `${escapeHtml(segment.top_brand.brand)} (${formatNumber(segment.top_brand.sales)})` : '-'}</div>
                 <div class="hpx-seg-meta">İl: ${segment.top_province ? `${escapeHtml(segment.top_province.province)} (${formatNumber(segment.top_province.sales)})` : '-'}</div>
                 <div class="hpx-seg-meta">Model: ${segment.top_model ? `${escapeHtml(segment.top_model.model)} (${formatNumber(segment.top_model.sales)})` : '-'}</div>
@@ -2076,9 +2084,9 @@ async function loadHpCommandCenterPage() {
             <div class="hpx-page">
                 <section class="hpx-hero">
                     <div>
-                        <div class="hpx-eyebrow">HP Intelligence</div>
+                        <div class="hpx-eyebrow">HP Analitiği</div>
                         <h2>HP Segment Merkezi</h2>
-                        <p>HP Segment, Top 10 HP&Marka, Top 10 HP&İl, Top 10 HP&Model, OBT, marka spotlight ve HP marka matrisi artık tek karar ekraninda birlesiyor.</p>
+                        <p>HP Segment, Top 10 HP&Marka, Top 10 HP&İl, Top 10 HP&Model, OBT, marka spotlight ve HP marka matrisi artık tek karar ekranında birleşiyor.</p>
                     </div>
                     <div class="hpx-hero-tools">
                         <div class="hpx-period-pill"><i class="fas fa-calendar-alt"></i><span>${periodLabel}</span></div>
@@ -2118,8 +2126,8 @@ async function loadHpCommandCenterPage() {
                     <div class="chart-card hpx-panel hpx-span-7">
                         <div class="hpx-panel-head">
                             <div>
-                                <h3>Segment hacmi ve pazar payi</h3>
-                                <p>Her HP araliginda mevcut adet ve toplam icindeki agirlik</p>
+                                <h3>Segment hacmi ve pazar payı</h3>
+                                <p>Her HP aralığında mevcut adet ve toplam içindeki ağırlık</p>
                             </div>
                         </div>
                         <div class="hpx-chart-wrap"><canvas id="hpxSegmentChart"></canvas></div>
@@ -2127,7 +2135,7 @@ async function loadHpCommandCenterPage() {
                     <div class="chart-card hpx-panel hpx-span-5">
                         <div class="hpx-panel-head">
                             <div>
-                                <h3>Yonetici notlari</h3>
+                                <h3>Yönetici notları</h3>
                                 <p>Tek ekranda okunacak ana sinyaller</p>
                             </div>
                         </div>
@@ -2159,7 +2167,7 @@ async function loadHpCommandCenterPage() {
                         <div class="hpx-panel-head">
                             <div>
                                 <h3>${escapeHtml(spotlight.brand_name || 'Marka')} spotlight</h3>
-                                <p>Segment bazinda adet ve pazar payi izi</p>
+                                <p>Segment bazinda adet ve pazar payı izi</p>
                             </div>
                         </div>
                         <div class="hpx-chart-wrap"><canvas id="hpxSpotlightChart"></canvas></div>
@@ -2208,7 +2216,7 @@ async function loadHpCommandCenterPage() {
                         <div class="hpx-panel-head">
                             <div>
                                 <h3>${escapeHtml(spotlight.brand_name || 'Marka')} derinligi</h3>
-                                <p>Segment icindeki agirlik, pay ve ivme</p>
+                                <p>Segment içindeki ağırlık, pay ve ivme</p>
                             </div>
                         </div>
                         <div class="hpx-table-wrap">
@@ -2217,8 +2225,8 @@ async function loadHpCommandCenterPage() {
                                     <tr>
                                         <th>HP</th>
                                         <th>Marka adet</th>
-                                        <th>Portfoy payi</th>
-                                        <th>Pazar payi</th>
+                                        <th>Portfoy payı</th>
+                                        <th>Pazar payı</th>
                                         <th>Pay delta</th>
                                         <th>YoY</th>
                                     </tr>
@@ -2272,7 +2280,7 @@ async function loadHpCommandCenterPage() {
                         },
                         {
                             type: 'line',
-                            label: 'Pazar payi %',
+                            label: 'Pazar payı %',
                             data: orderedSegments.map(segment => segment.share_pct || 0),
                             borderColor: '#f59e0b',
                             backgroundColor: '#f59e0b33',
@@ -2299,7 +2307,7 @@ async function loadHpCommandCenterPage() {
                     scales: {
                         x: { ticks: { color: '#cbd5e1' }, grid: { display: false } },
                         y: { ticks: { color: '#94a3b8', callback: value => formatNumber(value) }, grid: { color: 'rgba(148,163,184,0.08)' } },
-                        y1: { position: 'right', ticks: { color: '#fbbf24', callback: value => `%${value}` }, grid: { drawOnChartArea: false } }
+                        y1: { position: 'right', ticks: { color: '#fbbf24', callback: value => formatAxisPercent(value) }, grid: { drawOnChartArea: false } }
                     }
                 }
             });
@@ -2359,7 +2367,7 @@ async function loadHpCommandCenterPage() {
                         },
                         {
                             type: 'line',
-                            label: 'Pazar payi %',
+                            label: 'Pazar payı %',
                             data: spotlightRows.map(segment => segment.market_share_current_pct || 0),
                             borderColor: '#22c55e',
                             backgroundColor: '#22c55e22',
@@ -2386,7 +2394,7 @@ async function loadHpCommandCenterPage() {
                     scales: {
                         x: { ticks: { color: '#cbd5e1' }, grid: { display: false } },
                         y: { ticks: { color: '#94a3b8', callback: value => formatNumber(value) }, grid: { color: 'rgba(148,163,184,0.08)' } },
-                        y1: { position: 'right', ticks: { color: '#4ade80', callback: value => `%${value}` }, grid: { drawOnChartArea: false } }
+                        y1: { position: 'right', ticks: { color: '#4ade80', callback: value => formatAxisPercent(value) }, grid: { drawOnChartArea: false } }
                     }
                 }
             });
@@ -2942,7 +2950,7 @@ function renderProvTopBrandCharts(report = {}) {
                 scales: {
                     x: {
                         grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { color: '#64748b', callback: value => `${value}%` }
+                        ticks: { color: '#64748b', callback: value => formatAxisPercent(value) }
                     },
                     y: {
                         grid: { display: false },
@@ -4083,7 +4091,7 @@ async function loadHpSegmentPage() {
                                 const val = ctx.raw;
                                 const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
                                 const pct = total > 0 ? (val * 100 / total).toFixed(1) : 0;
-                                return `${ctx.label}: ${val.toLocaleString('tr-TR')} adet (${pct}%)`;
+                                return `${ctx.label}: ${val.toLocaleString('tr-TR')} adet (${formatShareValue(pct)})`;
                             }
                         }
                     },
@@ -4104,7 +4112,7 @@ async function loadHpSegmentPage() {
                         ctx.font = 'bold 11px Inter';
                         ctx.textAlign = 'center';
                         ctx.fillText(`${val.toLocaleString('tr-TR')}`, x, y - 6);
-                        ctx.fillText(`${pct}%`, x, y + 8);
+                        ctx.fillText(formatShareValue(pct), x, y + 8);
                         ctx.restore();
                     });
                 }
@@ -4493,6 +4501,31 @@ function formatDashboardPercent(value, digits = 1) {
     })}`;
 }
 
+// Marka/pay değerleri: küçük paylar (%1'in altı) iki ondalıkla okunur, örn. %0,36
+function formatShareValue(value) {
+    if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '-';
+    const numeric = Number(value);
+    return formatDashboardPercent(numeric, Math.abs(numeric) < 1 && numeric !== 0 ? 2 : 1);
+}
+
+// Sunucudan gelen hazır metinlerdeki nokta ondalıklı yüzde/puan değerlerini Türkçe biçime çevirir:
+// "0.36%" -> "%0,36", "+34.6%" -> "+%34,6", "-30.5%" -> "%-30,5", "+0.17 puan" -> "+0,17 puan"
+function localizeNumericText(text) {
+    return String(text ?? '')
+        .replace(/([+-]?)(\d+)\.(\d+)%/g, (_, sign, int, dec) => {
+            if (sign === '-') return `%-${int},${dec}`;
+            return `${sign === '+' ? '+' : ''}%${int},${dec}`;
+        })
+        .replace(/([+-]?)(\d+)\.(\d+)( puan)/g, (_, sign, int, dec, unit) => `${sign}${int},${dec}${unit}`);
+}
+
+// Eksen etiketleri: tam sayıda %12, ondalıklı değerde %0,5
+function formatAxisPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '';
+    return formatDashboardPercent(numeric, Number.isInteger(numeric) ? 0 : 1);
+}
+
 function formatDashboardDelta(value, digits = 1) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Veri yok';
     const num = Number(value);
@@ -4593,7 +4626,7 @@ function syncDashboardFilterPanel(summaryText = '') {
     if (summaryText && summary) summary.textContent = summaryText;
     if (toggleBtn) {
         toggleBtn.innerHTML = dashboardFiltersCollapsed
-            ? '<i class="fas fa-sliders-h"></i><span>Filtreleri Goster</span>'
+            ? '<i class="fas fa-sliders-h"></i><span>Filtreleri Göster</span>'
             : '<i class="fas fa-eye-slash"></i><span>Filtreleri Gizle</span>';
     }
 }
@@ -4601,7 +4634,7 @@ function syncDashboardFilterPanel(summaryText = '') {
 function buildDashboardFilterSummary(data) {
     const parts = [];
     if (data?.selected_brand?.brand_name) parts.push(data.selected_brand.brand_name);
-    parts.push(data?.period?.label || 'Guncel görünüm');
+    parts.push(data?.period?.label || 'Güncel görünüm');
     if (data?.highlights?.top_category?.label) parts.push(data.highlights.top_category.label);
     if (data?.highlights?.top_drive?.label) parts.push(data.highlights.top_drive.label);
     return parts.join(' • ');
@@ -4635,31 +4668,35 @@ function renderDashboardTrendChart(data) {
     const labels = trend.map(item => item.label);
     const baseOptions = chartOptions('Satış Adedi');
     const datasets = [];
+    // Cari yıl: veri içeren son aydan sonrası null (çizgi düşmez); önceki yıl tüm 12 ayı korur
+    const lastDataIdx = getLastDataMonthIndex(trend, 'market_sales');
 
     if (data?.trend_mode === 'focus-brand' && data?.selected_brand) {
         datasets.push({
             label: 'Toplam Pazar',
-            data: trend.map(item => item.market_sales),
+            data: maskMonthsAfter(trend.map(item => item.market_sales), lastDataIdx),
             borderColor: '#38bdf8',
             backgroundColor: 'rgba(56,189,248,0.10)',
             fill: false,
             tension: 0.35,
             borderWidth: 2,
-            pointRadius: 3
+            pointRadius: 3,
+            spanGaps: false
         });
         datasets.push({
             label: data.selected_brand.brand_name,
-            data: trend.map(item => item.context_sales),
+            data: maskMonthsAfter(trend.map(item => item.context_sales), lastDataIdx),
             borderColor: brandColor,
             backgroundColor: `${brandColor}22`,
             fill: true,
             tension: 0.35,
             borderWidth: 3,
-            pointRadius: 4
+            pointRadius: 4,
+            spanGaps: false
         });
         if (data.period?.target_year) {
             datasets.push({
-                label: `${data.period.target_year - 1} Ayni Donem`,
+                label: `${data.period.target_year - 1} Aynı Dönem`,
                 data: trend.map(item => item.prev_context_sales),
                 borderColor: '#94a3b8',
                 backgroundColor: 'transparent',
@@ -4667,19 +4704,21 @@ function renderDashboardTrendChart(data) {
                 tension: 0.28,
                 borderWidth: 2,
                 pointRadius: 2,
-                borderDash: [8, 6]
+                borderDash: [8, 6],
+                spanGaps: false
             });
         }
     } else {
         datasets.push({
-            label: data?.period?.target_year ? `${data.period.target_year} Pazar` : 'Filtrelenmis Toplam',
-            data: trend.map(item => item.market_sales),
+            label: data?.period?.target_year ? `${data.period.target_year} Pazar` : 'Filtrelenmiş Toplam',
+            data: maskMonthsAfter(trend.map(item => item.market_sales), lastDataIdx),
             borderColor: brandColor,
             backgroundColor: `${brandColor}22`,
             fill: true,
             tension: 0.35,
             borderWidth: 3,
-            pointRadius: 4
+            pointRadius: 4,
+            spanGaps: false
         });
         if (data?.period?.target_year) {
             datasets.push({
@@ -4691,7 +4730,8 @@ function renderDashboardTrendChart(data) {
                 tension: 0.28,
                 borderWidth: 2,
                 pointRadius: 2,
-                borderDash: [8, 6]
+                borderDash: [8, 6],
+                spanGaps: false
             });
         }
     }
@@ -4861,7 +4901,7 @@ function renderBrandHubTrendChart(data) {
         data: {
             labels: monthlyTrend.map(item => monthLabels[(item.month || 1) - 1] || String(item.month || '')),
             datasets: [{
-                label: 'Aylik satış',
+                label: 'Aylık satış',
                 data: monthlyTrend.map(item => item.total_sales),
                 borderColor: activeBrandContext?.primary_color || currentUser?.brand?.primary_color || 'rgba(59,130,246,1)',
                 backgroundColor: `rgba(${getBrandThemeProfile(activeBrandContext || currentUser?.brand || {}).primary_rgb || '59, 130, 246'}, 0.14)`,
@@ -4918,13 +4958,14 @@ function renderBrandHubMixChart(data) {
 function formatSignedPct(value, digits = 1) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '-';
-    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(digits).replace(/\.0$/, '')}%`;
+    return `${numeric > 0 ? '+' : ''}${formatDashboardPercent(numeric, digits)}`;
 }
 
 function formatSignedPoints(value, digits = 1) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '-';
-    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(digits).replace(/\.0$/, '')} puan`;
+    const body = numeric.toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    return `${numeric > 0 ? '+' : ''}${body} puan`;
 }
 
 function formatUsdValue(value) {
@@ -4948,6 +4989,9 @@ function renderBrandHubExecutiveTrendChart(report, brandName = 'Marka') {
     const rows = report?.sales?.monthly_trend || [];
     const baseOptions = chartOptions('Adet');
     const theme = getBrandThemeProfile(activeBrandContext || currentUser?.brand || {});
+    // Son veri ayı: toplam pazarın > 0 olduğu son ay (pazar verisi yoksa marka satışına düşer)
+    const marketKey = rows.some(item => item?.market_current_sales !== undefined) ? 'market_current_sales' : 'current_sales';
+    const lastDataIdx = getLastDataMonthIndex(rows, marketKey);
     charts.brandHubTrend?.destroy?.();
 
     charts.brandHubTrend = new Chart(el, {
@@ -4957,13 +5001,14 @@ function renderBrandHubExecutiveTrendChart(report, brandName = 'Marka') {
             datasets: [
                 {
                     label: `${report?.latest_period?.year || ''} ${brandName}`,
-                    data: rows.map(item => item.current_sales || 0),
+                    data: maskMonthsAfter(rows.map(item => item.current_sales || 0), lastDataIdx),
                     borderColor: theme.primary_color || '#60a5fa',
                     backgroundColor: `rgba(${theme.primary_rgb || '96, 165, 250'}, 0.12)`,
                     tension: 0.34,
                     fill: true,
                     borderWidth: 3,
-                    pointRadius: 3
+                    pointRadius: 3,
+                    spanGaps: false
                 },
                 {
                     label: `${(report?.latest_period?.year || 0) - 1} ${brandName}`,
@@ -4974,7 +5019,8 @@ function renderBrandHubExecutiveTrendChart(report, brandName = 'Marka') {
                     fill: false,
                     borderWidth: 2,
                     borderDash: [6, 4],
-                    pointRadius: 2
+                    pointRadius: 2,
+                    spanGaps: false
                 }
             ]
         },
@@ -5006,7 +5052,7 @@ function renderBrandHubExecutiveYearlyChart(report, brandName = 'Marka') {
                 },
                 {
                     type: 'line',
-                    label: 'Pazar payi',
+                    label: 'Pazar payı',
                     data: rows.map(item => item.market_share_pct || 0),
                     borderColor: theme.accent_color || '#f472b6',
                     backgroundColor: `rgba(${theme.accent_rgb || '244, 114, 182'}, 0.15)`,
@@ -5030,9 +5076,9 @@ function renderBrandHubExecutiveYearlyChart(report, brandName = 'Marka') {
                     grid: { drawOnChartArea: false },
                     ticks: {
                         color: '#64748b',
-                        callback: value => `${value}%`
+                        callback: value => formatAxisPercent(value)
                     },
-                    title: { display: true, text: 'Pazar payi', color: '#64748b' }
+                    title: { display: true, text: 'Pazar payı', color: '#64748b' }
                 }
             }
         }
@@ -5247,27 +5293,56 @@ function renderGlobalBrandBanner(pageLabel, page) {
         heroTitle,
         showFilterToggle: PAGES_WITH_FILTER.has(page)
     });
-    // Superuser önizleme paket switcher
-    renderSuperuserPreviewSwitch();
+    renderSuperuserPreviewPill();
 }
 
-function renderSuperuserPreviewSwitch() {
-    if (!currentUser?.is_superuser) return;
-    const host = document.getElementById('brandBannerHost');
-    if (!host || host.querySelector('.superuser-preview-switch')) return;
+const SUPERUSER_PREVIEW_PLANS = [
+    { slug: 'starter', label: 'Starter' },
+    { slug: 'growth', label: 'Growth' },
+    { slug: 'enterprise', label: 'Enterprise' }
+];
+
+function getSuperuserPreviewLabel(slug) {
+    return SUPERUSER_PREVIEW_PLANS.find(p => p.slug === slug)?.label || slug;
+}
+
+function buildSuperuserPreviewCardHtml() {
+    if (!currentUser?.is_superuser) return '';
     const current = currentUser.preview_plan_slug || '';
-    const div = document.createElement('div');
-    div.className = 'superuser-preview-switch';
-    div.innerHTML = `
-        <span class="sup-pre-label"><i class="fas fa-crown"></i> Önizleme:</span>
-        <select data-on-change="onSuperuserPreviewChange(this.value)">
-            <option value="">Tüm yetkiler (admin)</option>
-            <option value="starter" ${current === 'starter' ? 'selected' : ''}>Starter</option>
-            <option value="growth" ${current === 'growth' ? 'selected' : ''}>Growth</option>
-            <option value="enterprise" ${current === 'enterprise' ? 'selected' : ''}>Enterprise</option>
-        </select>
+    const options = [
+        `<option value="" ${current === '' ? 'selected' : ''}>Tüm yetkiler (yönetici)</option>`,
+        ...SUPERUSER_PREVIEW_PLANS.map(p => `<option value="${p.slug}" ${current === p.slug ? 'selected' : ''}>${p.label}</option>`)
+    ].join('');
+    return `
+        <div class="card" id="superuserPreviewCard" style="margin-top:24px;">
+            <div class="card-header"><h3><i class="fas fa-crown"></i> Paket önizleme (yalnızca sahip)</h3></div>
+            <div class="card-body">
+                <p class="settings-card-note">Müşterilerin hangi paketle neyi gördüğünü kendi hesabınızda deneyin. Önizleme açıkken yalnızca seçilen paketin özellikleri açılır.</p>
+                <label class="settings-field-label" for="superuserPreviewSelect">Önizleme paketi</label>
+                <select id="superuserPreviewSelect" class="settings-select" data-on-change="onSuperuserPreviewChange(this.value)">
+                    ${options}
+                </select>
+            </div>
+        </div>
     `;
-    host.appendChild(div);
+}
+
+// Üst banner (bh-mc-actions) içinde, sayfa üstüne binmeyen kompakt önizleme hapı
+function renderSuperuserPreviewPill() {
+    const actions = document.querySelector('#brandBannerHost .bh-mc-actions');
+    if (!actions) return;
+    actions.querySelector('#superuserPreviewPill')?.remove();
+    const slug = currentUser?.is_superuser ? currentUser.preview_plan_slug : '';
+    if (!slug) return;
+    const pill = document.createElement('div');
+    pill.id = 'superuserPreviewPill';
+    pill.className = 'superuser-preview-pill';
+    pill.setAttribute('role', 'status');
+    pill.innerHTML = `
+        <span class="superuser-preview-pill-text"><i class="fas fa-crown" aria-hidden="true"></i> Önizleme: ${escapeHtml(getSuperuserPreviewLabel(slug))}</span>
+        <button type="button" class="superuser-preview-pill-close" data-on-click="onSuperuserPreviewChange('')">Kapat</button>
+    `;
+    actions.prepend(pill);
 }
 
 async function onSuperuserPreviewChange(slug) {
@@ -5344,17 +5419,17 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
     const kpiCards = (report.executive_kpis || []).map(item => `
         <article class="bhx-kpi-card">
             <span>${dashboardSafe(item.label || '-')}</span>
-            <strong>${dashboardSafe(item.value || '-')}</strong>
-            <small>${dashboardSafe(item.note || '')}</small>
+            <strong>${dashboardSafe(localizeNumericText(item.value || '-'))}</strong>
+            <small>${dashboardSafe(localizeNumericText(item.note || ''))}</small>
         </article>
     `).join('');
 
     const storylineCards = (report.storyline_cards || []).map(item => `
         <article class="bhx-story-card">
             <span>${dashboardSafe(item.eyebrow || 'Analiz')}</span>
-            <h4>${dashboardSafe(item.title || '-')}</h4>
-            <strong>${dashboardSafe(item.value || '-')}</strong>
-            <p>${dashboardSafe(item.note || '')}</p>
+            <h4>${dashboardSafe(localizeNumericText(item.title || '-'))}</h4>
+            <strong>${dashboardSafe(localizeNumericText(item.value || '-'))}</strong>
+            <p>${dashboardSafe(localizeNumericText(item.note || ''))}</p>
         </article>
     `).join('');
 
@@ -5375,7 +5450,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
                     <div class="bhx-mix-row">
                         <span>${dashboardSafe(item.label || '-')}</span>
                         <div class="bhx-mix-bar"><b style="width:${Math.max(item.share_pct || 0, 6)}%"></b></div>
-                        <strong>${dashboardSafe(item.share_pct != null ? `${item.share_pct}%` : '-')}</strong>
+                        <strong>${dashboardSafe(item.share_pct != null ? formatShareValue(item.share_pct) : '-')}</strong>
                     </div>
                 `).join('') : '<div class="bh-empty">Bu kırılım için veri yok.</div>'}
             </div>
@@ -5391,7 +5466,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
             </div>
             <div class="bhx-rank-meta">
                 <b>${formatNumber(item.total_sales || 0)}</b>
-                <small>${dashboardSafe(item.share_pct != null ? `${item.share_pct}% pay` : '-')}</small>
+                <small>${dashboardSafe(item.share_pct != null ? `${formatShareValue(item.share_pct)} pay` : '-')}</small>
             </div>
         </div>
     `).join('');
@@ -5421,8 +5496,8 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
     `).join('');
 
     const concentrationCards = [
-        { label: 'Top 3 il yoğunluğu', value: sales.top3_share_pct != null ? `${sales.top3_share_pct}%` : '-', note: `${formatNumber(sales.top3_qty || 0)} adet` },
-        { label: 'Top 10 il yoğunluğu', value: sales.top10_share_pct != null ? `${sales.top10_share_pct}%` : '-', note: `${formatNumber(sales.top10_qty || 0)} adet` },
+        { label: 'Top 3 il yoğunluğu', value: sales.top3_share_pct != null ? formatShareValue(sales.top3_share_pct) : '-', note: `${formatNumber(sales.top3_qty || 0)} adet` },
+        { label: 'Top 10 il yoğunluğu', value: sales.top10_share_pct != null ? formatShareValue(sales.top10_share_pct) : '-', note: `${formatNumber(sales.top10_qty || 0)} adet` },
         { label: 'Aktif il yaygınlığı', value: formatNumber(sales.active_provinces || 0), note: 'Tek ile sıkışmayan dağılım' },
         { label: 'Pay farkı', value: dashboardSafe(formatSignedPoints(sales.share_delta_pp, 2)), note: 'Geçen yıl aynı döneme göre' }
     ].map(item => `
@@ -5460,7 +5535,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
         <article class="bhx-model-card" ${modelIntelAttrs(brand?.name || '', item.model_name || '', getKnownModelIntelSource(brand?.name || '', item.model_name || ''))} data-model-intel-hover="true">
             <div class="bhx-model-head">
                 <strong>${dashboardSafe(item.model_name || '-')}</strong>
-                <span>${dashboardSafe(item.share_pct != null ? `${item.share_pct}% pay` : '-')}</span>
+                <span>${dashboardSafe(item.share_pct != null ? `${formatShareValue(item.share_pct)} pay` : '-')}</span>
             </div>
             <div class="bhx-model-metrics">
                 <span>${item.avg_hp ? `${item.avg_hp} HP` : 'HP yok'}</span>
@@ -5490,8 +5565,8 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
     const governanceCards = [...(corporate.governance || []), ...(corporate.official_2025_snapshot || [])].map(item => `
         <div class="bhx-stat-card">
             <span>${dashboardSafe(item.label || '-')}</span>
-            <strong>${dashboardSafe(item.value || '-')}</strong>
-            <small>${dashboardSafe(item.note || '')}</small>
+            <strong>${dashboardSafe(localizeNumericText(item.value || '-'))}</strong>
+            <small>${dashboardSafe(localizeNumericText(item.note || ''))}</small>
         </div>
     `).join('');
 
@@ -5507,9 +5582,9 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
         <div class="bhx-owner-row">
             <div>
                 <strong>${dashboardSafe(item.name || '-')}</strong>
-                <small>Oy ${dashboardSafe(item.vote_pct != null ? `${item.vote_pct}%` : '-')}</small>
+                <small>Oy ${dashboardSafe(item.vote_pct != null ? formatShareValue(item.vote_pct) : '-')}</small>
             </div>
-            <b>${dashboardSafe(item.share_pct != null ? `${item.share_pct}%` : '-')}</b>
+            <b>${dashboardSafe(item.share_pct != null ? formatShareValue(item.share_pct) : '-')}</b>
         </div>
     `).join('');
 
@@ -5907,8 +5982,8 @@ async function loadBrandHubPage() {
 
         const kpiCards = [
             { label: 'Dönem satış hacmi', value: formatNumber(sales.total_sales || 0), meta: periodLabel },
-            { label: 'Yıllık değişim', value: sales.yoy_pct !== null && sales.yoy_pct !== undefined ? `${sales.yoy_pct > 0 ? '+' : ''}${sales.yoy_pct}%` : '-', meta: 'Aynı döneme göre' },
-            { label: 'Pazar payı', value: sales.market_share_pct !== null && sales.market_share_pct !== undefined ? `${sales.market_share_pct}%` : '-', meta: sales.ranking ? `${sales.ranking}. sırada` : 'Sıra bilgisi yok' },
+            { label: 'Yıllık değişim', value: sales.yoy_pct !== null && sales.yoy_pct !== undefined ? formatSignedPct(sales.yoy_pct, 1) : '-', meta: 'Aynı döneme göre' },
+            { label: 'Pazar payı', value: sales.market_share_pct !== null && sales.market_share_pct !== undefined ? formatShareValue(sales.market_share_pct) : '-', meta: sales.ranking ? `${sales.ranking}. sırada` : 'Sıra bilgisi yok' },
             { label: 'Aktif il', value: formatNumber(sales.active_provinces || 0), meta: 'Son dönem saha izi' },
             { label: 'Mevcut model', value: formatNumber(catalog.model_count || 0), meta: catalog.avg_hp ? `${catalog.avg_hp} HP ort.` : 'Katalog özeti' },
             { label: 'Fiyat bandı', value: catalog.min_price_usd && catalog.max_price_usd ? `${fmtPrice(catalog.min_price_usd)} - ${fmtPrice(catalog.max_price_usd)}` : '-', meta: catalog.max_hp ? `${catalog.max_hp} HP tepe` : 'Fiyat bilgisi yok' }
@@ -7298,10 +7373,10 @@ async function loadCompetitorsPage() {
             const isMyBrand = String(b.brand_id || b.id || '') === String(selectedBrandId || '') || b.slug === selectedBrand?.slug;
             tbody.innerHTML += `
                 <tr style="${isMyBrand ? 'background:rgba(59,130,246,0.08);font-weight:600' : ''}">
-                    <td><div class="rank" style="background:${b.primary_color}20;color:${b.primary_color}">${i + 1}</div></td>
-                    <td><span style="color:${b.primary_color}">${isMyBrand ? '★ ' : ''}${escapeHtml(b.brand_name)}</span></td>
+                    <td><div class="rank comp-rank" style="--brand-dot:${escapeHtml(b.primary_color || '#64748b')}">${i + 1}</div></td>
+                    <td><span class="comp-brand-name"><i class="comp-brand-dot" style="--brand-dot:${escapeHtml(b.primary_color || '#64748b')}" aria-hidden="true"></i>${isMyBrand ? '★ ' : ''}${escapeHtml(b.brand_name)}</span></td>
                     <td>${formatNumber(b.brand_sales)}</td>
-                    <td>%${b.market_share_pct}</td>
+                    <td>${formatShareValue(b.market_share_pct)}</td>
                     <td>${isMyBrand ? '<span style="color:var(--brand-primary)">Sizin Markanız</span>' : ''}</td>
                 </tr>
             `;
@@ -7774,7 +7849,7 @@ async function searchModels() {
             <tbody>
                 ${models.map(m => `
                     <tr class="mi-hover-row" ${modelIntelAttrs(m.brand_name, m.model_name, '', m.brand_id, m.model_code || m.tuik_model_adi || '')} data-model-intel-hover="true">
-                        <td style="color:${allBrands.find(b => b.id === m.brand_id)?.primary_color || '#fff'};font-weight:600">${escapeHtml(m.brand_name)}</td>
+                        <td style="color:${readableBrandTextColor(allBrands.find(b => b.id === m.brand_id)?.primary_color)};font-weight:600">${escapeHtml(m.brand_name)}</td>
                         <td>${escapeHtml(m.model_name)}</td>
                         <td>${m.horsepower} HP</td>
                         <td>${escapeHtml(translateLabel(m.category))}</td>
@@ -8956,20 +9031,20 @@ function buildAiExecutiveMemo({ brand, report, compareData, insights }) {
         stance = {
             label: 'Savunmayi sertlestir',
             tone: 'is-down',
-            note: 'Rakibin ivmelendigi il ve HP bantlarinda kayip onleme, fiyat disiplini ve saha kapanisi oncelemeli.'
+            note: 'Rakibin ivmelendiği il ve HP bantlarinda kayıp onleme, fiyat disiplini ve saha kapanışı önceliklendirilmeli.'
         };
     }
 
-    const headline = `${brand?.name || 'Marka'} ${sales?.current_sales ? `${formatNumber(sales.current_sales)} adet` : 'guncel hacim'} ve ${sales?.market_share_pct != null ? formatDashboardPercent(sales.market_share_pct, 1) : '-'} pay ile ${sales?.rank ? `${sales.rank}. sırada` : 'pazardaki konumunda'}.`;
+    const headline = `${brand?.name || 'Marka'} ${sales?.current_sales ? `${formatNumber(sales.current_sales)} adet` : 'güncel hacim'} ve ${sales?.market_share_pct != null ? formatDashboardPercent(sales.market_share_pct, 1) : '-'} pay ile ${sales?.rank ? `${sales.rank}. sırada` : 'pazardaki konumunda'}.`;
     const points = [
         sales?.outperformance_pp != null
-            ? `Pazara gore momentum ${formatSignedPoints(sales.outperformance_pp, 1)} seviyesinde; marka ${formatSignedPct(sales.brand_yoy_pct, 1)} hareket ederken pazar ${formatSignedPct(sales.market_yoy_pct, 1)} degisti.`
+            ? `Pazara göre momentum ${formatSignedPoints(sales.outperformance_pp, 1)} seviyesinde; marka ${formatSignedPct(sales.brand_yoy_pct, 1)} hareket ederken pazar ${formatSignedPct(sales.market_yoy_pct, 1)} değişti.`
             : '',
         opportunity
-            ? `${opportunity.hp} HP bandi ${formatNumber(opportunity.marketSales || 0)} adetlik hacim icinde ${formatNumber(opportunity.openVolume || 0)} adet açık alan uretiyor; lider taraf ${opportunity.leader === 'brand1' ? brand?.name : rivalName}.`
+            ? `${opportunity.hp} HP bandi ${formatNumber(opportunity.marketSales || 0)} adetlik hacim içinde ${formatNumber(opportunity.openVolume || 0)} adet açık alan uretiyor; lider taraf ${opportunity.leader === 'brand1' ? brand?.name : rivalName}.`
             : '',
         battle
-            ? `${battle.name} ${formatNumber(battle.total || 0)} adetlik kritik savas alani; ${battle.leader === 'brand1' ? brand?.name : battle.leader === 'brand2' ? rivalName : 'iki marka'} sahada onde.`
+            ? `${battle.name} ${formatNumber(battle.total || 0)} adetlik kritik savaş alani; ${battle.leader === 'brand1' ? brand?.name : battle.leader === 'brand2' ? rivalName : 'iki marka'} sahada onde.`
             : '',
         decline
             ? `${decline.province_name} ${formatSignedPct(decline.yoy_pct, 1)} ile zayif halka olarak izlenmeli; savunma plani burada baslamali.`
@@ -8995,18 +9070,18 @@ function buildAiScenarioCards({ report, compareData }) {
     return [
         {
             eyebrow: 'Atak senaryosu',
-            title: opportunity ? `${opportunity.hp} HP bandini ac` : 'Acik hacmi topla',
+            title: opportunity ? `${opportunity.hp} HP bandini ac` : 'Açık hacmi topla',
             value: opportunity ? `${fmtNum(opportunity.openVolume || 0)} adet` : `${formatDashboardPercent(sales.market_share_pct || 0)}`,
             note: opportunity
                 ? `Lider pay ile toplam pazar arasindaki bosluk, seçili bandda hızlı hacim toplama alani veriyor.`
-                : 'Markanin pay ivmesi olan segmentlerde hedeflenmis saha kapanisi önerilir.'
+                : 'Markanin pay ivmesi olan segmentlerde hedeflenmis saha kapanışı önerilir.'
         },
         {
             eyebrow: 'Savunma senaryosu',
             title: battle ? `${battle.name} cephesini kilitle` : 'Yüksek hacimli illeri koru',
             value: battle ? `${fmtNum(battle.gap || 0)} adet fark` : `${fmtNum(sales.top3_qty || 0)} adet`,
             note: battle
-                ? `Rakip baskisinin en görünür oldugu cephede bayi, stok ve kampanya temposu ayni gun yönetilmeli.`
+                ? `Rakip baskısının en görünür olduğu cephede bayi, stok ve kampanya temposu aynı gun yönetilmeli.`
                 : 'Top 3 il yoğunluğu markanin kritik saha omurgasini oluşturuyor.'
         },
         {
@@ -9014,7 +9089,7 @@ function buildAiScenarioCards({ report, compareData }) {
             title: topHp ? `${topHp.label} omurgasini yeniden paketle` : 'Portfoy baskısını azalt',
             value: portfolio?.price_per_hp_usd ? `${fmtNum(portfolio.price_per_hp_usd)} $/HP` : `${fmtNum(portfolio.technical_model_count || 0)} model`,
             note: featureLead
-                ? `${featureLead.label} tarafindaki fark, teknik argumanin sahaya nasil tasinacagini netlestiriyor.`
+                ? `${featureLead.label} tarafindaki fark, teknik argumanin sahaya nasil taşınacağını netlestiriyor.`
                 : 'Teknik mimari ile fiyat koridoru birlikte okunarak teklif yapısı sadelestirilmeli.'
         }
     ];
@@ -9038,7 +9113,7 @@ function buildAiRiskCards({ report, compareData, insights }) {
         riskCards.push({
             title: `${losingBattle.name} rakip baskisinda`,
             value: `${formatNumber(losingBattle.gap || 0)} adet`,
-            note: `${compareData?.brand2?.name || 'Rakip'} bu ilde belirgin baski kuruyor.`,
+            note: `${compareData?.brand2?.name || 'Rakip'} bu ilde belirgin baskı kuruyor.`,
             tone: 'is-warning'
         });
     }
@@ -9048,7 +9123,7 @@ function buildAiRiskCards({ report, compareData, insights }) {
         riskCards.push({
             title: 'Fiyat / HP baskısı',
             value: formatAiScoreValue(pricePressure, pricePressure.v1),
-            note: `${compareData?.brand2?.name || 'Rakip'} ayni metrikte daha güçlü gorunuyor.`,
+            note: `${compareData?.brand2?.name || 'Rakip'} aynı metrikte daha güçlü görünüyor.`,
             tone: 'is-warning'
         });
     }
@@ -9065,9 +9140,9 @@ function buildAiRiskCards({ report, compareData, insights }) {
 
     if (riskCards.length === 0) {
         riskCards.push({
-            title: 'Kirmizi alarm kaydi yok',
+            title: 'Kirmizi alarm kaydı yok',
             value: 'Stabil',
-            note: 'Canlı veride acil bir kayip sinyali gözükmüyor; seçili büyüme alanlarina odaklanilabilir.',
+            note: 'Canlı veride acil bir kayıp sinyali gözükmüyor; seçili büyüme alanlarina odaklanilabilir.',
             tone: 'is-up'
         });
     }
@@ -9100,16 +9175,16 @@ function buildAiForecastReadinessNote({ executiveForecast, readiness }) {
 
     if (executiveForecast?.overview?.reference_mode) {
         if (missingLayers.length) {
-            return `Forecast su an referans emtia ve iklim serileri ile calisiyor. ${missingLayers.slice(0, 3).join(', ')} katmanlari gercek import bekliyor.`;
+            return `Forecast su an referans emtia ve iklim serileri ile çalışıyor. ${missingLayers.slice(0, 3).join(', ')} katmanlari gercek import bekliyor.`;
         }
-        return 'Forecast su an referans emtia ve iklim serileri ile calisiyor. Resmi ETL geldikce hassasiyet yukselecek.';
+        return 'Forecast su an referans emtia ve iklim serileri ile çalışıyor. Resmi ETL geldikce hassasiyet yükselecek.';
     }
 
     if (missingLayers.length) {
         return `Bazi agro katmanlari henuz bos: ${missingLayers.slice(0, 3).join(', ')}.`;
     }
 
-    return 'Forecast katmanlari aktif ve marka bazli talep omurgasi calisiyor.';
+    return 'Forecast katmanlari aktif ve marka bazlı talep omurgası çalışıyor.';
 }
 
 function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
@@ -9122,7 +9197,7 @@ function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
     let stance = {
         label: 'Forecast katmani aktif',
         tone: 'is-forecast',
-        note: 'Markanin gelecek 12 aylık hacmi ile 10 yıllık ürün mimarisi ayni kararda okunuyor.'
+        note: 'Markanin gelecek 12 aylık hacmi ile 10 yıllık ürün mimarisi aynı kararda okunuyor.'
     };
 
     if (!executiveForecast?.run) {
@@ -9137,7 +9212,7 @@ function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
         stance = {
             label: 'Destek odakli atak',
             tone: 'is-opportunity',
-            note: 'Destek kapsami olan iller, tahmin hacminin ana hizlandirici katmani halinde gorunuyor.'
+            note: 'Destek kapsamı olan iller, tahmin hacminin ana hızlandırıcı katmani halinde görünüyor.'
         };
     } else if (executiveForecast?.run && (topProvince?.growth_pct || 0) >= 8) {
         stance = {
@@ -9153,13 +9228,13 @@ function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
 
     const points = [
         topProvince
-            ? `${topProvince.province_name} ${formatNumber(topProvince.next_12m_units || 0)} adet ile ilk saldiri ili. ${topProvince.growth_pct != null ? `Beklenen ivme ${formatSignedPct(topProvince.growth_pct, 1)}.` : 'Buyume baz notu olusmadi.'}`
+            ? `${topProvince.province_name} ${formatNumber(topProvince.next_12m_units || 0)} adet ile ilk saldırı ili. ${topProvince.growth_pct != null ? `Beklenen ivme ${formatSignedPct(topProvince.growth_pct, 1)}.` : 'Buyume baz notu olusmadi.'}`
             : '',
         overview.support_driven_share_pct != null
-            ? `Tahmin hacminin ${formatDashboardPercent(overview.support_driven_share_pct, 1)} kismi aktif destek kapsami olan illerde birikiyor.`
+            ? `Tahmin hacminin ${formatDashboardPercent(overview.support_driven_share_pct, 1)} kismi aktif destek kapsamı olan illerde birikiyor.`
             : '',
         hpShift?.dominant_long_term
-            ? `${hpShift.feature_label} tarafinda ${hpShift.dominant_long_term.horizon_year} ufkunun baskin koridoru ${formatForecastFeatureValue('hp_range', hpShift.dominant_long_term.feature_value)}; bu alan ${formatDashboardPercent(hpShift.dominant_long_term.demand_share_pct, 1)} pay uretiyor.`
+            ? `${hpShift.feature_label} tarafinda ${hpShift.dominant_long_term.horizon_year} ufkunun baskın koridoru ${formatForecastFeatureValue('hp_range', hpShift.dominant_long_term.feature_value)}; bu alan ${formatDashboardPercent(hpShift.dominant_long_term.demand_share_pct, 1)} pay uretiyor.`
             : '',
         driveShift?.strongest_gainer
             ? `${driveShift.feature_label} tarafinda en hızlı kayan kombinasyon ${formatForecastFeatureValue('drive_type', driveShift.strongest_gainer.feature_value)} ve kayma ${formatSignedPoints(driveShift.strongest_gainer.delta_share_pct, 1)}.`
@@ -9184,7 +9259,7 @@ function buildAiForecastShiftCards(executiveForecast) {
 
         return {
             eyebrow: item.feature_label,
-            title: `${longYear} baskin kombinasyonu`,
+            title: `${longYear} baskın kombinasyonu`,
             value: longValue,
             note
         };
@@ -9243,9 +9318,19 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
             ? Array.from({ length: compareData.max_month || 12 }, (_, index) => monthLabels[index] || String(index + 1))
             : (report?.sales?.monthly_trend || []).map(item => item.label || monthLabels[(item.month || 1) - 1]);
 
+        // Cari yıl: iki markada da veri olmayan sondaki aylar null (çizgi sıfıra inmez)
+        const trendRows = report?.sales?.monthly_trend || [];
+        const trendMarketKey = trendRows.some(item => item?.market_current_sales !== undefined) ? 'market_current_sales' : 'current_sales';
+        const compareLastIdx = compareData
+            ? Math.max(
+                getLastDataMonthIndex(labels.map((_, index) => ({ v: deep1.monthly?.[index + 1] })), 'v'),
+                getLastDataMonthIndex(labels.map((_, index) => ({ v: deep2.monthly?.[index + 1] })), 'v')
+            )
+            : getLastDataMonthIndex(trendRows, trendMarketKey);
+
         const currentSeries = compareData
-            ? labels.map((_, index) => Number(deep1.monthly?.[index + 1] || 0))
-            : (report?.sales?.monthly_trend || []).map(item => Number(item.current_sales || 0));
+            ? maskMonthsAfter(labels.map((_, index) => Number(deep1.monthly?.[index + 1] || 0)), compareLastIdx)
+            : maskMonthsAfter(trendRows.map(item => Number(item.current_sales || 0)), compareLastIdx);
 
         const compareSeries = compareData
             ? labels.map((_, index) => Number(deep2.monthly?.[index + 1] || 0))
@@ -9266,10 +9351,11 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
                         tension: 0.3,
                         pointRadius: 3,
                         pointHoverRadius: 5,
-                        borderWidth: 3
+                        borderWidth: 3,
+                        spanGaps: false
                     },
                     {
-                        label: compareData ? (brand2?.name || 'Rakip') : 'Geçen yil ayni dönem',
+                        label: compareData ? (brand2?.name || 'Rakip') : 'Geçen yıl aynı dönem',
                         data: compareSeries,
                         borderColor: rival,
                         backgroundColor: 'transparent',
@@ -9310,7 +9396,7 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
             ? (compareData.years || []).map(year => Number(brand2.mktShare?.[year] || 0))
             : [];
 
-        const shareOptions = chartOptions('Pazar payi %');
+        const shareOptions = chartOptions('Pazar payı %');
         charts.aiInsightShare = new Chart(shareEl, {
             type: 'line',
             data: {
@@ -9421,21 +9507,21 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
             ? hpLabels.map(label => Number(brand2.segShare?.[label] || 0))
             : [];
 
-        const hpOptions = chartOptions('Segment payi %');
+        const hpOptions = chartOptions('Segment payı %');
         charts.aiInsightHp = new Chart(hpEl, {
             type: 'bar',
             data: {
                 labels: hpLabels,
                 datasets: [
                     {
-                        label: compareData ? `${brand1?.name || 'Seçili marka'} segment payi` : 'Marka segment agirligi',
+                        label: compareData ? `${brand1?.name || 'Seçili marka'} segment payı` : 'Marka segment ağırlığı',
                         data: primaryHpSeries,
                         backgroundColor: `${primary}cc`,
                         borderRadius: 10,
                         borderSkipped: false
                     },
                     ...(secondaryHpSeries.length ? [{
-                        label: `${brand2?.name || 'Rakip'} segment payi`,
+                        label: `${brand2?.name || 'Rakip'} segment payı`,
                         data: secondaryHpSeries,
                         backgroundColor: `${rival}cc`,
                         borderRadius: 10,
@@ -9543,14 +9629,14 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
                     labels,
                     datasets: [
                         {
-                            label: nextYear ? `${nextYear} payi` : 'Yakin ufuk',
+                            label: nextYear ? `${nextYear} payı` : 'Yakin ufuk',
                             data: labels.map(label => Number(nextRows.find(item => item.feature_value === label)?.demand_share_pct || 0)),
                             backgroundColor: `${primary}cc`,
                             borderRadius: 10,
                             borderSkipped: false
                         },
                         {
-                            label: longTermYear ? `${longTermYear} payi` : 'Uzun ufuk',
+                            label: longTermYear ? `${longTermYear} payı` : 'Uzun ufuk',
                             data: labels.map(label => Number(longRows.find(item => item.feature_value === label)?.demand_share_pct || 0)),
                             backgroundColor: `${rival}cc`,
                             borderRadius: 10,
@@ -9586,7 +9672,7 @@ async function loadAIInsightsPage() {
 
         const state = ensureAiInsightsState(summary);
         const brandId = String(state.brand_id || '');
-        if (!brandId) throw new Error('Marka seçimi bulunamadi');
+        if (!brandId) throw new Error('Marka seçimi bulunamadı');
 
         const selectedBrand = findBrandById(brandId) || (summary.brands || []).find(item => String(item.id) === brandId) || allBrands[0];
         if (selectedBrand) {
@@ -9653,23 +9739,23 @@ async function loadAIInsightsPage() {
             {
                 label: 'Marka momentumu',
                 value: sales?.brand_yoy_pct != null ? formatSignedPct(sales.brand_yoy_pct, 1) : '-',
-                note: sales?.market_yoy_pct != null ? `Pazar ${formatSignedPct(sales.market_yoy_pct, 1)}` : 'Pazar karsilastirmasi bekleniyor',
+                note: sales?.market_yoy_pct != null ? `Pazar ${formatSignedPct(sales.market_yoy_pct, 1)}` : 'Pazar karşılaştırması bekleniyor',
                 tone: (sales?.brand_yoy_pct || 0) >= 0 ? 'is-up' : 'is-down'
             },
             {
                 label: 'Pay hareketi',
                 value: sales?.share_delta_pp != null ? formatSignedPoints(sales.share_delta_pp, 2) : '-',
-                note: sales?.market_share_pct != null ? `${formatDashboardPercent(sales.market_share_pct, 1)} guncel pay` : 'Pay verisi yok',
+                note: sales?.market_share_pct != null ? `${formatDashboardPercent(sales.market_share_pct, 1)} güncel pay` : 'Pay verisi yok',
                 tone: (sales?.share_delta_pp || 0) >= 0 ? 'is-up' : 'is-down'
             },
             {
                 label: 'Rakip farki',
                 value: compareData ? `${formatNumber(compareGap)} adet` : '-',
-                note: compareData ? `${compareData.brand1?.name} vs ${compareData.brand2?.name}` : 'Rakip secilmediginde acilir',
+                note: compareData ? `${compareData.brand1?.name} vs ${compareData.brand2?.name}` : 'Rakip seçilmediğinde açılır',
                 tone: compareData && (compareData.winnerScore?.brand1 || 0) >= (compareData.winnerScore?.brand2 || 0) ? 'is-up' : 'is-warning'
             },
             {
-                label: 'Acik segment',
+                label: 'Açık segment',
                 value: topOpportunity ? `${topOpportunity.hp}` : '-',
                 note: topOpportunity ? `${formatNumber(topOpportunity.openVolume || 0)} adet açık hacim` : 'Beyaz alan hesabi için rakip verisi gerekli',
                 tone: 'is-opportunity'
@@ -9683,7 +9769,7 @@ async function loadAIInsightsPage() {
             {
                 label: '12A forecast',
                 value: forecastOverview?.next_12m_units ? `${formatNumber(forecastOverview.next_12m_units)} adet` : '-',
-                note: executiveForecast?.run ? (forecastOverview?.reference_mode ? 'Referans emtia + iklim modunda' : 'Tahmin omurgasi aktif') : 'Forecast kosusu bekleniyor',
+                note: executiveForecast?.run ? (forecastOverview?.reference_mode ? 'Referans emtia + iklim modunda' : 'Tahmin omurgası aktif') : 'Forecast kosusu bekleniyor',
                 tone: 'is-forecast'
             },
             {
@@ -9704,13 +9790,13 @@ async function loadAIInsightsPage() {
             .join('');
 
         const stageHtml = buildBrandStageHtml(selectedBrandTheme, {
-            title: `${selectedBrandTheme.name || 'Marka'} için AI savas odasi`,
+            title: `${selectedBrandTheme.name || 'Marka'} için AI savaş odasi`,
             summary: memo.stance.note,
             compareCopy: topOpportunity
-                ? `${topOpportunity.hp} HP segmentinde ${formatNumber(topOpportunity.openVolume || 0)} adetlik açık hacim gorunuyor.`
+                ? `${topOpportunity.hp} HP segmentinde ${formatNumber(topOpportunity.openVolume || 0)} adetlik açık hacim görünüyor.`
                 : forecastTopProvinces[0]
                     ? `${forecastTopProvinces[0].province_name} önümüzdeki 12 ayda ${formatNumber(forecastTopProvinces[0].next_12m_units || 0)} adetlik tahmin hacmiyle öne çıkıyor.`
-                : `${selectedBrandTheme.name || 'Marka'} verisi rakip ve sektor sinyalleriyle tek executive katmanda bulusturuldu.`
+                : `${selectedBrandTheme.name || 'Marka'} verisi rakip ve sektor sinyalleriyle tek executive katmanda buluşturuldu.`
         });
 
         const storylineHtml = storyline.length > 0
@@ -9753,7 +9839,7 @@ async function loadAIInsightsPage() {
                     </div>
                 `;
             }).join('')
-            : '<div class="aix-empty-panel">Rakip seçildiğinde skor karti acilir.</div>';
+            : '<div class="aix-empty-panel">Rakip seçildiğinde skor karti açılır.</div>';
 
         const memoPointsHtml = memo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
 
@@ -9785,7 +9871,7 @@ async function loadAIInsightsPage() {
             }).join('')
             : `
                 <tr>
-                    <td colspan="6" class="aix-table-empty">Rakip seçildiğinde beyaz alan matrisi acilir.</td>
+                    <td colspan="6" class="aix-table-empty">Rakip seçildiğinde beyaz alan matrisi açılır.</td>
                 </tr>
             `;
 
@@ -9840,7 +9926,7 @@ async function loadAIInsightsPage() {
                     </article>
                 `;
             }).join('')
-            : '<div class="aix-empty-panel">Canlı insight veya kurumsal akis kaydi bulunamadi.</div>';
+            : '<div class="aix-empty-panel">Canlı insight veya kurumsal akis kaydı bulunamadı.</div>';
 
         const roadmapHtml = (automation || []).slice(0, 4).map(item => `
             <article class="aix-roadmap-card">
@@ -9871,7 +9957,7 @@ async function loadAIInsightsPage() {
                     <div class="aix-forecast-head">
                         <div>
                             <strong>${dashboardSafe(item.province_name || '-')}</strong>
-                            <small>${dashboardSafe(item.region_name || 'Bölge kaydi yok')}</small>
+                            <small>${dashboardSafe(item.region_name || 'Bölge kaydı yok')}</small>
                         </div>
                         <div class="aix-forecast-tags">
                             ${item.has_support ? '<span>Destek etkisi</span>' : '<span>Organik talep</span>'}
@@ -9894,7 +9980,7 @@ async function loadAIInsightsPage() {
                     </div>
                 </article>
             `).join('')
-            : '<div class="aix-empty-panel">Forecast kosusu olustugunda once yukselen iller burada acilir.</div>';
+            : '<div class="aix-empty-panel">Forecast kosusu olustugunda once yükselen iller burada açılır.</div>';
 
         const forecastShiftHtml = forecastShiftCards.length > 0
             ? forecastShiftCards.map(item => `
@@ -9909,11 +9995,11 @@ async function loadAIInsightsPage() {
 
         const forecastChartHtml = (executiveForecast?.monthly_curve || []).length > 0
             ? '<div class="aix-chart-canvas"><canvas id="aiInsightsForecastChart"></canvas></div>'
-            : '<div class="aix-empty-panel">Aylik tahmin egrisi için once forecast kosusu gerekli.</div>';
+            : '<div class="aix-empty-panel">Aylık tahmin egrisi için once forecast kosusu gerekli.</div>';
 
         const forecastFeatureChartHtml = (executiveForecast?.feature_outlook || []).length > 0
             ? '<div class="aix-chart-canvas"><canvas id="aiInsightsForecastFeatureChart"></canvas></div>'
-            : '<div class="aix-empty-panel">Ozellik talep modeli doldugunda uzun vade HP grafigi burada acilir.</div>';
+            : '<div class="aix-empty-panel">Ozellik talep modeli doldugunda uzun vade HP grafigi burada açılır.</div>';
 
         const forecastNoteTone = forecastOverview?.reference_mode ? 'is-forecast' : 'is-analysis';
 
@@ -9936,7 +10022,7 @@ async function loadAIInsightsPage() {
                 </div>
             </div>
         ` : `
-            <div class="aix-empty-panel">Rakip seçimi yapildiginda rekabet ozeti ve benchmark katmani acilir.</div>
+            <div class="aix-empty-panel">Rakip seçimi yapildiginda rekabet özeti ve benchmark katmani açılır.</div>
         `;
 
         // Sayfa-içi sekme şeridi: 4 odaklı katman
@@ -11892,6 +11978,7 @@ async function loadSettingsPage() {
                 </div>
             </div>
         ` : ''}
+        ${buildSuperuserPreviewCardHtml()}
         <div id="mfaCardHost"></div>
         <div id="whatsappApprovalsHost"></div>
         <div id="inviteCodesHost"></div>
@@ -12492,10 +12579,25 @@ function agronomySafe(value) {
     return dashboardSafe(localizeAgronomyDisplayText(value));
 }
 
+// Cari yılın aylık serisinde, veri içeren son ayın indeksi (veri yoksa -1)
+function getLastDataMonthIndex(rows, key) {
+    let last = -1;
+    (rows || []).forEach((row, index) => {
+        if (Number(row?.[key]) > 0) last = index;
+    });
+    return last;
+}
+
+// Henüz veri olmayan aylar null olur; Chart.js bu noktalarda çizgiyi keser (sıfıra düşmez)
+function maskMonthsAfter(values, lastIndex) {
+    return values.map((value, index) => (index > lastIndex ? null : value));
+}
+
 function chartOptions(yLabel) {
     return {
         responsive: true,
         maintainAspectRatio: false,
+        locale: 'tr-TR',
         interaction: { mode: 'index', intersect: false },
         scales: {
             x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: { size: 11 } } },
@@ -12932,7 +13034,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
             <td>${agronomySafe(item.tractor_label)}</td>
             <td>${agronomySafe(item.equipment_summary)}</td>
         </tr>
-    `).join('') : '<tr><td colspan="6" class="rix-table-empty">Ürün-operasyon matrisi için veri bulunamadi.</td></tr>';
+    `).join('') : '<tr><td colspan="6" class="rix-table-empty">Ürün-operasyon matrisi için veri bulunamadı.</td></tr>';
 
     const climateRowsHtml = climateActionRows.length > 0 ? climateActionRows.map(item => `
         <tr>
@@ -12960,7 +13062,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
         {
             label: 'HP omurgası',
             value: dossier?.overview?.dominant_hp || provinceMetric?.dominantHp || '-',
-            note: provinceMetric?.avgHp != null ? `${Number(provinceMetric.avgHp).toFixed(0)} HP agirlikli ort.` : 'Guc tercihi',
+            note: provinceMetric?.avgHp != null ? `${Number(provinceMetric.avgHp).toFixed(0)} HP agirlikli ort.` : 'Güç tercihi',
             tone: 'is-analysis'
         },
         {
@@ -14081,7 +14183,10 @@ function fmtPrice(n) {
     if (abs >= 1000) return (n / 1000).toFixed(1).replace('.', ',').replace(/,0$/, '') + ' B $';
     return n.toLocaleString('tr-TR') + ' $';
 }
-function fmtPct(n, dec = 1) { return n != null ? n.toFixed(dec) + '%' : '-'; }
+function fmtPct(n, dec = 1) {
+    if (n == null || Number.isNaN(Number(n))) return '-';
+    return '%' + Number(n).toLocaleString('tr-TR', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
 
 // ============================================
 // BENCHMARK PAGE - 4 Katmanlı Teknik Kıyaslama
@@ -14288,7 +14393,7 @@ async function loadBenchmarkPage() {
                 <div class="bm-layer-title"><i class="fas fa-search-location"></i> Katman 2: Pazar Boşluğu & Penetrasyon Analizi</div>
                 <div class="bm-row-2">
                     <div class="bm-card">
-                        <div class="bm-card-title"><i class="fas fa-map"></i> Hakimiyet Haritası
+                        <div class="bm-card-title"><i class="fas fa-map"></i> Hâkimiyet Haritası
                             <span class="bm-legend-inline">
                                 <span class="bm-leg" style="background:${c1}"></span>${escapeHtml(brand1.name)}
                                 <span class="bm-leg" style="background:#64748b"></span>Baş Başa
@@ -14397,7 +14502,7 @@ async function loadBenchmarkPage() {
                 indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { labels: { color:'#94a3b8', font:{size:11} } }, datalabels: { display: false } },
                 scales: {
-                    x: { ticks: { color:'#64748b', callback: v => v+'%' }, grid: { color:'rgba(255,255,255,0.05)' } },
+                    x: { ticks: { color:'#64748b', callback: v => formatAxisPercent(v) }, grid: { color:'rgba(255,255,255,0.05)' } },
                     y: { ticks: { color:'#94a3b8', font:{size:10} }, grid: { display:false } }
                 }
             }
@@ -14440,7 +14545,7 @@ async function loadBenchmarkPage() {
                 plugins: { legend:{labels:{color:'#94a3b8',font:{size:11}}}, datalabels:{display:false} },
                 scales: {
                     x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,0.05)'}},
-                    y:{ticks:{color:'#64748b',callback:v=>v+'%'},grid:{color:'rgba(255,255,255,0.05)'}}
+                    y:{ticks:{color:'#64748b',callback:v=>formatAxisPercent(v)},grid:{color:'rgba(255,255,255,0.05)'}}
                 }
             }
         });
@@ -14549,7 +14654,7 @@ async function loadBrandComparePage() {
             const c2 = compareBrand2.primary_color || '#ef4444';
             const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
             const safe = escapeHtml;
-            const fmtSignedPct = value => value == null ? '-' : `${value > 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
+            const fmtSignedPct = value => value == null ? '-' : `${value > 0 ? '+' : ''}${formatDashboardPercent(Number(value), 1)}`;
             const pickCount = (bag, keys) => keys.reduce((sum, key) => sum + Number(bag?.[key] || bag?.[key.toUpperCase()] || bag?.[key.toLowerCase()] || 0), 0);
             const pctOf = (value, total) => total > 0 ? ((value || 0) * 100 / total) : 0;
             const winnerName = winner => winner === 'brand1' ? compareBrand1.name : winner === 'brand2' ? compareBrand2.name : 'Eşit';
@@ -14598,7 +14703,7 @@ async function loadBrandComparePage() {
             const topBattle = compareBattles[0];
             const pairShare = compareMarket.current_total > 0 ? (((deep1.currentSales || 0) + (deep2.currentSales || 0)) * 100 / compareMarket.current_total) : 0;
             const shareGap = Math.abs((deep1.currentShare || 0) - (deep2.currentShare || 0));
-            const summaryText = `${safe(leaderBrand.name)} ${comparePeriodLabel} icinde ${fmtNum(leaderData.currentSales || 0)} adet ve ${fmtPct(leaderData.currentShare || 0, 2)} pay ile hacim liderligini aliyor. ${safe(momentumBrand.name)} momentumda, ${safe(territoryBrand.name)} ise il yaygınlığında öne çıkıyor.${topOpportunity ? ` En açık segment ${safe(topOpportunity.hp)} HP.` : ''}`;
+            const summaryText = `${safe(leaderBrand.name)} ${comparePeriodLabel} içinde ${fmtNum(leaderData.currentSales || 0)} adet ve ${fmtPct(leaderData.currentShare || 0, 2)} pay ile hacim liderligini aliyor. ${safe(momentumBrand.name)} momentumda, ${safe(territoryBrand.name)} ise il yaygınlığında öne çıkıyor.${topOpportunity ? ` En açık segment ${safe(topOpportunity.hp)} HP.` : ''}`;
 
             const summaryTextDisplay = `${safe(leaderBrand.name)} ${comparePeriodLabel} içinde ${fmtNum(leaderData.currentSales || 0)} adet ve ${fmtPct(leaderData.currentShare || 0, 2)} pay ile hacim liderliğini alıyor. ${safe(momentumBrand.name)} momentumda, ${safe(territoryBrand.name)} ise il yaygınlığında öne çıkıyor.${topOpportunity ? ` En açık segment ${safe(topOpportunity.hp)} HP.` : ''}`;
 
@@ -14634,25 +14739,25 @@ async function loadBrandComparePage() {
                     label: 'Momentum',
                     winner: (deep1.yoyGrowth || 0) >= (deep2.yoyGrowth || 0) ? 'brand1' : 'brand2',
                     signal: `${fmtSignedPct(deep1.yoyGrowth)} vs ${fmtSignedPct(deep2.yoyGrowth)}`,
-                    implication: 'Yukselen marka satış ritmini savunma yerine saldiri modunda kullanabilir.'
+                    implication: 'Yükselen marka satış ritmini savunma yerine saldırı modunda kullanabilir.'
                 },
                 {
                     label: 'Saha yaygınlığı',
                     winner: (deep1.activeProvinces || 0) >= (deep2.activeProvinces || 0) ? 'brand1' : 'brand2',
                     signal: `${fmtNum(deep1.activeProvinces || 0)} il vs ${fmtNum(deep2.activeProvinces || 0)} il`,
-                    implication: 'Yaygin marka stok ve servis esnekligini daha genis alana yayar.'
+                    implication: 'Yaygın marka stok ve servis esnekligini daha genis alana yayar.'
                 },
                 {
                     label: 'HP konumlanmasi',
                     winner: (deep1.salesWeightedHp || 0) >= (deep2.salesWeightedHp || 0) ? 'brand1' : 'brand2',
                     signal: `${Number(deep1.salesWeightedHp || 0).toFixed(1)} HP vs ${Number(deep2.salesWeightedHp || 0).toFixed(1)} HP`,
-                    implication: 'Daha yüksek HP ortalamasi saha tipi ve musterinin kullanim profili hakkinda fikir verir.'
+                    implication: 'Daha yüksek HP ortalaması saha tipi ve müşterinin kullanım profili hakkinda fikir verir.'
                 },
                 {
                     label: 'Fiyat verimliligi',
                     winner: (deep1.costPerHp || 0) <= (deep2.costPerHp || 0) ? 'brand1' : 'brand2',
                     signal: `${deep1.costPerHp ? `${fmtPrice(deep1.costPerHp)}/HP` : '-'} vs ${deep2.costPerHp ? `${fmtPrice(deep2.costPerHp)}/HP` : '-'}`,
-                    implication: 'Düşük fiyat/HP seviyesi fiyat savasi olmadan deger argumanini güçlendirir.'
+                    implication: 'Düşük fiyat/HP seviyesi fiyat savaşı olmadan değer argumanini güçlendirir.'
                 },
                 {
                     label: 'Portfoy derinligi',
@@ -14784,7 +14889,7 @@ async function loadBrandComparePage() {
                     meta: `${compareBrand1.name} / ${compareBrand2.name}`
                 },
                 {
-                    label: 'Acik segment',
+                    label: 'Açık segment',
                     value: topOpportunity ? `${topOpportunity.hp} HP` : '-',
                     meta: topOpportunity ? `${fmtNum(topOpportunity.openVolume)} adet açık alan` : 'Ek bosluk yok'
                 }
@@ -14798,8 +14903,8 @@ async function loadBrandComparePage() {
             const regionCardsHtml = [
                 { label: `${compareBrand1.name} lider bölge`, value: deep1.topRegions?.[0]?.name || '-', meta: deep1.topRegions?.[0] ? `${fmtNum(deep1.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
                 { label: `${compareBrand2.name} lider bölge`, value: deep2.topRegions?.[0]?.name || '-', meta: deep2.topRegions?.[0] ? `${fmtNum(deep2.topRegions[0].qty)} adet` : 'Bölge verisi yok' },
-                { label: 'Kritik savas alani', value: topBattle?.name || '-', meta: topBattle ? `${fmtNum(topBattle.gap)} adet fark` : 'İl verisi yok' },
-                { label: 'Iki markanin havuzu', value: fmtPct(pairShare, 1), meta: 'Seçili iki markanin toplam pazar payi' }
+                { label: 'Kritik savaş alani', value: topBattle?.name || '-', meta: topBattle ? `${fmtNum(topBattle.gap)} adet fark` : 'İl verisi yok' },
+                { label: 'Iki markanin havuzu', value: fmtPct(pairShare, 1), meta: 'Seçili iki markanin toplam pazar payı' }
             ].map(card => `
                 <div class="bcx-mini-card">
                     <span>${safe(card.label)}</span>
@@ -14987,8 +15092,8 @@ async function loadBrandComparePage() {
                             </div>
                             <div class="bcx-table-wrap">
                                 <table class="bcx-table bcx-tight">
-                                    <thead><tr><th>HP</th><th>Pazar</th><th style="color:${c1}">${safe(compareBrand1.name)}</th><th style="color:${c2}">${safe(compareBrand2.name)}</th><th>Lider</th><th>Acik hacim</th></tr></thead>
-                                    <tbody>${whitespaceRowsHtml || '<tr><td colspan="6">Segment boslugu bulunamadi</td></tr>'}</tbody>
+                                    <thead><tr><th>HP</th><th>Pazar</th><th style="color:${c1}">${safe(compareBrand1.name)}</th><th style="color:${c2}">${safe(compareBrand2.name)}</th><th>Lider</th><th>Açık hacim</th></tr></thead>
+                                    <tbody>${whitespaceRowsHtml || '<tr><td colspan="6">Segment boslugu bulunamadı</td></tr>'}</tbody>
                                 </table>
                             </div>
                         </div>
@@ -14997,7 +15102,7 @@ async function loadBrandComparePage() {
                     <section class="bcx-panel-grid">
                         <div class="bcx-panel bcx-map-panel">
                             <div class="bcx-panel-head">
-                                <h3>İl hakimiyet haritası</h3>
+                                <h3>İl hâkimiyet haritası</h3>
                                 <div class="bcx-map-legend">
                                     <span class="bcx-legend-item"><i class="bcx-legend-swatch" style="background:${c1}"></i>${safe(compareBrand1.name)} hakim</span>
                                     <span class="bcx-legend-item"><i class="bcx-legend-swatch" style="background:#475569"></i>Eşit / dengeli</span>
@@ -15012,14 +15117,14 @@ async function loadBrandComparePage() {
                         <div class="bcx-panel">
                             <div class="bcx-panel-head">
                                 <h3>Fiyat / HP dağılımı</h3>
-                                <span>Model bazli fiyat-performans pozisyonu</span>
+                                <span>Model bazlı fiyat-performans pozisyonu</span>
                             </div>
                             <div class="bcx-chart-wrap"><canvas id="bcxScatterChart"></canvas></div>
                         </div>
                         <div class="bcx-panel">
                             <div class="bcx-panel-head">
-                                <h3>Top model yarismasi</h3>
-                                <span>Seçili donemdeki en cok satan modeller</span>
+                                <h3>Top model yarışması</h3>
+                                <span>Seçili dönemdeki en çok satan modeller</span>
                             </div>
                             <div class="bcx-table-wrap">
                                 <table class="bcx-table bcx-tight bcx-model-table">
@@ -15033,25 +15138,25 @@ async function loadBrandComparePage() {
                     <section class="bcx-panel-grid bcx-price-row">
                         <div class="bcx-panel">
                             <div class="bcx-panel-head">
-                                <h3>HP bazli fiyat koridoru</h3>
-                                <span>Liste fiyatlari ile doğrudan ladder karsilastirmasi</span>
+                                <h3>HP bazlı fiyat koridoru</h3>
+                                <span>Liste fiyatlari ile doğrudan ladder karşılaştırması</span>
                             </div>
                             <div class="bcx-table-wrap">
                                 <table class="bcx-table bcx-price-table">
                                     <thead><tr><th style="color:${c1}">${safe(compareBrand1.name)}</th><th>Fiyat</th><th>Segment</th><th>Fiyat</th><th style="color:${c2}">${safe(compareBrand2.name)}</th></tr></thead>
-                                    <tbody>${priceRowsHtml || '<tr><td colspan="5">Fiyatli model verisi bulunamadi</td></tr>'}</tbody>
+                                    <tbody>${priceRowsHtml || '<tr><td colspan="5">Fiyatlı model verisi bulunamadı</td></tr>'}</tbody>
                                 </table>
                             </div>
                         </div>
                         <div class="bcx-panel">
                             <div class="bcx-panel-head">
-                                <h3>Ozellik kesisimi</h3>
-                                <span>Drive, kabin ve kullanim kombinasyonlari</span>
+                                <h3>Ozellik kesişimi</h3>
+                                <span>Drive, kabin ve kullanım kombinasyonlari</span>
                             </div>
                             <div class="bcx-table-wrap">
                                 <table class="bcx-table bcx-tight">
                                     <thead><tr><th>Kombinasyon</th><th style="color:${c1}">${safe(compareBrand1.name)}</th><th style="color:${c2}">${safe(compareBrand2.name)}</th></tr></thead>
-                                    <tbody>${overlapRowsHtml || '<tr><td colspan="3">Kesisim verisi bulunamadi</td></tr>'}</tbody>
+                                    <tbody>${overlapRowsHtml || '<tr><td colspan="3">Kesişim verisi bulunamadı</td></tr>'}</tbody>
                                 </table>
                             </div>
                         </div>
@@ -15059,7 +15164,7 @@ async function loadBrandComparePage() {
 
                     <div class="ai-action-bar">
                         <button id="bcxAiBtn" class="ai-btn">
-                            <i class="fas fa-robot"></i> AI Karsilastirma Raporu
+                            <i class="fas fa-robot"></i> AI Karşılaştırma Raporu
                         </button>
                         <span class="ai-powered">Powered by Groq · Llama 3.3 70B</span>
                     </div>
@@ -15077,7 +15182,7 @@ async function loadBrandComparePage() {
                     'Stratejik eksenler',
                     'Portföy ve konfigürasyon dengesi',
                     'Beyaz alan segmentleri',
-                    'İl hakimiyet haritası',
+                    'İl hâkimiyet haritası',
                     'Fiyat / HP dağılımı',
                     'Top model yarışması',
                     'HP bazlı fiyat koridoru',
@@ -15177,7 +15282,7 @@ async function loadBrandComparePage() {
                     plugins: { legend: { labels: { color: '#cbd5e1' } }, datalabels: { display: false } },
                     scales: {
                         x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                        y: { ticks: { color: '#64748b', callback: value => `${value}%` }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                        y: { ticks: { color: '#64748b', callback: value => formatAxisPercent(value) }, grid: { color: 'rgba(255,255,255,0.05)' } }
                     }
                 }
             });
@@ -15197,7 +15302,7 @@ async function loadBrandComparePage() {
                     maintainAspectRatio: false,
                     plugins: { legend: { labels: { color: '#cbd5e1' } }, datalabels: { display: false } },
                     scales: {
-                        x: { ticks: { color: '#64748b', callback: value => `${value}%` }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        x: { ticks: { color: '#64748b', callback: value => formatAxisPercent(value) }, grid: { color: 'rgba(255,255,255,0.05)' } },
                         y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.03)' } }
                     }
                 }
@@ -15538,9 +15643,9 @@ async function loadBrandComparePage() {
                 <table class="bc-kpi-table">
                     <thead>
                         <tr>
-                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand1.primary_color)}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-kpi-mid">Metrik</th>
-                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand2.primary_color)}">${escapeHtml(brand2.name)}</th>
                         </tr>
                     </thead>
                     <tbody>${kpiRows}</tbody>
@@ -15567,8 +15672,8 @@ async function loadBrandComparePage() {
                         <thead><tr><th>Marka</th>${yearHeaders}</tr></thead>
                         <tbody>
                             <tr class="bc-row-market"><td>Toplam Pazar</td>${yearRowMkt}</tr>
-                            <tr style="color:${brand1.primary_color}"><td>${escapeHtml(brand1.name)}</td>${yearRow1}</tr>
-                            <tr style="color:${brand2.primary_color}"><td>${escapeHtml(brand2.name)}</td>${yearRow2}</tr>
+                            <tr style="color:${readableBrandTextColor(brand1.primary_color)}"><td>${escapeHtml(brand1.name)}</td>${yearRow1}</tr>
+                            <tr style="color:${readableBrandTextColor(brand2.primary_color)}"><td>${escapeHtml(brand2.name)}</td>${yearRow2}</tr>
                         </tbody>
                     </table>
                 </div>
@@ -15581,9 +15686,9 @@ async function loadBrandComparePage() {
                     <div class="bc-section-title"><i class="fas fa-horse-head"></i> HP Segment Dağılımı</div>
                     <table class="bc-mirror-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand1.primary_color)}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-mid-col">Segment</th>
-                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand2.primary_color)}">${escapeHtml(brand2.name)}</th>
                         </tr></thead>
                         <tbody>${hpRows}</tbody>
                     </table>
@@ -15594,9 +15699,9 @@ async function loadBrandComparePage() {
                     <div class="bc-section-title"><i class="fas fa-map-marker-alt"></i> En Çok Satılan İller</div>
                     <table class="bc-mirror-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand1.primary_color)}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-mid-col">#</th>
-                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand2.primary_color)}">${escapeHtml(brand2.name)}</th>
                         </tr></thead>
                         <tbody>${provRows}</tbody>
                     </table>
@@ -15607,9 +15712,9 @@ async function loadBrandComparePage() {
                     <div class="bc-section-title"><i class="fas fa-sliders-h"></i> Kategori & Çekiş</div>
                     <table class="bc-mirror-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">${escapeHtml(brand1.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand1.primary_color)}">${escapeHtml(brand1.name)}</th>
                             <th class="bc-mid-col">Özellik</th>
-                            <th style="color:${brand2.primary_color}">${escapeHtml(brand2.name)}</th>
+                            <th style="color:${readableBrandTextColor(brand2.primary_color)}">${escapeHtml(brand2.name)}</th>
                         </tr></thead>
                         <tbody>
                             <tr>
@@ -15643,11 +15748,11 @@ async function loadBrandComparePage() {
                 <div style="overflow-x:auto">
                     <table class="bc-price-table">
                         <thead><tr>
-                            <th style="color:${brand1.primary_color}">Model</th>
-                            <th style="color:${brand1.primary_color}">Fiyat</th>
+                            <th style="color:${readableBrandTextColor(brand1.primary_color)}">Model</th>
+                            <th style="color:${readableBrandTextColor(brand1.primary_color)}">Fiyat</th>
                             <th>HP Segment</th>
-                            <th style="color:${brand2.primary_color}">Fiyat</th>
-                            <th style="color:${brand2.primary_color}">Model</th>
+                            <th style="color:${readableBrandTextColor(brand2.primary_color)}">Fiyat</th>
+                            <th style="color:${readableBrandTextColor(brand2.primary_color)}">Model</th>
                         </tr></thead>
                         <tbody>${priceRows || '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Model fiyat verisi bulunamadı</td></tr>'}</tbody>
                     </table>
@@ -15819,7 +15924,7 @@ function getWeatherConditionMeta(condition = '') {
     if (normalized.includes('rain') || normalized.includes('shower')) return { icon: 'fa-cloud-rain', label: 'Yağış', tone: 'is-warning' };
     if (normalized.includes('fog') || normalized.includes('mist')) return { icon: 'fa-smog', label: 'Sis', tone: 'is-neutral' };
     if (normalized.includes('cloud')) return { icon: 'fa-cloud', label: 'Bulutlu', tone: 'is-neutral' };
-    if (normalized.includes('clear') || normalized.includes('sun')) return { icon: 'fa-sun', label: 'Acik', tone: 'is-up' };
+    if (normalized.includes('clear') || normalized.includes('sun')) return { icon: 'fa-sun', label: 'Açık', tone: 'is-up' };
     return { icon: 'fa-cloud-sun', label: condition || 'Degisken', tone: 'is-analysis' };
 }
 
@@ -15847,7 +15952,7 @@ function buildWeatherForecastSummary(forecast = [], recentWeather = []) {
     } else if (coldNights >= 2) {
         windowNote = 'Gece sogugu kritik. Erken sabah operasyonu ve don hassasiyeti izlenmeli.';
     } else if (windPeak >= 30) {
-        windowNote = 'Ruzgar yukseliyor. Ilaclama ve açık saha operasyon penceresi daralabilir.';
+        windowNote = 'Rüzgâr yükseliyor. İlaçlama ve açık saha operasyon penceresi daralabilir.';
     }
 
     return {
@@ -16035,8 +16140,8 @@ function buildWeatherExecutiveMemo({ prov, forecastSummary, climateSummary, focu
     const topCrop = (crops || [])[0];
     const topSoil = (soil || [])[0];
     const salesNote = focusProvinceSales?.total_sales
-        ? `${prov?.name || 'İl'} ${selectedYear} yilinda ${fmtNum(focusProvinceSales.total_sales)} adetlik hacim uretti.`
-        : `${prov?.name || 'İl'} için satış etkisi baglam olarak okunuyor.`;
+        ? `${prov?.name || 'İl'} ${selectedYear} yılında ${fmtNum(focusProvinceSales.total_sales)} adetlik hacim üretti.`
+        : `${prov?.name || 'İl'} için satış etkisi bağlam olarak okunuyor.`;
 
     let stance = { label: 'İklim dengesi', tone: 'is-neutral' };
     if ((forecastSummary.rainTotal || 0) >= 30 || (forecastSummary.coldNights || 0) >= 2) {
@@ -16047,11 +16152,11 @@ function buildWeatherExecutiveMemo({ prov, forecastSummary, climateSummary, focu
         stance = { label: 'Saha hizi artabilir', tone: 'is-up' };
     }
 
-    const headline = `${prov?.name || 'İl'} için kisa vade hava penceresi ile uzun dönem iklim hafızası tek ekranda bulusturuldu. ${salesNote}`;
+    const headline = `${prov?.name || 'İl'} için kısa vade hava penceresi ile uzun dönem iklim hafızası tek ekranda buluşturuldu. ${salesNote}`;
     const points = [
         forecastSummary.windowNote,
-        climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} en sıcak pencere, ${climateSummary.wettestMonth?.label || '-'} ise en ıslak dönem.` : 'Uzun dönem iklim verisi geldikce aylık baski haritasi netleşecek.',
-        topCrop ? `${topCrop.crop_name} il genelindeki en büyük ürün deseni. Tavsiye edilen güç penceresi ${topCrop.requires_hp_min || '-'}-${topCrop.requires_hp_max || '-'} HP.` : 'Ürün deseni verisi olmadiginda iklim ve toprak baskısı yine okunur.',
+        climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} en sıcak pencere, ${climateSummary.wettestMonth?.label || '-'} ise en ıslak dönem.` : 'Uzun dönem iklim verisi geldikce aylık baskı haritasi netleşecek.',
+        topCrop ? `${topCrop.crop_name} il genelindeki en büyük ürün deseni. Tavsiye edilen güç penceresi ${topCrop.requires_hp_min || '-'}-${topCrop.requires_hp_max || '-'} HP.` : 'Ürün deseni verisi olmadığında iklim ve toprak baskısı yine okunur.',
         topSoil ? `${topSoil.soil_type} zemini için ${topSoil.recommended_hp_range || '-'} ve ${translateLabel(topSoil.recommended_tractor_type || '') || 'uygun tip'} öneri katmani hazir.` : 'Toprak verisi yoksa il genel parametreleriyle karar destek devam eder.'
     ];
 
@@ -16184,7 +16289,7 @@ function renderWeatherCommandCharts({ forecastSummary, climateSummary }) {
                     y2: {
                         position: 'right',
                         grid: { drawOnChartArea: false },
-                        ticks: { color: '#a855f7', callback: value => `${value}%` },
+                        ticks: { color: '#a855f7', callback: value => formatAxisPercent(value) },
                         title: { display: true, text: 'Nem', color: '#a855f7' }
                     }
                 }
@@ -16202,7 +16307,7 @@ function renderWeatherCommandCharts({ forecastSummary, climateSummary }) {
                 datasets: [
                     {
                         type: 'bar',
-                        label: 'Yillik yağış',
+                        label: 'Yıllık yağış',
                         data: climateSummary.annualProfile.map(item => Number(item.rainfall || 0)),
                         backgroundColor: 'rgba(59, 130, 246, 0.48)',
                         borderRadius: 10,
@@ -16301,7 +16406,7 @@ function renderWeatherCommandCharts({ forecastSummary, climateSummary }) {
 async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
     const prov = (allProvinces || []).find(item => String(item.id) === String(provinceId || ''));
     if (!prov) {
-        document.getElementById('pageContent').innerHTML = '<div class="empty-state"><p>İl bulunamadi.</p></div>';
+        document.getElementById('pageContent').innerHTML = '<div class="empty-state"><p>İl bulunamadı.</p></div>';
         return;
     }
 
@@ -16375,7 +16480,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
 
     const chipRows = [
         { label: 'İklim zonu', value: weatherProv.climate_zone || '-' },
-        { label: 'Yillik yağış', value: weatherProv.annual_rainfall_mm ? `${fmtNum(weatherProv.annual_rainfall_mm)} mm` : '-' },
+        { label: 'Yıllık yağış', value: weatherProv.annual_rainfall_mm ? `${fmtNum(weatherProv.annual_rainfall_mm)} mm` : '-' },
         { label: 'Ortalama sıcaklık', value: weatherProv.avg_temperature ? `${Number(weatherProv.avg_temperature).toFixed(1)} C` : '-' },
         { label: 'Rakim', value: weatherProv.elevation_m ? `${fmtNum(weatherProv.elevation_m)} m` : '-' },
         { label: 'Birincil ürünler', value: Array.isArray(weatherProv.primary_crops) && weatherProv.primary_crops.length ? weatherProv.primary_crops.slice(0, 2).join(' / ') : '-' }
@@ -16385,27 +16490,27 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
         {
             label: '7 gun yağış',
             value: `${fmtNum(forecastSummary.rainTotal || 0)} mm`,
-            note: `${forecastSummary.rainyDays || 0} yagisli gun`,
+            note: `${forecastSummary.rainyDays || 0} yağışlı gun`,
             tone: (forecastSummary.rainTotal || 0) >= 30 ? 'is-warning' : 'is-up'
         },
         {
-            label: 'Sicaklik bandi',
+            label: 'Sıcaklık bandi',
             value: `${forecastSummary.avgMin != null ? Number(forecastSummary.avgMin).toFixed(1) : '-'} / ${forecastSummary.avgMax != null ? Number(forecastSummary.avgMax).toFixed(1) : '-'} C`,
-            note: forecastSummary.isReference ? 'Referans kisa vade pencere' : (forecastSummary.dominant.label || 'Kisa vade pencere'),
+            note: forecastSummary.isReference ? 'Referans kisa vade pencere' : (forecastSummary.dominant.label || 'Kısa vade pencere'),
             tone: (forecastSummary.heatDays || 0) >= 3 ? 'is-warning' : 'is-analysis'
         },
         {
             label: 'Nem seviyesi',
             value: forecastSummary.humidityAvg != null ? `${Number(forecastSummary.humidityAvg).toFixed(0)}%` : '-',
             note: forecastSummary.windPeak
-                ? `${forecastSummary.isReference ? 'Referans ruzgar tepe' : 'Ruzgar tepe'} ${Number(forecastSummary.windPeak).toFixed(0)} km/h`
-                : 'Ruzgar verisi sinirli',
+                ? `${forecastSummary.isReference ? 'Referans ruzgar tepe' : 'Rüzgâr tepe'} ${Number(forecastSummary.windPeak).toFixed(0)} km/h`
+                : 'Rüzgâr verisi sinirli',
             tone: (forecastSummary.humidityAvg || 0) >= 70 ? 'is-warning' : 'is-neutral'
         },
         {
             label: 'Isinma sinyali',
             value: climateSummary.warmingSignal != null ? `${climateSummary.warmingSignal >= 0 ? '+' : ''}${Number(climateSummary.warmingSignal).toFixed(1)} C` : '-',
-            note: 'Son yılların sicaklik kaymasi',
+            note: 'Son yılların sıcaklık kaymasi',
             tone: climateSummary.warmingSignal != null && climateSummary.warmingSignal > 0 ? 'is-opportunity' : 'is-neutral'
         },
         {
@@ -16424,16 +16529,16 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
 
     const operationCards = [
         {
-            eyebrow: 'Kisa vade saha',
+            eyebrow: 'Kısa vade saha',
             title: forecastSummary.windowNote.includes('Yağış') ? 'Zemin baskısı artıyor' : forecastSummary.windowNote.includes('Isi') ? 'Isi disiplini gerekiyor' : 'Saha penceresi açık',
-            value: `${forecastSummary.rainyDays || 0} yagisli gun`,
+            value: `${forecastSummary.rainyDays || 0} yağışlı gun`,
             note: forecastSummary.windowNote
         },
         {
             eyebrow: 'Uzun dönem hafiza',
-            title: climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} / ${climateSummary.wettestMonth?.label || '-'}` : 'Aylik profil bekleniyor',
+            title: climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} / ${climateSummary.wettestMonth?.label || '-'}` : 'Aylık profil bekleniyor',
             value: climateSummary.annualRain ? `${fmtNum(Math.round(climateSummary.annualRain))} mm` : '-',
-            note: climateSummary.hottestMonth ? `En sıcak ay ${climateSummary.hottestMonth.label}, en ıslak ay ${climateSummary.wettestMonth?.label || '-'}.` : 'İklim kaydi olmadiginda il metadata paneli calisir.'
+            note: climateSummary.hottestMonth ? `En sıcak ay ${climateSummary.hottestMonth.label}, en ıslak ay ${climateSummary.wettestMonth?.label || '-'}.` : 'İklim kaydı olmadığında il metadata paneli calisir.'
         },
         {
             eyebrow: 'Toprak ve makina',
@@ -16460,7 +16565,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                 <b>${Number(item.rainfall_mm || 0) > 0 ? `${fmtNum(item.rainfall_mm)} mm` : meta.label}</b>
             </article>
         `;
-    }).join('') : '<div class="wcx-empty">Forecast verisi bulunamadi.</div>';
+    }).join('') : '<div class="wcx-empty">Forecast verisi bulunamadı.</div>';
 
     const memoPointsHtml = weatherMemo.points.map(item => `<li>${dashboardSafe(item)}</li>`).join('');
     const chipHtml = chipRows.map(item => `
@@ -16496,7 +16601,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
             <td>${dashboardSafe(item.recommended_hp_range || '-')}</td>
             <td>${dashboardSafe(translateLabel(item.recommended_tractor_type || '') || '-')}</td>
         </tr>
-    `).join('') : '<tr><td colspan="6" class="wcx-table-empty">Toprak setup verisi bulunamadi.</td></tr>';
+    `).join('') : '<tr><td colspan="6" class="wcx-table-empty">Toprak setup verisi bulunamadı.</td></tr>';
 
     const cropRowsHtml = cropRows.length > 0 ? cropRows.slice(0, 8).map(item => `
         <tr>
@@ -16506,7 +16611,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
             <td>${item.requires_hp_min || '-'}-${item.requires_hp_max || '-'} HP</td>
             <td>${item.planting_month || '-'} / ${item.harvest_month || '-'}</td>
         </tr>
-    `).join('') : '<tr><td colspan="5" class="wcx-table-empty">Ürün deseni verisi bulunamadi.</td></tr>';
+    `).join('') : '<tr><td colspan="5" class="wcx-table-empty">Ürün deseni verisi bulunamadı.</td></tr>';
 
     const actionRowsHtml = actionRows.length > 0 ? actionRows.map(item => `
         <tr>
@@ -16518,7 +16623,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
             <td>${item.droughtIndex != null ? Number(item.droughtIndex).toFixed(1) : '-'}</td>
             <td class="${dashboardSafe(item.tone)}">${dashboardSafe(item.action)}</td>
         </tr>
-    `).join('') : '<tr><td colspan="7" class="wcx-table-empty">Aylik iklim aksiyon matrisi için veri bulunamadi.</td></tr>';
+    `).join('') : '<tr><td colspan="7" class="wcx-table-empty">Aylık iklim aksiyon matrisi için veri bulunamadı.</td></tr>';
 
     document.getElementById('pageContent').innerHTML = `
         <div class="wcx-shell">
@@ -16551,8 +16656,8 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                 <article class="wcx-panel">
                     <div class="wcx-panel-head">
                         <div>
-                            <h3>Yonetici iklim brifi</h3>
-                            <p>Kisa vade hava akışı ile uzun dönem iklim hafızası ayni paragrafta karar diline cevrilir.</p>
+                            <h3>Yönetici iklim brifi</h3>
+                            <p>Kısa vade hava akışı ile uzun dönem iklim hafızası aynı paragrafta karar diline çevrilir.</p>
                         </div>
                     </div>
                     <div class="wcx-memo ${dashboardSafe(weatherMemo.stance.tone)}">
@@ -16565,7 +16670,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                     <div class="wcx-panel-head">
                         <div>
                             <h3>7 gun operasyon penceresi</h3>
-                            <p>Yağış, isi ve saha ritmi için gunluk görsel pano.</p>
+                            <p>Yağış, isi ve saha ritmi için günlük görsel pano.</p>
                         </div>
                     </div>
                     <div class="wcx-forecast-grid">${forecastTilesHtml}</div>
@@ -16576,7 +16681,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                 <article class="wcx-panel">
                     <div class="wcx-panel-head">
                         <div>
-                            <h3>Kisa vade tahmin</h3>
+                            <h3>Kısa vade tahmin</h3>
                             <p>7 günlük sıcaklık ve yağış akışı.</p>
                         </div>
                     </div>
@@ -16586,8 +16691,8 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                 <article class="wcx-panel">
                     <div class="wcx-panel-head">
                         <div>
-                            <h3>Aylik iklim normalleri</h3>
-                            <p>Sicaklik, yağış ve nem ayni iklim tabaninda bulusur.</p>
+                            <h3>Aylık iklim normalleri</h3>
+                            <p>Sıcaklık, yağış ve nem aynı iklim tabaninda buluşur.</p>
                         </div>
                     </div>
                     <div class="wcx-chart-wrap"><canvas id="wcxNormalsChart"></canvas></div>
@@ -16598,8 +16703,8 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                 <article class="wcx-panel">
                     <div class="wcx-panel-head">
                         <div>
-                            <h3>Yillik iklim trendi</h3>
-                            <p>Son dönem ısınma ve yağış kaymasi yil bazinda izlenir.</p>
+                            <h3>Yıllık iklim trendi</h3>
+                            <p>Son dönem ısınma ve yağış kaymasi yıl bazinda izlenir.</p>
                         </div>
                     </div>
                     <div class="wcx-chart-wrap"><canvas id="wcxAnnualChart"></canvas></div>
@@ -16609,7 +16714,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                     <div class="wcx-panel-head">
                         <div>
                             <h3>Stres haritasi</h3>
-                            <p>Don, kuraklık ve gelişim gunleri aylık baski matrisi olarak okunur.</p>
+                            <p>Don, kuraklık ve gelişim gunleri aylık baskı matrisi olarak okunur.</p>
                         </div>
                     </div>
                     <div class="wcx-chart-wrap"><canvas id="wcxStressChart"></canvas></div>
@@ -16669,7 +16774,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
                 <article class="wcx-panel wcx-panel-full">
                     <div class="wcx-panel-head">
                         <div>
-                            <h3>Aylik aksiyon matrisi</h3>
+                            <h3>Aylık aksiyon matrisi</h3>
                             <p>Her ay için iklim baskısı ve operasyon notu tek satirda okunur.</p>
                         </div>
                     </div>
@@ -16893,10 +16998,10 @@ function inferProvinceCropArchetype(crop = {}) {
     if (/(yonca|silaj|ot|yem|fig|korunga)/.test(cropName) || cropType === 'yem') {
         return {
             key: 'tarla',
-            title: 'Yem ve ot yonetimi paketi',
+            title: 'Yem ve ot yönetimi paketi',
             tractorTypeLabel: 'Orta HP tarla traktoru',
             equipment: ['cayir bicme', 'tirnakli tirmik', 'balya makinesi', 'yem romorku', 'diskaro'],
-            note: 'Balya, tasima ve PTO verimi ayni anda güçlü olmali.'
+            note: 'Balya, taşıma ve PTO verimi aynı anda güçlü olmali.'
         };
     }
 
@@ -16914,7 +17019,7 @@ function inferProvinceCropArchetype(crop = {}) {
         key: 'tarla',
         title: 'Tahil ve açık tarla paketi',
         tractorTypeLabel: 'Universal tarla traktoru',
-        equipment: ['pulluk', 'kultivator', 'hububat mibzeri', 'gubre serpme', 'tarla ilaclama'],
+        equipment: ['pulluk', 'kultivator', 'hububat mibzeri', 'gubre serpme', 'tarla ilaçlama'],
         note: 'Alan verimliligi, düşük birim maliyet ve gun boyu ritim esastir.'
     };
 }
@@ -16950,18 +17055,18 @@ function getProvinceSoilStressNote(soilItem = {}, climateSummary = {}, forecastS
     const texture = normalizeWeatherKey(soilItem.soil_texture || soilItem.soil_type || '');
 
     if (/(kil|agir|clay)/.test(texture) && ((forecastSummary.rainTotal || 0) >= 20 || (climateSummary.wettestMonth?.rainfall || 0) >= 65)) {
-        return 'Agir dokuda yağış geldikce sikisma ve patinaj riski yukselir; 4WD ve doğru lastik basinci onceliklidir.';
+        return 'Ağır dokuda yağış geldikce sıkışma ve patinaj riski yükselir; 4WD ve doğru lastik basıncı önceliklidir.';
     }
 
     if (/(kum|sandy)/.test(texture) && ((climateSummary.annualRain || 0) <= 450 || (climateSummary.droughtMonth?.droughtIndex || 0) > 0)) {
-        return 'Kumlu zeminde kuraklikla birlikte çekiş kaybi ve draft verimsizligi artabilir; hafif ve ekonomik setup daha doğru olur.';
+        return 'Kumlu zeminde kuraklikla birlikte çekiş kaybı ve draft verimsizligi artabilir; hafif ve ekonomik setup daha doğru olur.';
     }
 
     if (/(tin|loam|milli)/.test(texture)) {
-        return 'Dengeli dokuda cok amacli ekipman kullanimi ve universal HP bandi daha kolay isler.';
+        return 'Dengeli dokuda çok amacli ekipman kullanımı ve universal HP bandi daha kolay işler.';
     }
 
-    return soilItem?.notes || 'Toprak yapısı, ürün deseniyle birlikte okundugunda çekiş ve ekipman secimini belirginleştirir.';
+    return soilItem?.notes || 'Toprak yapısı, ürün deseniyle birlikte okunduğunda çekiş ve ekipman secimini belirginleştirir.';
 }
 
 function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = {}, climateSummary = {}, forecastSummary = {}, overview = {}, cabinMix = []) {
@@ -17001,7 +17106,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
     if (avgHp && dominantWindow.min != null) {
         if (avgHp >= dominantWindow.min && avgHp <= dominantWindow.max) {
             score += 12;
-            reasons.push(`İlin baskin güç mimarisi olan ${dominantWindow.label} bandini destekliyor.`);
+            reasons.push(`İlin baskın güç mimarisi olan ${dominantWindow.label} bandini destekliyor.`);
         } else if (dominantWindow.mid != null && Math.abs(avgHp - dominantWindow.mid) <= 10) {
             score += 6;
             reasons.push('İlin tercih ettigi HP eksenine yakin duruyor.');
@@ -17010,7 +17115,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
 
     if (secondaryCrop.crop_name && avgHp && secondaryWindow.min != null && avgHp >= secondaryWindow.min && avgHp <= secondaryWindow.max) {
         score += 5;
-        reasons.push(`${secondaryCrop.crop_name} için de ikinci bir kullanim koridoru aciyor.`);
+        reasons.push(`${secondaryCrop.crop_name} için de ikinci bir kullanım koridoru açıyor.`);
     }
 
     if (dominantBundle.key === 'bahce') {
@@ -17027,7 +17132,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
         }
     } else if (modelCategory !== 'bahce') {
         score += 10;
-        reasons.push('Tarla operasyonlarinda draft ve ekipman tasima kapasitesi yeterli.');
+        reasons.push('Tarla operasyonlarinda draft ve ekipman taşıma kapasitesi yeterli.');
     }
 
     const soilDrive = describeProvinceDrive(dominantSoil?.recommended_drive_type || '');
@@ -17037,7 +17142,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
         reasons.push('Çekiş mimarisi il topragi ve yağış rejimiyle uyumlu.');
     } else if (!needs4wd && drive === '2WD') {
         score += 6;
-        reasons.push('Gereksiz agirlik yaratmadan ekonomik çekiş sunuyor.');
+        reasons.push('Gereksiz ağırlık yaratmadan ekonomik çekiş sunuyor.');
     } else if (needs4wd && drive !== '4WD') {
         score -= 3;
     }
@@ -17263,7 +17368,7 @@ function renderProvinceIntelligenceCharts({ dossier, climateSummary, cropOperati
             data: {
                 labels: rows.map(item => translateLabel(item.hp_range || '-')),
                 datasets: [{
-                    label: 'HP segment satisi',
+                    label: 'HP segment satışı',
                     data: rows.map(item => Number(item.total_sales || 0)),
                     backgroundColor: rows.map((_, index) => index % 2 === 0 ? 'rgba(var(--brand-primary-rgb), 0.78)' : 'rgba(56, 189, 248, 0.62)'),
                     borderRadius: 12,
@@ -17375,7 +17480,7 @@ function renderProvinceIntelligenceCharts({ dossier, climateSummary, cropOperati
                     },
                     {
                         type: 'line',
-                        label: 'Don gunu',
+                        label: 'Don günü',
                         data: monthlyRows.map(item => Number(item.frostDays || 0)),
                         borderColor: '#a855f7',
                         backgroundColor: 'transparent',
@@ -17898,7 +18003,7 @@ function getTarmakCommandFocusBrandName() {
 
 function getTarmakPressureAction(gapShare, yoy) {
     if (gapShare >= 25) return 'Carryover yüksek. Stok eritme ve yeni model anlatisi ayri yönetilmeli.';
-    if (gapShare >= 15) return 'Geçiş baskısı var. Fiyat ve teslim plani ayni haftada izlenmeli.';
+    if (gapShare >= 15) return 'Geçiş baskısı var. Fiyat ve teslim plani aynı haftada izlenmeli.';
     if (yoy != null && yoy >= 10) return 'Temiz talep var. Yeni model ve finansman mesaji one alinabilir.';
     if (yoy != null && yoy <= -10) return 'Talep zayifliyor. Bayi aktivasyonu ve lokal kampanya takviyesi gerekiyor.';
     return 'Ritim dengeli. Mevcut saha temposu korunabilir.';
@@ -17929,9 +18034,9 @@ function buildTarmakCommandBrandRows(brandsData, fullTotal, monthNames, focusBra
             const brandMeta = (allBrands || []).find(item => normalizeTarmakBrandKey(item.name) === normalizedName);
 
             let rhythm = 'Dengeli ritim';
-            if (q4Share >= 35) rhythm = 'Yil sonu yukleniyor';
-            else if (h2Share >= 58) rhythm = 'Ikinci yari hizlaniyor';
-            else if (peakIndex >= 0 && peakIndex <= 2) rhythm = 'Yilin basi sert';
+            if (q4Share >= 35) rhythm = 'Yıl sonu yükleniyor';
+            else if (h2Share >= 58) rhythm = 'İkinci yarı hızlanıyor';
+            else if (peakIndex >= 0 && peakIndex <= 2) rhythm = 'Yılın başı sert';
 
             return {
                 name,
@@ -17977,12 +18082,12 @@ function buildTarmakCommandMemo({
         label = 'Talep savunmasi gerekli';
     }
 
-    const headline = `${selectedYear} yilinda N+N1 filtreli ${fmtNum(filteredTotal)} adetlik ritim, butun maddede ${fmtNum(fullTotal)} adede cikiyor. Carryover etkisi ${fmtPct(carryoverShare, 1)} seviyesinde.`;
+    const headline = `${selectedYear} yılında N+N1 filtreli ${fmtNum(filteredTotal)} adetlik ritim, bütün maddede ${fmtNum(fullTotal)} adede çıkıyor. Carryover etkisi ${fmtPct(carryoverShare, 1)} seviyesinde.`;
     const points = [
-        `${peakMonthName} pazarın en hızlı ayi, ${gapMonthName} ise eski model baskisinin en belirgin gorundugu cephe.`,
-        `İlk 3 marka toplam havuzun ${fmtPct(top3Share, 1)} payini aliyor; pazarda yoğunlaşma belirgin.`,
+        `${peakMonthName} pazarın en hızlı ayi, ${gapMonthName} ise eski model baskısının en belirgin göründüğü cephe.`,
+        `İlk 3 marka toplam havuzun ${fmtPct(top3Share, 1)} payını aliyor; pazarda yoğunlaşma belirgin.`,
         carryoverTotal > 0
-            ? `Filtre disi hacim ${fmtNum(carryoverTotal)} adet. Bu alan fiyat, stok ve teslimat yonetimini direkt etkiliyor.`
+            ? `Filtre disi hacim ${fmtNum(carryoverTotal)} adet. Bu alan fiyat, stok ve teslimat yönetimini direkt etkiliyor.`
             : 'Filtre disi hacim sinirli. Yeni model anlatisi daha temiz bir zeminde ilerliyor.',
         focusRow
             ? `${focusRow.name} ${focusRow.rank}. sırada, ${fmtPct(focusRow.share, 1)} payda. Zirve ayi ${focusRow.peakMonth}, ritmi ise "${focusRow.rhythm}".`
@@ -18000,6 +18105,8 @@ function renderTarmakCommandCharts({ monthNames, filteredCurrent, fullMonthly, c
         }
     });
 
+    // Veri içeren son ay: sonrasındaki aylar null (çizgi sıfıra düşmez)
+    const lastDataIdx = fullMonthly.reduce((last, value, index) => (Number(value) > 0 ? index : last), -1);
     const trendEl = document.getElementById('tbxTrendChart');
     if (trendEl) {
         const trendOptions = chartOptions('Adet');
@@ -18009,26 +18116,28 @@ function renderTarmakCommandCharts({ monthNames, filteredCurrent, fullMonthly, c
                 labels: monthNames,
                 datasets: [
                     {
-                        label: 'Butun madde',
-                        data: fullMonthly,
+                        label: 'Bütün madde',
+                        data: maskMonthsAfter(fullMonthly, lastDataIdx),
                         borderColor: '#f97316',
                         backgroundColor: 'rgba(249, 115, 22, 0.14)',
                         fill: true,
                         tension: 0.28,
                         borderWidth: 3,
                         pointRadius: 3,
-                        pointHoverRadius: 5
+                        pointHoverRadius: 5,
+                        spanGaps: false
                     },
                     {
                         label: 'N+N1 filtreli',
-                        data: filteredCurrent,
+                        data: maskMonthsAfter(filteredCurrent, lastDataIdx),
                         borderColor: 'var(--brand-primary)',
                         backgroundColor: 'rgba(var(--brand-primary-rgb), 0.08)',
                         fill: true,
                         tension: 0.28,
                         borderWidth: 3,
                         pointRadius: 3,
-                        pointHoverRadius: 5
+                        pointHoverRadius: 5,
+                        spanGaps: false
                     }
                 ]
             },
@@ -18065,14 +18174,15 @@ function renderTarmakCommandCharts({ monthNames, filteredCurrent, fullMonthly, c
                     {
                         type: 'line',
                         label: 'Carryover orani',
-                        data: fullMonthly.map((value, index) => value > 0 ? (carryoverMonthly[index] * 100) / value : 0),
+                        data: maskMonthsAfter(fullMonthly.map((value, index) => value > 0 ? (carryoverMonthly[index] * 100) / value : 0), lastDataIdx),
                         borderColor: '#22c55e',
                         backgroundColor: 'rgba(34, 197, 94, 0.08)',
                         yAxisID: 'y1',
                         tension: 0.28,
                         borderWidth: 3,
                         pointRadius: 3,
-                        pointHoverRadius: 5
+                        pointHoverRadius: 5,
+                        spanGaps: false
                     }
                 ]
             },
@@ -18271,18 +18381,18 @@ async function loadTarmakBirPage() {
 
         const chips = [
             { label: 'N+N1 toplam', value: `${fmtNum(filteredTotal)} adet` },
-            { label: 'Butun madde', value: `${fmtNum(fullTotal)} adet` },
+            { label: 'Bütün madde', value: `${fmtNum(fullTotal)} adet` },
             { label: 'Carryover', value: fmtPct(carryoverShare, 1) },
             { label: 'Zirve ay', value: peakMonthName },
             { label: 'Top 3 pay', value: fmtPct(top3Share, 1) }
         ];
 
         const kpiCards = [
-            { label: 'N+N1 hacim', value: `${fmtNum(filteredTotal)} adet`, note: `${selectedYearResolved} tescil yilinin filtreli ritmi`, tone: 'is-up' },
-            { label: 'Butun madde hacim', value: `${fmtNum(fullTotal)} adet`, note: `${totalData.source_table || 'sales_data'} üzerinden tum model yillari`, tone: 'is-analysis' },
+            { label: 'N+N1 hacim', value: `${fmtNum(filteredTotal)} adet`, note: `${selectedYearResolved} tescil yılının filtreli ritmi`, tone: 'is-up' },
+            { label: 'Bütün madde hacim', value: `${fmtNum(fullTotal)} adet`, note: `${totalData.source_table || 'sales_data'} üzerinden tüm model yılları`, tone: 'is-analysis' },
             { label: 'Carryover etkisi', value: `${fmtNum(carryoverTotal)} adet`, note: `${fmtPct(carryoverShare, 1)} ek hacim`, tone: carryoverShare >= 20 ? 'is-warning' : 'is-neutral' },
-            { label: 'N+N1 YoY', value: filteredYoy != null ? formatSignedPct(filteredYoy, 1) : '-', note: previousYear ? `${previousYear} ile ayni pencere kiyasi` : 'Onceki yil verisi yok', tone: filteredYoy != null ? getTarmakPressureClass(0, filteredYoy) : 'is-neutral' },
-            { label: 'Pazar zirvesi', value: peakMonthName, note: `${fmtNum(fullMonthly[peakMonthIndex] || 0)} adet tum havuz`, tone: 'is-opportunity' },
+            { label: 'N+N1 YoY', value: filteredYoy != null ? formatSignedPct(filteredYoy, 1) : '-', note: previousYear ? `${previousYear} ile aynı pencere kıyası` : 'Önceki yıl verisi yok', tone: filteredYoy != null ? getTarmakPressureClass(0, filteredYoy) : 'is-neutral' },
+            { label: 'Pazar zirvesi', value: peakMonthName, note: `${fmtNum(fullMonthly[peakMonthIndex] || 0)} adet tüm havuz`, tone: 'is-opportunity' },
             { label: 'Top 3 yoğunluğu', value: fmtPct(top3Share, 1), note: `${brandRows.slice(0, 3).map(item => item.name).join(' / ') || 'Veri yok'}`, tone: top3Share >= 55 ? 'is-warning' : 'is-analysis' }
         ];
 
@@ -18317,7 +18427,7 @@ async function loadTarmakBirPage() {
                         <strong>${fmtNum(focusRow.total)}</strong>
                     </div>
                     <div class="tbx-focus-metric">
-                        <span>Pazar payi</span>
+                        <span>Pazar payı</span>
                         <strong>${fmtPct(focusRow.share, 1)}</strong>
                     </div>
                     <div class="tbx-focus-metric">
@@ -18325,14 +18435,14 @@ async function loadTarmakBirPage() {
                         <strong>${dashboardSafe(focusRow.peakMonth)}</strong>
                     </div>
                     <div class="tbx-focus-metric">
-                        <span>Q4 agirligi</span>
+                        <span>Q4 ağırlığı</span>
                         <strong>${fmtPct(focusRow.q4Share, 1)}</strong>
                     </div>
                 </div>
                 <div class="tbx-meter">
                     <div class="tbx-meter-bar" style="width:${Math.min(focusRow.share, 100)}%;background:${dashboardSafe(focusRow.color)}"></div>
                 </div>
-                <p>${dashboardSafe(`${focusRow.rhythm}. Yilin ikinci yarisi agirligi ${fmtPct(focusRow.h2Share, 1)} seviyesinde.`)}</p>
+                <p>${dashboardSafe(`${focusRow.rhythm}. Yılın ikinci yarısı ağırlığı ${fmtPct(focusRow.h2Share, 1)} seviyesinde.`)}</p>
             </div>
         ` : `
             <div class="tbx-focus-card">
@@ -18361,7 +18471,7 @@ async function loadTarmakBirPage() {
                         <strong>${fmtNum(brandRows.length)}</strong>
                     </div>
                 </div>
-                <p>Bu ekran seçili marka yoksa toplam pazar yoğunluğunu ve baski aylarini öne çıkarır.</p>
+                <p>Bu ekran seçili marka yoksa toplam pazar yoğunluğunu ve baskı aylarini öne çıkarır.</p>
             </div>
         `;
 
@@ -18406,7 +18516,7 @@ async function loadTarmakBirPage() {
                 ${item.monthly.map(value => `<td>${value > 0 ? fmtNum(value) : '-'}</td>`).join('')}
             </tr>
         `).join('') : `
-            <tr><td colspan="16" class="tbx-table-empty">Seçili yil için model yili kirilimi bulunamadi.</td></tr>
+            <tr><td colspan="16" class="tbx-table-empty">Seçili yıl için model yılı kırılımı bulunamadı.</td></tr>
         `;
 
         const pressureRowsHtml = pressureRows.map(item => `
@@ -18428,10 +18538,10 @@ async function loadTarmakBirPage() {
                         <div class="tbx-hero-copy">
                             <div class="tbx-overline">Market Rhythm Command</div>
                             <h2>TarmakBir Komuta Merkezi</h2>
-                            <p>N+N1 filtreli ritim ile butun model yili havuzunu ayni ekranda okuyup carryover baskısını, marka yoğunluğunu ve ticari aksiyon alanlarini yönetim seviyesinde görünür hale getirir.</p>
+                            <p>N+N1 filtreli ritim ile bütün model yılı havuzunu aynı ekranda okuyup carryover baskısını, marka yoğunluğunu ve ticari aksiyon alanlarini yönetim seviyesinde görünür hale getirir.</p>
                             <div class="tbx-control-row">
                                 <label class="tbx-field">
-                                    <span>Veri yili</span>
+                                    <span>Veri yılı</span>
                                     <select id="tarmakCommandYearFilter" data-on-change="reloadTarmakCommand(this.value)">
                                         ${yearOptionsHtml}
                                     </select>
@@ -18457,7 +18567,7 @@ async function loadTarmakBirPage() {
                         <div class="tbx-panel-head">
                             <div>
                                 <h3>Pazar ritmi</h3>
-                                <p>N+N1 filtreli satir ile butun madde akışıni ayni zaman ekseninde okur.</p>
+                                <p>N+N1 filtreli satir ile bütün madde akışıni aynı zaman ekseninde okur.</p>
                             </div>
                         </div>
                         <div class="tbx-chart-wrap"><canvas id="tbxTrendChart"></canvas></div>
@@ -18478,8 +18588,8 @@ async function loadTarmakBirPage() {
                     <article class="tbx-panel">
                         <div class="tbx-panel-head">
                             <div>
-                                <h3>Carryover basinci</h3>
-                                <p>Filtre disi hacmin aylara gore nerede yukselip dustugunu gosterir.</p>
+                                <h3>Carryover basıncı</h3>
+                                <p>Filtre disi hacmin aylara göre nerede yükselip düştüğünü gösterir.</p>
                             </div>
                         </div>
                         <div class="tbx-chart-wrap"><canvas id="tbxPressureChart"></canvas></div>
@@ -18489,7 +18599,7 @@ async function loadTarmakBirPage() {
                         <div class="tbx-panel-head">
                             <div>
                                 <h3>Marka liderlik haritasi</h3>
-                                <p>Butun madde havuzunda en yüksek hacmi toplayan markalar.</p>
+                                <p>Bütün madde havuzunda en yüksek hacmi toplayan markalar.</p>
                             </div>
                         </div>
                         <div class="tbx-chart-wrap"><canvas id="tbxBrandChart"></canvas></div>
@@ -18501,7 +18611,7 @@ async function loadTarmakBirPage() {
                         <div class="tbx-panel-head">
                             <div>
                                 <h3>Marka liderlik matrisi</h3>
-                                <p>Hacim, pay, zirve ay ve ikinci yari agirligi ile saha ritmi ayni tabloda.</p>
+                                <p>Hacim, pay, zirve ay ve ikinci yarı ağırlığı ile saha ritmi aynı tabloda.</p>
                             </div>
                         </div>
                         <div class="tbx-table-wrap">
@@ -18525,15 +18635,15 @@ async function loadTarmakBirPage() {
                     <article class="tbx-panel">
                         <div class="tbx-panel-head">
                             <div>
-                                <h3>Tescil yili arsivi</h3>
-                                <p>Son 6 yilin N+N1 filtreli ritmi ceyrek bazli okunur.</p>
+                                <h3>Tescil yılı arsivi</h3>
+                                <p>Son 6 yılın N+N1 filtreli ritmi çeyrek bazlı okunur.</p>
                             </div>
                         </div>
                         <div class="tbx-table-wrap">
                             <table class="tbx-table">
                                 <thead>
                                     <tr>
-                                        <th>Yil</th>
+                                        <th>Yıl</th>
                                         <th>Toplam</th>
                                         <th>Q1</th>
                                         <th>Q2</th>
@@ -18552,15 +18662,15 @@ async function loadTarmakBirPage() {
                     <article class="tbx-panel">
                         <div class="tbx-panel-head">
                             <div>
-                                <h3>Model yili kirilimi</h3>
-                                <p>${selectedYearResolved} tescil yilinda filtreye giren model yıllarınin aylık dağılımı.</p>
+                                <h3>Model yılı kırılımı</h3>
+                                <p>${selectedYearResolved} tescil yılında filtreye giren model yıllarınin aylık dağılımı.</p>
                             </div>
                         </div>
                         <div class="tbx-table-wrap">
                             <table class="tbx-table tbx-table-wide">
                                 <thead>
                                     <tr>
-                                        <th>Model yili</th>
+                                        <th>Model yılı</th>
                                         <th>Toplam</th>
                                         <th>Pay</th>
                                         <th>Zirve ay</th>
@@ -18575,8 +18685,8 @@ async function loadTarmakBirPage() {
                     <article class="tbx-panel">
                         <div class="tbx-panel-head">
                             <div>
-                                <h3>Aylik baski matrisi</h3>
-                                <p>Carryover farki, N+N1 temposu ve aksiyon notu ayni satirda.</p>
+                                <h3>Aylık baskı matrisi</h3>
+                                <p>Carryover farki, N+N1 temposu ve aksiyon notu aynı satirda.</p>
                             </div>
                         </div>
                         <div class="tbx-table-wrap">
@@ -18585,7 +18695,7 @@ async function loadTarmakBirPage() {
                                     <tr>
                                         <th>Ay</th>
                                         <th>N+N1</th>
-                                        <th>Butun madde</th>
+                                        <th>Bütün madde</th>
                                         <th>Fark</th>
                                         <th>Fark %</th>
                                         <th>YoY</th>
@@ -18603,7 +18713,7 @@ async function loadTarmakBirPage() {
                         <i class="fas fa-brain"></i>
                         <span>AI TarmakBir strateji brifi</span>
                     </button>
-                    <span class="ai-powered">N+N1 ritmi, butun madde baskısı ve marka yoğunluğu tek AI brifinde</span>
+                    <span class="ai-powered">N+N1 ritmi, bütün madde baskısı ve marka yoğunluğu tek AI brifinde</span>
                 </section>
                 <div id="tbxAiPanel" class="ai-panel" style="display:none"></div>
             </div>
