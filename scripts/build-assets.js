@@ -8,8 +8,8 @@ const esbuild = require('esbuild');
 const PUBLIC = path.join(__dirname, '..', 'public');
 const DIST = path.join(PUBLIC, 'dist');
 
-const JS = ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js'];
-const CSS = ['style.css', 'billing.css', 'media-watch.css'];
+const JS = ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js', 'admin.js', 'kurum.js'];
+const CSS = ['style.css', 'billing.css', 'media-watch.css', 'admin.css'];
 
 async function main() {
     fs.rmSync(DIST, { recursive: true, force: true });

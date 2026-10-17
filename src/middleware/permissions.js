@@ -49,7 +49,8 @@ async function getStaffContext(db, userId) {
         is_active: u.is_active !== false,
         is_superuser,
         staff_role: u.staff_role || null,
-        role_name: u.role_name || null,
+        // Superuser her zaman "Sahip"; staff_role NULL olan eski yönetici Süper Yönetici sayılır (plan §2).
+        role_name: is_superuser ? 'Sahip' : (u.role_name || (legacyAdmin ? 'Süper Yönetici' : null)),
         permissions: perms
     };
 }
