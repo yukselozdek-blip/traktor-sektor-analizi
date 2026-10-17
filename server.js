@@ -33,6 +33,7 @@ const { isSafeSql } = require('./src/lib/sql-guard');
 const { logRouteError, fiveXxLogger, globalErrorHandler } = require('./src/lib/log-error');
 const { getOrgSubscriptionForUser, getDisabledFeatureKeys } = require('./src/lib/org-entitlements');
 const { SAFE_EMAIL } = require('./src/lib/validate');
+const { buildStorylineCards, fmtPctTR, fmtNumTR, fmtSignedNumTR, fmtPpTR } = require('./src/lib/brand-storyline');
 const { getBaseUrl } = require('./src/lib/app-url');
 process.on('unhandledRejection', (reason) => {
     console.error('unhandledRejection:', reason && reason.stack ? reason.stack : reason);
@@ -267,7 +268,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
 
         const requestedBrandId = req.query.brand_id ? parseInt(req.query.brand_id, 10) : null;
         const requestedModelKey = String(req.query.model_key || '').trim();
-        const monthNames = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik'];
+        const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
         const modelWindowFilter = `
             tv.tescil_yil IS NOT NULL
             AND tv.tescil_ay IS NOT NULL
@@ -956,7 +957,7 @@ app.get('/api/sales/model-region', authMiddleware, async (req, res) => {
 // ============================================
 // WHATSAPP / N8N QUERY HELPERS
 // ============================================
-const MONTH_NAMES_TR = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik'];
+const MONTH_NAMES_TR = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const BRAND_ALIAS_MAP = {
     'tumosan': ['tumosan'],
     'basak': ['basak'],
@@ -1336,10 +1337,10 @@ function buildPortalProfile(brandRow, options = {}) {
             heroStats.push({ label: 'Aktif model', value: String(modelCount), note: 'Mevcut katalog' });
         }
         if (brandRow.country_of_origin) {
-            heroStats.push({ label: 'Ulke', value: brandRow.country_of_origin, note: 'Marka kaydi' });
+            heroStats.push({ label: 'Ülke', value: brandRow.country_of_origin, note: 'Marka kaydı' });
         }
         if (brandRow.parent_company) {
-            heroStats.push({ label: 'Grup', value: brandRow.parent_company, note: 'Marka kaydi' });
+            heroStats.push({ label: 'Grup', value: brandRow.parent_company, note: 'Marka kaydı' });
         }
     }
 
@@ -1353,7 +1354,7 @@ function buildPortalProfile(brandRow, options = {}) {
 
     if (!productLines.length && modelCount > 0) {
         productLines.push({
-            label: 'Model portfoyu',
+            label: 'Model portföyü',
             items: [`${modelCount} aktif model katalogdan geliyor`]
         });
     }
@@ -1473,7 +1474,7 @@ function buildPortalFallbackContacts(brand, portalContacts, profile) {
         fallbackContacts.push({
             contact_type: 'network',
             label: 'Bayi ve servis agi',
-            city: 'Turkiye',
+            city: 'Türkiye',
             title: 'Resmi saha erisimi',
             phone: profile.contact_phone || '',
             email: profile.contact_email || '',
@@ -1668,7 +1669,7 @@ async function buildBrandExecutiveReport(brand, options = {}) {
             automation_roadmap: curatedReport.automation_roadmap || [
                 {
                     title: `${reportBrandName} Pulse Agent`,
-                    summary: 'Aylik TUIK tescil ritmini otomatik izler ve yonetime fark raporu uretir.',
+                    summary: 'Aylık TUIK tescil ritmini otomatik izler ve yönetime fark raporu üretir.',
                     owner: 'n8n + SQL'
                 }
             ],
@@ -2179,48 +2180,29 @@ async function buildBrandExecutiveReport(brand, options = {}) {
     const topCategory = categoryMix[0] || null;
     const topDrive = driveMix[0] || null;
     const topHp = hpMix[0] || null;
-    const shareCardValue = currentShare !== null ? `${currentShare}%` : '-';
-    const shareCardNote = shareDeltaPp !== null
-        ? `${shareDeltaPp > 0 ? '+' : ''}${shareDeltaPp} puan vs ${prevYear} aynı dönem`
-        : 'Geçmiş dönem payı yok';
-
     const executiveKpis = [
         { label: 'Tescil hacmi', value: formatNumberTR(currentSales), note: `${maxYear} ilk ${maxMonth} ay` },
-        { label: 'Pazar payı', value: shareCardValue, note: shareCardNote },
+        { label: 'Pazar payı', value: fmtPctTR(currentShare, { decimals: 2 }), note: shareDeltaPp !== null ? `${fmtSignedNumTR(shareDeltaPp, 2)} puan vs ${prevYear} aynı dönem` : 'Geçmiş dönem payı yok' },
         { label: 'Sıralama', value: ranking ? `${ranking}. sıra` : '-', note: currentMarket ? `${formatNumberTR(currentMarket)} toplam pazar` : 'Pazar verisi yok' },
-        { label: 'Pazara göre performans', value: outperformancePp !== null ? `${outperformancePp > 0 ? '+' : ''}${outperformancePp} puan` : '-', note: marketYoy !== null && brandYoy !== null ? `Pazar ${marketYoy > 0 ? '+' : ''}${marketYoy}% / ${reportBrandName} ${brandYoy > 0 ? '+' : ''}${brandYoy}%` : 'Karşılaştırma bekleniyor' },
-        { label: 'Aktif il', value: formatNumberTR(activeProvinces), note: `Top 10 il payı ${top10SharePct}%` },
-        { label: 'Teknik katalog', value: `${resolvedTechnicalModelCount} model`, note: `${resolvedTechnicalVariantCount} varyant / ${resolvedTechnicalAvgHp || '-'} HP ort.` }
+        { label: 'Pazara göre performans', value: fmtPpTR(outperformancePp, 2), note: marketYoy !== null && brandYoy !== null ? `Pazar ${fmtPctTR(marketYoy, { signed: true })} / ${reportBrandName} ${fmtPctTR(brandYoy, { signed: true })}` : 'Karşılaştırma bekleniyor' },
+        { label: 'Aktif il', value: formatNumberTR(activeProvinces), note: `Top 10 il payı ${fmtPctTR(top10SharePct, { decimals: 1 })}` },
+        { label: 'Teknik katalog', value: `${resolvedTechnicalModelCount} model`, note: `${resolvedTechnicalVariantCount} varyant / ${resolvedTechnicalAvgHp ? fmtNumTR(resolvedTechnicalAvgHp, 1) : '-'} HP ort.` }
     ];
 
-    const storylineCards = [
-        {
-            eyebrow: 'Pazar direnci',
-            title: 'Daralan pazarda göreli olarak daha sağlam kaldı',
-            value: outperformancePp !== null ? `${outperformancePp > 0 ? '+' : ''}${outperformancePp} puan` : '-',
-            note: marketYoy !== null && brandYoy !== null ? `Pazar ${marketYoy > 0 ? '+' : ''}${marketYoy}% daralırken marka ${brandYoy > 0 ? '+' : ''}${brandYoy}% hareket etti.` : 'Karşılaştırma için önceki dönem verisi bekleniyor.'
-        },
-        {
-            eyebrow: 'Pay geri kazanımı',
-            title: 'Tescil payı aynı dönemde yukarı döndü',
-            value: shareCardValue,
-            note: shareDeltaPp !== null ? `${prevYear} aynı döneme göre ${shareDeltaPp > 0 ? '+' : ''}${shareDeltaPp} puanlık hareket.` : 'Pay hareketi hesaplanamadı.'
-        },
-        {
-            eyebrow: 'Portföy ekseni',
-            title: 'Tarla gücü korunurken bahçe hacmi ikinci ayağı oluşturuyor',
-            value: topCategory ? `${topCategory.share_pct}% ${topCategory.label}` : '-',
-            note: `${topDrive ? `${topDrive.share_pct}% ${topDrive.label}` : '-'} çekiş profili, ${topHp ? `${topHp.label} lider segment` : 'HP profili bekleniyor'}.`
-        },
-        {
-            eyebrow: 'Bölgesel denge',
-            title: 'Dağılım tek ile sıkışmayan yaygın bir saha izi üretiyor',
-            value: `Top 3 ${top3SharePct}%`,
-            note: topRegionGrowth
-                ? `${topRegionGrowth.region_name} ${topRegionGrowth.yoy_pct > 0 ? '+' : ''}${topRegionGrowth.yoy_pct}% ile öne çıkıyor${weakestRegionGrowth ? `, zayıf halka ${weakestRegionGrowth.region_name}` : ''}.`
-                : 'Bölgesel momentum hesaplanamadı.'
-        }
-    ];
+    const storylineCards = buildStorylineCards({
+        outperformancePp,
+        marketYoy,
+        brandYoy,
+        shareValuePct: currentShare,
+        shareDeltaPp,
+        prevYear,
+        topCategory,
+        topDrive,
+        topHp,
+        top3SharePct,
+        topRegionGrowth,
+        weakestRegionGrowth
+    });
 
     const fallbackGovernance = [
         brand.country_of_origin ? { label: 'Menşei', value: brand.country_of_origin, note: 'Marka kaydı' } : null,
@@ -2649,7 +2631,7 @@ async function buildBrandComparisonAnswer(brands, year, latestPeriod) {
         return {
             ok: false,
             intent: 'brand_year_compare',
-            answer: `${year} icin secilen markalara ait satis kaydi bulunamadi.`,
+            answer: `${year} için seçilen markalara ait satış kaydı bulunamadı.`,
             data: { year, brands: orderedResults }
         };
     }
@@ -2665,9 +2647,9 @@ async function buildBrandComparisonAnswer(brands, year, latestPeriod) {
     const periodLabel = formatPeriodLabel(year, monthCount, latestPeriod?.year, latestPeriod?.month);
 
     const answer = [
-        `${periodLabel} icin karsilastirma: ${first.name} ${formatNumberTR(first.total_sales)} adet, ${second.name} ${formatNumberTR(second.total_sales)} adet satti.`,
+        `${periodLabel} için karşılaştırma: ${first.name} ${formatNumberTR(first.total_sales)} adet, ${second.name} ${formatNumberTR(second.total_sales)} adet satti.`,
         `${leader.name}, ${lagger.name}'i ${formatNumberTR(difference)} adet farkla gecti.`,
-        `Pazar paylari: ${first.name} %${formatShare(firstShare)}, ${second.name} %${formatShare(secondShare)}. Lider markanin payi %${formatShare(leaderShare)}.`
+        `Pazar payları: ${first.name} %${formatShare(firstShare)}, ${second.name} %${formatShare(secondShare)}. Lider markanin payı %${formatShare(leaderShare)}.`
     ].join(' ');
 
     return {
@@ -3886,7 +3868,7 @@ async function resolveAssistantQuestion(question, phoneNumber) {
 
 async function sendWhatsAppTextMessage(to, body) {
     if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
-        throw new Error('WhatsApp credentials tanimli degil');
+        throw new Error('WhatsApp credentials tanımlı değil');
     }
 
     const response = await fetch(`${process.env.WHATSAPP_GRAPH_API_BASE || 'https://graph.facebook.com/v21.0'}/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
@@ -5148,7 +5130,7 @@ app.get('/api/brand-portals/directory', async (req, res) => {
                 b.primary_color,
                 b.secondary_color,
                 b.accent_color,
-                COALESCE(p.tagline, CONCAT(b.name, ' icin ozel marka deneyimi')) AS tagline,
+                COALESCE(p.tagline, CONCAT(b.name, ' için özel marka deneyimi')) AS tagline,
                 COALESCE(p.website_url, b.website, '') AS website_url,
                 COUNT(m.id)::int AS model_count
             FROM brands b
@@ -5169,7 +5151,7 @@ app.get('/api/brand-portals/directory', async (req, res) => {
         })));
     } catch (err) {
         console.error('Brand portal directory error:', err);
-        res.status(500).json({ error: 'Sunucu hatasi' });
+        res.status(500).json({ error: 'Sunucu hatası' });
     }
 });
 
@@ -5718,13 +5700,13 @@ function buildMediaWatchAlertKey(brandId, alertType, scopeValue = '') {
 
 function buildMediaWatchAlertTitle(alertType, scopeLabel, count, brandName = '') {
     const label = scopeLabel || brandName || 'Genel gundem';
-    if (alertType === 'complaint-pressure') return `${label} icin toplam sikayet baskisi ${count} kayda ulasti`;
-    if (alertType === 'complaint-cluster') return `${label} ekseninde ${count} tekrar eden sikayet sinyali`;
-    if (alertType === 'service-backlog') return `${label} ekseninde satis sonrasi baskisi artiyor`;
-    if (alertType === 'forum-buzz') return `${label} icin forum tartismasi hizlandi`;
-    if (alertType === 'launch-buzz') return `${label} icin lansman ve sosyal gorunurluk firsati`;
-    if (alertType === 'official-impact') return `${label} icin resmi karar / destek etkisi`;
-    return `${label} icin medya alarmi`;
+    if (alertType === 'complaint-pressure') return `${label} için toplam şikayet baskisi ${count} kayda ulasti`;
+    if (alertType === 'complaint-cluster') return `${label} ekseninde ${count} tekrar eden şikayet sinyali`;
+    if (alertType === 'service-backlog') return `${label} ekseninde satış sonrası baskısı artıyor`;
+    if (alertType === 'forum-buzz') return `${label} için forum tartismasi hizlandi`;
+    if (alertType === 'launch-buzz') return `${label} için lansman ve sosyal gorunurluk firsati`;
+    if (alertType === 'official-impact') return `${label} için resmi karar / destek etkisi`;
+    return `${label} için medya alarmi`;
 }
 
 function buildMediaWatchAlertSummary(alertType, rows = [], scopeLabel = '', brandName = '') {
@@ -5741,24 +5723,24 @@ function buildMediaWatchAlertSummary(alertType, rows = [], scopeLabel = '', bran
         .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
 
     if (alertType === 'complaint-pressure') {
-        return `${brandName || 'Marka'} icin son donemde toplam ${rows.length} sikayet / ariza kaydi toplandi. Kanal karmasi: ${channelMix || 'veri yok'}. ${modelMix ? `Dagilan urun / model izi: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
+        return `${brandName || 'Marka'} için son dönemde toplam ${rows.length} şikayet / ariza kaydı toplandi. Kanal karması: ${channelMix || 'veri yok'}. ${modelMix ? `Dağılan ürün / model izi: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
     }
     if (alertType === 'complaint-cluster') {
-        return `${brandName || 'Marka'} icin ${scopeLabel || 'saha'} ekseninde ${rows.length} sikayet / ariza sinyali toplandi. Kanal karmasi: ${channelMix || 'veri yok'}. ${modelMix ? `Urun / model yoğunluğu: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
+        return `${brandName || 'Marka'} için ${scopeLabel || 'saha'} ekseninde ${rows.length} şikayet / ariza sinyali toplandi. Kanal karması: ${channelMix || 'veri yok'}. ${modelMix ? `Ürün / model yoğunluğu: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
     }
     if (alertType === 'service-backlog') {
-        return `${scopeLabel || 'Satis sonrasi'} tarafinda servis, garanti veya yedek parca baskisi goruluyor. Kanal karmasi: ${channelMix || 'veri yok'}.`;
+        return `${scopeLabel || 'Satış sonrasi'} tarafında servis, garanti veya yedek parca baskisi görülüyor. Kanal karması: ${channelMix || 'veri yok'}.`;
     }
     if (alertType === 'forum-buzz') {
-        return `${scopeLabel || 'Kullanici gundemi'} etrafinda forum / tartisma yogunlugu var. ${modelMix ? `Konusulan modeller: ${modelMix}. ` : ''}Kanal karmasi: ${channelMix || 'veri yok'}.`;
+        return `${scopeLabel || 'Kullanıcı gundemi'} etrafinda forum / tartisma yoğunluğu var. ${modelMix ? `Konusulan modeller: ${modelMix}. ` : ''}Kanal karması: ${channelMix || 'veri yok'}.`;
     }
     if (alertType === 'launch-buzz') {
-        return `${scopeLabel || brandName || 'Marka'} icin lansman, video veya sosyal web gorunurlugu toplandi. ${modelMix ? `One cikan urunler: ${modelMix}. ` : ''}Kanal karmasi: ${channelMix || 'veri yok'}.`;
+        return `${scopeLabel || brandName || 'Marka'} için lansman, video veya sosyal web gorunurlugu toplandi. ${modelMix ? `One cikan ürünler: ${modelMix}. ` : ''}Kanal karması: ${channelMix || 'veri yok'}.`;
     }
     if (alertType === 'official-impact') {
         return `${brandName || 'Marka'} ile ilgili resmi karar, destek veya mevzuat sinyali bulundu. Kaynaklar: ${channelMix || 'veri yok'}.`;
     }
-    return `${brandName || 'Marka'} icin medya alarmi toplandi.`;
+    return `${brandName || 'Marka'} için medya alarmi toplandi.`;
 }
 
 function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
@@ -5795,7 +5777,7 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
             alert_type: alertType,
             title: buildMediaWatchAlertTitle(alertType, scopeLabel, validRows.length, brand.name),
             summary: buildMediaWatchAlertSummary(alertType, validRows, scopeLabel, brand.name),
-            action_owner: options.actionOwner || 'Ust yonetim',
+            action_owner: options.actionOwner || 'Üst yönetim',
             source_count: sourceCount,
             item_count: validRows.length,
             average_severity: avgSeverity,
@@ -5819,7 +5801,7 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
     );
     if (complaintRows.length >= 4) {
         pushAlert('complaint-pressure', `${brand.name || 'Marka'} genel baski`, complaintRows, {
-            actionOwner: 'Satis sonrasi',
+            actionOwner: 'Satış sonrasi',
             alertLevel: complaintRows.length >= 8 ? 'critical' : 'warning'
         });
     }
@@ -5835,14 +5817,14 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
         const issueKey = normalizeSearchText(scopeLabel);
         const actionOwner = ['motor', 'sanziman', 'hidrolik', 'elektrik', 'teknik'].some(token => issueKey.includes(token))
             ? 'Ar-Ge'
-            : 'Satis sonrasi';
+            : 'Satış sonrasi';
         pushAlert('complaint-cluster', scopeLabel, rows, { actionOwner });
     });
 
     const serviceRows = complaintRows.filter(item => (item.complaint_area || '').includes('satis') || (item.issue_type || '').includes('servis'));
     if (serviceRows.length >= 2) {
         pushAlert('service-backlog', 'Servis / garanti', serviceRows, {
-            actionOwner: 'Satis sonrasi',
+            actionOwner: 'Satış sonrasi',
             alertLevel: serviceRows.length >= 4 ? 'critical' : 'warning'
         });
     }
@@ -5858,7 +5840,7 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
         if (rows.length < 2) return;
         const negativeCount = rows.filter(item => item.sentiment_label === 'negative').length;
         pushAlert('forum-buzz', scopeLabel, rows, {
-            actionOwner: negativeCount >= 2 ? 'Pazarlama' : 'Satis',
+            actionOwner: negativeCount >= 2 ? 'Pazarlama' : 'Satış',
             alertLevel: negativeCount >= 2 ? 'warning' : 'watch'
         });
     });
@@ -5888,7 +5870,7 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
             .sort((left, right) => new Date(right.published_at || right.created_at).getTime() - new Date(left.published_at || left.created_at).getTime())
             .slice(0, 4);
         pushAlert('official-impact', 'Resmi kararlar', latestOfficial, {
-            actionOwner: 'Ust yonetim',
+            actionOwner: 'Üst yönetim',
             alertLevel: latestOfficial.some(item => Number(item.severity_score || 0) >= 0.82) ? 'critical' : 'warning'
         });
     }
@@ -6073,7 +6055,7 @@ async function syncMediaWatchAlertNotifications(brandId, alerts = []) {
                 user.id,
                 brandId,
                 truncateDbText(`[${levelLabel}] ${alert.title || 'Medya alarmi'}`, 500),
-                truncateDbText(`${alert.summary || 'Detay bekleniyor.'} Aksiyon sahibi: ${alert.action_owner || 'Ust yonetim'}.`, 4000),
+                truncateDbText(`${alert.summary || 'Detay bekleniyor.'} Aksiyon sahibi: ${alert.action_owner || 'Üst yönetim'}.`, 4000),
                 JSON.stringify({
                     alert_id: alert.id,
                     alert_key: alert.alert_key,
@@ -6165,7 +6147,7 @@ async function generateMediaWatchBriefRecord(brandId, options = {}) {
     const windowDays = Math.max(3, Math.min(30, Number(options.windowDays || 14)));
     const brandRes = await pool.query('SELECT id, name, slug FROM brands WHERE id = $1 LIMIT 1', [brandId]);
     const brand = brandRes.rows[0];
-    if (!brand) throw new Error('Marka bulunamadi');
+    if (!brand) throw new Error('Marka bulunamadı');
 
     const itemsRes = await pool.query(`
         SELECT *
@@ -6190,12 +6172,12 @@ async function generateMediaWatchBriefRecord(brandId, options = {}) {
             `${index + 1}. [${item.channel_type}/${item.item_type}] ${item.title}\n` +
             `Kaynak: ${item.source_name || item.source_domain || '-'} | Tarih: ${item.published_at || item.created_at}\n` +
             `Duygu: ${item.sentiment_label || '-'} (${item.sentiment_score ?? '-'}) | Ciddiyet: ${item.severity_score ?? '-'}\n` +
-            `Urun/Model: ${item.product_name || item.model_name || '-'} | Sikayet: ${item.complaint_area || item.issue_type || '-'}\n` +
-            `Ozet: ${(item.summary || item.ai_summary || item.content_text || '').slice(0, 280)}`
+            `Ürün/Model: ${item.product_name || item.model_name || '-'} | Şikayet: ${item.complaint_area || item.issue_type || '-'}\n` +
+            `Özet: ${(item.summary || item.ai_summary || item.content_text || '').slice(0, 280)}`
         )).join('\n\n');
 
         const ai = await callGroqJson(
-            'Sen tarim ve traktör sektöründe çalışan çok kıdemli bir medya istihbarat yöneticisisin. Verilen kayıtlar için JSON dön. Sadece geçerli JSON üret. Alanlar: executive_summary_md, board_brief_md, marketing_md, arge_md, aftersales_md, issue_solutions_md, monitoring_gaps_md, risk_level. Metinleri Türkçe, kısa ama yönetici seviyesinde, maddeli ve aksiyon odaklı yaz.',
+            'Sen tarım ve traktör sektöründe çalışan çok kıdemli bir medya istihbarat yöneticisisin. Verilen kayıtlar için JSON dön. Sadece geçerli JSON üret. Alanlar: executive_summary_md, board_brief_md, marketing_md, arge_md, aftersales_md, issue_solutions_md, monitoring_gaps_md, risk_level. Metinleri Türkçe, kısa ama yönetici seviyesinde, maddeli ve aksiyon odaklı yaz.',
             `Marka: ${brand.name}\nPencere: son ${windowDays} gün\nKayıt sayısı: ${items.length}\n\nKayıtlar:\n${digest}`
         );
 

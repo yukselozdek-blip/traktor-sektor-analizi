@@ -944,7 +944,7 @@ function navigateTo(page, opts = {}) {
     titles['tarmakbir'] = ['TarmakBir Komuta Merkezi', 'N+N1 ritmi ile bütün madde baskısını tek aksiyon ekranında birleştirir'];
     titles['tarmakbir2'] = titles['tarmakbir'];
     titles['weather'] = ['İklim Komuta Merkezi', 'Saha ritmi, ürün deseni ve iklim baskısını tek ekranda yönetir'];
-    titles['province'] = ['İl Agro Intelligence', 'Toprak, iklim, ürün, ekipman ve tercih edilen traktoru tek katmanda okur'];
+    titles['province'] = ['İl Agro Intelligence', 'Toprak, iklim, ürün, ekipman ve tercih edilen traktörü tek katmanda okur'];
 
     titles['media-watch'] = ['Medya Takip', 'Marka gündemi, şikayet, lansman ve resmî karar istihbaratı'];
 
@@ -1982,13 +1982,13 @@ async function loadHpCommandCenterPage() {
             },
             {
                 icon: 'fas fa-arrow-trend-up',
-                title: `${data.concentration?.fastest_segment || '-'} ivmeli buyuyor`,
+                title: `${data.concentration?.fastest_segment || '-'} ivmeli büyüyor`,
                 text: `${fmtSignedPct(data.concentration?.fastest_segment_yoy_pct)} ile önceki döneme göre en hızlı hareket eden segment.`
             },
             {
                 icon: 'fas fa-seedling',
                 title: 'Kategori dengesi',
-                text: `Tarla ${fmtPct(data.concentration?.tarla_share_pct)} / Bahce ${fmtPct(data.concentration?.bahce_share_pct)}.`
+                text: `Tarla ${fmtPct(data.concentration?.tarla_share_pct)} / Bahçe ${fmtPct(data.concentration?.bahce_share_pct)}.`
             },
             {
                 icon: 'fas fa-crosshairs',
@@ -2118,7 +2118,7 @@ async function loadHpCommandCenterPage() {
                     <article class="hpx-kpi-card">
                         <span class="hpx-kpi-label">Kategori dengesi</span>
                         <strong class="hpx-kpi-value">${fmtPct(data.concentration?.tarla_share_pct)}</strong>
-                        <span class="hpx-kpi-note">Tarla · Bahce ${fmtPct(data.concentration?.bahce_share_pct)}</span>
+                        <span class="hpx-kpi-note">Tarla · Bahçe ${fmtPct(data.concentration?.bahce_share_pct)}</span>
                     </article>
                 </section>
 
@@ -2157,7 +2157,7 @@ async function loadHpCommandCenterPage() {
                     <div class="chart-card hpx-panel hpx-span-6">
                         <div class="hpx-panel-head">
                             <div>
-                                <h3>Bahce vs tarla dengesi</h3>
+                                <h3>Bahçe vs tarla dengesi</h3>
                                 <p>Segment bazinda kategori yoğunlaşması</p>
                             </div>
                         </div>
@@ -2193,7 +2193,7 @@ async function loadHpCommandCenterPage() {
                                         <th>Lider marka</th>
                                         <th>Lider il</th>
                                         <th>Lider model</th>
-                                        <th>Tarla / Bahce</th>
+                                        <th>Tarla / Bahçe</th>
                                     </tr>
                                 </thead>
                                 <tbody>${leaderRows}</tbody>
@@ -2225,7 +2225,7 @@ async function loadHpCommandCenterPage() {
                                     <tr>
                                         <th>HP</th>
                                         <th>Marka adet</th>
-                                        <th>Portfoy payı</th>
+                                        <th>Portföy payı</th>
                                         <th>Pazar payı</th>
                                         <th>Pay delta</th>
                                         <th>YoY</th>
@@ -2258,7 +2258,7 @@ async function loadHpCommandCenterPage() {
                 </section>
 
                 <section class="hpx-layout">
-                    ${renderCategoryPanel('bahce', 'Bahce segment akışı')}
+                    ${renderCategoryPanel('bahce', 'Bahçe segment akışı')}
                     ${renderCategoryPanel('tarla', 'Tarla segment akışı')}
                 </section>
             </div>
@@ -2325,7 +2325,7 @@ async function loadHpCommandCenterPage() {
                             stack: 'cat'
                         },
                         {
-                            label: 'Bahce',
+                            label: 'Bahçe',
                             data: orderedSegments.map(segment => segment.category_split?.bahce || 0),
                             backgroundColor: '#ef4444cc',
                             borderRadius: 8,
@@ -2879,7 +2879,7 @@ function buildProvTopBrandMemo(report = {}) {
             eyebrow: 'Model omurgası',
             title: heroModel?.model_name ? `${escapeHtml(heroModel.model_name)} portföy ekseninde öne çıkıyor` : 'Model omurgası yeniden kurulmalı',
             body: heroModel
-                ? `Seçili markanın il içindeki ana modeli ${fmtNum(heroModel.total_sales)} adet üretiyor. Portföy ortalaması ${brand.weighted_avg_hp != null ? `${brand.weighted_avg_hp} HP` : 'HP verisi sınırlı'} ve fiyat ekseni ${fmtPrice(brand.weighted_avg_price_usd)} seviyesinde.`
+                ? `Seçili markanın il içindeki ana modeli ${fmtNum(heroModel.total_sales)} adet üretiyor. Portföy ortalaması ${brand.weighted_avg_hp != null ? `${formatHpTR(brand.weighted_avg_hp)} HP` : 'HP verisi sınırlı'} ve fiyat ekseni ${fmtPrice(brand.weighted_avg_price_usd)} seviyesinde.`
                 : `İl içinde seçili markaya ait model derinliği sınırlı. Teknik veri ve saha karması birlikte takviye edilmeli.`,
             tone: heroModel ? 'is-opportunity' : 'is-warning'
         },
@@ -3284,7 +3284,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
             },
             {
                 label: 'HP ve fiyat ekseni',
-                value: selectedBrand.weighted_avg_hp != null ? `${selectedBrand.weighted_avg_hp} HP` : '-',
+                value: selectedBrand.weighted_avg_hp != null ? `${formatHpTR(selectedBrand.weighted_avg_hp)} HP` : '-',
                 note: fmtPrice(selectedBrand.weighted_avg_price_usd)
             }
         ];
@@ -3327,7 +3327,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                 </td>
                 <td>${fmtNum(item.total_sales || 0)}</td>
                 <td>${fmtPct(item.share_pct || 0, 1)}</td>
-                <td>${item.weighted_avg_hp != null ? `${item.weighted_avg_hp} HP` : '-'}</td>
+                <td>${item.weighted_avg_hp != null ? `${formatHpTR(item.weighted_avg_hp)} HP` : '-'}</td>
                 <td>${fmtPrice(item.weighted_avg_price_usd)}</td>
                 <td class="${getProvTopBrandTone(item.yoy_pct)}">${formatSignedPct(item.yoy_pct || 0, 1)}</td>
             </tr>
@@ -3342,7 +3342,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                 <h3>${safe(item.model_name || '-')}</h3>
                 <p>${safe(selectedBrand.brand_name)} içinde ${fmtPct(item.share_in_brand_pct || 0, 1)}, il toplamında ${fmtPct(item.share_in_province_pct || 0, 1)} pay üretiyor.</p>
                 <div class="ptx-model-metrics">
-                    <div><span>HP</span><strong>${item.avg_hp != null ? `${item.avg_hp}` : '-'}</strong></div>
+                    <div><span>HP</span><strong>${item.avg_hp != null ? formatHpTR(item.avg_hp, 1) : '-'}</strong></div>
                     <div><span>Fiyat</span><strong>${fmtPrice(item.avg_price_usd)}</strong></div>
                     <div><span>Çekiş</span><strong>${safe(item.drive_type || '-')}</strong></div>
                     <div><span>Kabin</span><strong>${safe(translateLabel(item.cabin_type || '-'))}</strong></div>
@@ -3362,7 +3362,7 @@ async function loadProvTopBrandPage(nextProvinceId = null, nextBrandId = null) {
                 <td>${fmtNum(item.total_sales || 0)}</td>
                 <td>${fmtPct(item.share_in_brand_pct || 0, 1)}</td>
                 <td>${fmtPct(item.share_in_province_pct || 0, 1)}</td>
-                <td>${item.avg_hp != null ? `${item.avg_hp} HP` : '-'}</td>
+                <td>${item.avg_hp != null ? `${formatHpTR(item.avg_hp)} HP` : '-'}</td>
                 <td>${fmtPrice(item.avg_price_usd)}</td>
                 <td>${safe(translateLabel(item.category || '-'))}</td>
                 <td>${safe(item.drive_type || '-')}</td>
@@ -3917,8 +3917,8 @@ async function renderMapFullGeoJSON(salesData) {
                         <span style="color:#94a3b8">${escapeHtml(prov?.region || '')}</span>
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
-                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>Ä°l ToplamÄ±:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
-                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>Ä°l PayÄ±:</span><span>${shareLabel(sales)}</span></div>` : ''}
+                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>İl Toplamı:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
+                        ${provinceTotal !== sales ? `<div style="display:flex;justify-content:space-between"><span>İl Payı:</span><span>${shareLabel(sales)}</span></div>` : ''}
                         ${topBrands.length > 0 ? `
                             <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                             <div style="font-size:11px;color:#94a3b8">En Çok Satan:</div>
@@ -4892,7 +4892,7 @@ function renderBrandHubTrendChart(data) {
     const el = document.getElementById('brandHubTrendChart');
     if (!el) return;
     const monthlyTrend = data?.sales?.monthly_trend || [];
-    const monthLabels = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const monthLabels = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
     const baseOptions = chartOptions('Adet');
     charts.brandHubTrend?.destroy?.();
 
@@ -5510,7 +5510,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
 
     const portfolioStats = [
         { label: 'Teknik model', value: formatNumber(portfolio.technical_model_count || 0), note: `${formatNumber(portfolio.technical_variant_count || 0)} varyant izi` },
-        { label: 'Ortalama HP', value: portfolio.avg_hp ? `${portfolio.avg_hp} HP` : '-', note: 'Teknik katalog ortalaması' },
+        { label: 'Ortalama HP', value: portfolio.avg_hp ? `${formatHpTR(portfolio.avg_hp)} HP` : '-', note: 'Teknik katalog ortalaması' },
         { label: 'Ortalama fiyat', value: fmtPrice(portfolio.avg_price_usd), note: portfolio.price_per_hp_usd ? `${formatNumber(portfolio.price_per_hp_usd)} $ / HP` : 'Fiyat tabanı' },
         { label: 'Fiyat bandı', value: formatUsdBand(portfolio.min_price_usd, portfolio.max_price_usd), note: 'Teknik veri tablosu' }
     ].map(item => `
@@ -5538,7 +5538,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
                 <span>${dashboardSafe(item.share_pct != null ? `${formatShareValue(item.share_pct)} pay` : '-')}</span>
             </div>
             <div class="bhx-model-metrics">
-                <span>${item.avg_hp ? `${item.avg_hp} HP` : 'HP yok'}</span>
+                <span>${item.avg_hp ? `${formatHpTR(item.avg_hp)} HP` : 'HP yok'}</span>
                 <span>${formatUsdBand(item.min_price_usd, item.max_price_usd)}</span>
             </div>
             <div class="bh-tag-list">
@@ -5553,7 +5553,7 @@ function renderExecutiveBrandHub(pageContent, portalData, brandOptions) {
         <div class="bhx-tech-row">
             <div class="bhx-tech-main">
                 <strong>${dashboardSafe(item.model_name || '-')}</strong>
-                <small>${item.avg_hp ? `${item.avg_hp} HP` : 'HP yok'} • ${dashboardSafe(item.origin || 'Katalog')}</small>
+                <small>${item.avg_hp ? `${formatHpTR(item.avg_hp)} HP` : 'HP yok'} • ${dashboardSafe(item.origin || 'Katalog')}</small>
             </div>
             <div class="bhx-tech-spec">${formatUsdBand(item.min_price_usd, item.max_price_usd)}</div>
             <div class="bhx-tech-spec">${dashboardSafe((item.drive_types || []).join(', ') || '-')}</div>
@@ -5985,7 +5985,7 @@ async function loadBrandHubPage() {
             { label: 'Yıllık değişim', value: sales.yoy_pct !== null && sales.yoy_pct !== undefined ? formatSignedPct(sales.yoy_pct, 1) : '-', meta: 'Aynı döneme göre' },
             { label: 'Pazar payı', value: sales.market_share_pct !== null && sales.market_share_pct !== undefined ? formatShareValue(sales.market_share_pct) : '-', meta: sales.ranking ? `${sales.ranking}. sırada` : 'Sıra bilgisi yok' },
             { label: 'Aktif il', value: formatNumber(sales.active_provinces || 0), meta: 'Son dönem saha izi' },
-            { label: 'Mevcut model', value: formatNumber(catalog.model_count || 0), meta: catalog.avg_hp ? `${catalog.avg_hp} HP ort.` : 'Katalog özeti' },
+            { label: 'Mevcut model', value: formatNumber(catalog.model_count || 0), meta: catalog.avg_hp ? `${formatHpTR(catalog.avg_hp)} HP ort.` : 'Katalog özeti' },
             { label: 'Fiyat bandı', value: catalog.min_price_usd && catalog.max_price_usd ? `${fmtPrice(catalog.min_price_usd)} - ${fmtPrice(catalog.max_price_usd)}` : '-', meta: catalog.max_hp ? `${catalog.max_hp} HP tepe` : 'Fiyat bilgisi yok' }
         ].map(card => `
             <div class="bh-kpi-card">
@@ -6320,7 +6320,7 @@ async function loadDashboard() {
                     <div class="dbx-model-rank">${index + 1}</div>
                     <div class="dbx-model-copy">
                         <strong>${dashboardSafe(model.model_name)}</strong>
-                        <span>${dashboardSafe(model.brand_name)} • ${model.avg_hp ? `${model.avg_hp} HP` : 'HP yok'}</span>
+                        <span>${dashboardSafe(model.brand_name)} • ${model.avg_hp ? `${formatHpTR(model.avg_hp)} HP` : 'HP yok'}</span>
                     </div>
                     <div class="dbx-model-metric">
                         <strong>${formatNumber(model.total_sales)}</strong>
@@ -6416,7 +6416,7 @@ async function loadDashboard() {
                     </div>
                     <div class="dbx-kpi-card dbx-kpi-cyan">
                         <span>Ortalama HP</span>
-                        <strong>${dashboardData?.overview?.avg_hp ? `${dashboardData.overview.avg_hp} HP` : '-'}</strong>
+                        <strong>${dashboardData?.overview?.avg_hp ? `${formatHpTR(dashboardData.overview.avg_hp)} HP` : '-'}</strong>
                         <small>Ağırlıklı model gücü</small>
                     </div>
                     <div class="dbx-kpi-card dbx-kpi-purple">
@@ -6980,8 +6980,8 @@ async function loadTurkeyGeoJSON(salesData, selectedRegion = 'all') {
                         <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                         <div style="display:flex;justify-content:space-between"><span>Toplam Satış:</span><strong>${formatNumber(sales)}</strong></div>
                         ${prov ? `<div style="display:flex;justify-content:space-between"><span>Nüfus:</span><span>${formatNumber(prov.population)}</span></div>` : ''}
-                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>Ä°l ToplamÄ±:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
-                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>Ä°l PayÄ±:</span><span>${shareLabel(sales)}</span></div>` : ''}
+                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>İl Toplamı:</span><span>${formatNumber(provinceTotal)}</span></div>` : ''}
+                        ${shouldShowProvinceShare ? `<div style="display:flex;justify-content:space-between"><span>İl Payı:</span><span>${shareLabel(sales)}</span></div>` : ''}
                         ${topItems.length > 0 ? `
                             <hr style="border-color:rgba(255,255,255,0.1);margin:6px 0">
                             <div style="font-size:11px;color:#94a3b8">${titleStr}</div>
@@ -8376,7 +8376,7 @@ function renderModelIntelReport(data = {}, request = {}) {
 
     const heroCards = [
         { label: 'Teknik varyant', value: metrics.variant_count || 0 },
-        { label: 'Ortalama HP', value: metrics.horsepower?.avg_hp ? `${metrics.horsepower.avg_hp} HP` : '-' },
+        { label: 'Ortalama HP', value: metrics.horsepower?.avg_hp ? `${formatHpTR(metrics.horsepower.avg_hp)} HP` : '-' },
         { label: 'Fiyat bandı', value: formatUsdBand(metrics.price?.min_usd, metrics.price?.max_usd) },
         { label: 'TÜİK satış izi', value: formatNumber(sales.summary?.total_sales || 0) }
     ].map(item => `
@@ -8984,7 +8984,7 @@ function ensureAiInsightsState(summary) {
 
 function getAiInsightMeta(type) {
     const map = {
-        recommendation: { label: 'Oneri', icon: 'fa-lightbulb', tone: 'is-opportunity' },
+        recommendation: { label: 'Öneri', icon: 'fa-lightbulb', tone: 'is-opportunity' },
         warning: { label: 'Risk', icon: 'fa-triangle-exclamation', tone: 'is-warning' },
         opportunity: { label: 'Firsat', icon: 'fa-bullseye', tone: 'is-opportunity' },
         analysis: { label: 'Analiz', icon: 'fa-chart-line', tone: 'is-analysis' },
@@ -9001,7 +9001,7 @@ function formatAiScoreValue(item, value) {
     if (value == null || Number.isNaN(Number(value))) return '-';
     if (['share', 'yoy', 'concentration'].includes(item?.id)) return fmtPct(Number(value), 1);
     if (item?.id === 'cost_hp') return value ? `${fmtPrice(Number(value))}/HP` : '-';
-    if (item?.id === 'avg_hp') return `${Number(value).toFixed(1)} HP`;
+    if (item?.id === 'avg_hp') return `${formatHpTR(value, 1)} HP`;
     return fmtNum(Number(value));
 }
 
@@ -9018,7 +9018,7 @@ function buildAiExecutiveMemo({ brand, report, compareData, insights }) {
     let stance = {
         label: 'Seçici büyüme',
         tone: 'is-neutral',
-        note: 'Marka alani korunurken en yüksek getiriyi verecek segment ve il cepleri secilerek büyüme kurgulanmali.'
+        note: 'Marka alani korunurken en yüksek getiriyi verecek segment ve il cepleri seçilerek büyüme kurgulanmali.'
     };
 
     if (outperform >= 1 && scoreGap >= 0) {
@@ -9050,7 +9050,7 @@ function buildAiExecutiveMemo({ brand, report, compareData, insights }) {
             ? `${decline.province_name} ${formatSignedPct(decline.yoy_pct, 1)} ile zayif halka olarak izlenmeli; savunma plani burada baslamali.`
             : '',
         insights?.[0]
-            ? `Son makine sinyali "${insights[0].title}" basligi ile ${new Date(insights[0].created_at).toLocaleDateString('tr-TR')} tarihinde uretildi.`
+            ? `Son makine sinyali "${insights[0].title}" basligi ile ${new Date(insights[0].created_at).toLocaleDateString('tr-TR')} tarihinde üretildi.`
             : ''
     ].filter(Boolean).slice(0, 4);
 
@@ -9073,7 +9073,7 @@ function buildAiScenarioCards({ report, compareData }) {
             title: opportunity ? `${opportunity.hp} HP bandini ac` : 'Açık hacmi topla',
             value: opportunity ? `${fmtNum(opportunity.openVolume || 0)} adet` : `${formatDashboardPercent(sales.market_share_pct || 0)}`,
             note: opportunity
-                ? `Lider pay ile toplam pazar arasindaki bosluk, seçili bandda hızlı hacim toplama alani veriyor.`
+                ? `Lider pay ile toplam pazar arasındaki bosluk, seçili bandda hızlı hacim toplama alani veriyor.`
                 : 'Markanin pay ivmesi olan segmentlerde hedeflenmis saha kapanışı önerilir.'
         },
         {
@@ -9085,8 +9085,8 @@ function buildAiScenarioCards({ report, compareData }) {
                 : 'Top 3 il yoğunluğu markanin kritik saha omurgasini oluşturuyor.'
         },
         {
-            eyebrow: 'Portfoy senaryosu',
-            title: topHp ? `${topHp.label} omurgasini yeniden paketle` : 'Portfoy baskısını azalt',
+            eyebrow: 'Portföy senaryosu',
+            title: topHp ? `${topHp.label} omurgasini yeniden paketle` : 'Portföy baskısını azalt',
             value: portfolio?.price_per_hp_usd ? `${fmtNum(portfolio.price_per_hp_usd)} $/HP` : `${fmtNum(portfolio.technical_model_count || 0)} model`,
             note: featureLead
                 ? `${featureLead.label} tarafindaki fark, teknik argumanin sahaya nasil taşınacağını netlestiriyor.`
@@ -9111,7 +9111,7 @@ function buildAiRiskCards({ report, compareData, insights }) {
     const losingBattle = (compareData?.provinceBattles || []).find(item => item.leader === 'brand2');
     if (losingBattle) {
         riskCards.push({
-            title: `${losingBattle.name} rakip baskisinda`,
+            title: `${losingBattle.name} rakip baskısında`,
             value: `${formatNumber(losingBattle.gap || 0)} adet`,
             note: `${compareData?.brand2?.name || 'Rakip'} bu ilde belirgin baskı kuruyor.`,
             tone: 'is-warning'
@@ -9140,7 +9140,7 @@ function buildAiRiskCards({ report, compareData, insights }) {
 
     if (riskCards.length === 0) {
         riskCards.push({
-            title: 'Kirmizi alarm kaydı yok',
+            title: 'Kırmızı alarm kaydı yok',
             value: 'Stabil',
             note: 'Canlı veride acil bir kayıp sinyali gözükmüyor; seçili büyüme alanlarina odaklanilabilir.',
             tone: 'is-up'
@@ -9156,7 +9156,7 @@ function formatForecastFeatureValue(featureType, value) {
         return String(value).toLowerCase() === 'kabinli' ? 'Kabinli' : 'Rollbar';
     }
     if (featureType === 'category') {
-        return String(value).toLowerCase() === 'bahce' ? 'Bahce' : 'Tarla';
+        return String(value).toLowerCase() === 'bahce' ? 'Bahçe' : 'Tarla';
     }
     if (featureType === 'drive_type') {
         return String(value).toUpperCase();
@@ -9166,7 +9166,7 @@ function formatForecastFeatureValue(featureType, value) {
 
 function buildAiForecastReadinessNote({ executiveForecast, readiness }) {
     if (!executiveForecast?.run) {
-        return 'Forecast kosusu henuz olusmadi; tahmin katmani ilk tam kosudan sonra burada akacaktir.';
+        return 'Forecast koşusu henüz oluşmadı; tahmin katmanı ilk tam koşudan sonra burada akacaktır.';
     }
 
     const missingLayers = (readiness?.layers || [])
@@ -9175,13 +9175,13 @@ function buildAiForecastReadinessNote({ executiveForecast, readiness }) {
 
     if (executiveForecast?.overview?.reference_mode) {
         if (missingLayers.length) {
-            return `Forecast su an referans emtia ve iklim serileri ile çalışıyor. ${missingLayers.slice(0, 3).join(', ')} katmanlari gercek import bekliyor.`;
+            return `Forecast su an referans emtia ve iklim serileri ile çalışıyor. ${missingLayers.slice(0, 3).join(', ')} katmanlari gerçek import bekliyor.`;
         }
         return 'Forecast su an referans emtia ve iklim serileri ile çalışıyor. Resmi ETL geldikce hassasiyet yükselecek.';
     }
 
     if (missingLayers.length) {
-        return `Bazi agro katmanlari henuz bos: ${missingLayers.slice(0, 3).join(', ')}.`;
+        return `Bazı agro katmanları henüz boş: ${missingLayers.slice(0, 3).join(', ')}.`;
     }
 
     return 'Forecast katmanlari aktif ve marka bazlı talep omurgası çalışıyor.';
@@ -9204,7 +9204,7 @@ function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
         stance = {
             label: 'Forecast beklemede',
             tone: 'is-neutral',
-            note: 'Tahmin motoru bu marka için ilk tam kosu veya veri dolumu bekliyor.'
+            note: 'Tahmin motoru bu marka için ilk tam koşu veya veri dolumu bekliyor.'
         };
     }
 
@@ -9224,20 +9224,20 @@ function buildAiForecastMemo({ brand, executiveForecast, readiness }) {
 
     const headline = overview.next_12m_units
         ? `${brand?.name || 'Marka'} için önümüzdeki 12 ayda ${formatNumber(overview.next_12m_units)} adetlik tahmin hacmi var; komuta merkezi bu hacmi il, destek ve ürün mimarisi olarak dağıtıyor.`
-        : `${brand?.name || 'Marka'} için forecast kosusu henuz yeterli veriyle dolmadi.`;
+        : `${brand?.name || 'Marka'} için forecast koşusu henüz yeterli veriyle dolmadı.`;
 
     const points = [
         topProvince
-            ? `${topProvince.province_name} ${formatNumber(topProvince.next_12m_units || 0)} adet ile ilk saldırı ili. ${topProvince.growth_pct != null ? `Beklenen ivme ${formatSignedPct(topProvince.growth_pct, 1)}.` : 'Buyume baz notu olusmadi.'}`
+            ? `${topProvince.province_name} ${formatNumber(topProvince.next_12m_units || 0)} adet ile ilk saldırı ili. ${topProvince.growth_pct != null ? `Beklenen ivme ${formatSignedPct(topProvince.growth_pct, 1)}.` : 'Büyüme baz notu olusmadi.'}`
             : '',
         overview.support_driven_share_pct != null
             ? `Tahmin hacminin ${formatDashboardPercent(overview.support_driven_share_pct, 1)} kismi aktif destek kapsamı olan illerde birikiyor.`
             : '',
         hpShift?.dominant_long_term
-            ? `${hpShift.feature_label} tarafinda ${hpShift.dominant_long_term.horizon_year} ufkunun baskın koridoru ${formatForecastFeatureValue('hp_range', hpShift.dominant_long_term.feature_value)}; bu alan ${formatDashboardPercent(hpShift.dominant_long_term.demand_share_pct, 1)} pay uretiyor.`
+            ? `${hpShift.feature_label} tarafında ${hpShift.dominant_long_term.horizon_year} ufkunun baskın koridoru ${formatForecastFeatureValue('hp_range', hpShift.dominant_long_term.feature_value)}; bu alan ${formatDashboardPercent(hpShift.dominant_long_term.demand_share_pct, 1)} pay üretiyor.`
             : '',
         driveShift?.strongest_gainer
-            ? `${driveShift.feature_label} tarafinda en hızlı kayan kombinasyon ${formatForecastFeatureValue('drive_type', driveShift.strongest_gainer.feature_value)} ve kayma ${formatSignedPoints(driveShift.strongest_gainer.delta_share_pct, 1)}.`
+            ? `${driveShift.feature_label} tarafında en hızlı kayan kombinasyon ${formatForecastFeatureValue('drive_type', driveShift.strongest_gainer.feature_value)} ve kayma ${formatSignedPoints(driveShift.strongest_gainer.delta_share_pct, 1)}.`
             : '',
         readinessNote
     ].filter(Boolean).slice(0, 4);
@@ -9304,7 +9304,7 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
         }
     });
 
-    const monthLabels = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const monthLabels = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
     const brand1 = compareData?.brand1 || {};
     const brand2 = compareData?.brand2 || {};
     const deep1 = brand1.data || {};
@@ -9579,7 +9579,7 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
                             borderWidth: 1.5
                         },
                         {
-                            label: 'Ust guven bandi',
+                            label: 'Üst güven bandı',
                             data: forecastRows.map(item => Number(item.confidence_high_total || 0)),
                             borderColor: `${rival}99`,
                             backgroundColor: 'transparent',
@@ -9629,7 +9629,7 @@ function renderAiInsightsCharts({ compareData, report, executiveForecast }) {
                     labels,
                     datasets: [
                         {
-                            label: nextYear ? `${nextYear} payı` : 'Yakin ufuk',
+                            label: nextYear ? `${nextYear} payı` : 'Yakın ufuk',
                             data: labels.map(label => Number(nextRows.find(item => item.feature_value === label)?.demand_share_pct || 0)),
                             backgroundColor: `${primary}cc`,
                             borderRadius: 10,
@@ -9763,19 +9763,19 @@ async function loadAIInsightsPage() {
             {
                 label: 'Makine sinyali',
                 value: `${formatNumber((insights || []).length)}`,
-                note: latestWarning ? `${latestWarning.title}` : 'Canlı insight akışı hazir',
+                note: latestWarning ? `${latestWarning.title}` : 'Canlı insight akışı hazır',
                 tone: latestWarning ? 'is-warning' : 'is-analysis'
             },
             {
                 label: '12A forecast',
                 value: forecastOverview?.next_12m_units ? `${formatNumber(forecastOverview.next_12m_units)} adet` : '-',
-                note: executiveForecast?.run ? (forecastOverview?.reference_mode ? 'Referans emtia + iklim modunda' : 'Tahmin omurgası aktif') : 'Forecast kosusu bekleniyor',
+                note: executiveForecast?.run ? (forecastOverview?.reference_mode ? 'Referans emtia + iklim modunda' : 'Tahmin omurgası aktif') : 'Forecast koşusu bekleniyor',
                 tone: 'is-forecast'
             },
             {
                 label: '2036 lider HP',
                 value: dominantForecastHp ? formatForecastFeatureValue('hp_range', dominantForecastHp.feature_value) : '-',
-                note: dominantForecastHp ? `${fmtPct(dominantForecastHp.demand_share_pct || 0, 1)} pay beklentisi` : 'Uzun vade ozellik kaymasi bekleniyor',
+                note: dominantForecastHp ? `${fmtPct(dominantForecastHp.demand_share_pct || 0, 1)} pay beklentisi` : 'Uzun vade özellik kayması bekleniyor',
                 tone: 'is-opportunity'
             }
         ];
@@ -9811,7 +9811,7 @@ async function loadAIInsightsPage() {
             : `
                 <article class="aix-story-card">
                     <span>Stratejik katman</span>
-                    <h3>Executive hikaye hazir değil</h3>
+                    <h3>Executive hikaye hazır değil</h3>
                     <strong>Beklemede</strong>
                     <p>Marka verisi geldikce bu alan kritik anlatilarla dolacak.</p>
                 </article>
@@ -9980,26 +9980,26 @@ async function loadAIInsightsPage() {
                     </div>
                 </article>
             `).join('')
-            : '<div class="aix-empty-panel">Forecast kosusu olustugunda once yükselen iller burada açılır.</div>';
+            : '<div class="aix-empty-panel">Forecast koşusu oluştuğunda önce yükselen iller burada açılır.</div>';
 
         const forecastShiftHtml = forecastShiftCards.length > 0
             ? forecastShiftCards.map(item => `
                 <article class="aix-future-card">
-                    <span>${dashboardSafe(item.eyebrow || 'Ozellik kaymasi')}</span>
+                    <span>${dashboardSafe(item.eyebrow || 'Özellik kayması')}</span>
                     <h3>${dashboardSafe(item.title || '-')}</h3>
                     <strong>${dashboardSafe(item.value || '-')}</strong>
                     <p>${dashboardSafe(item.note || '')}</p>
                 </article>
             `).join('')
-            : '<div class="aix-empty-panel">Ozellik kaymasi hesaplandiginda bu alan gelecek mimarisini acacak.</div>';
+            : '<div class="aix-empty-panel">Özellik kayması hesaplandığında bu alan gelecek mimarisini acacak.</div>';
 
         const forecastChartHtml = (executiveForecast?.monthly_curve || []).length > 0
             ? '<div class="aix-chart-canvas"><canvas id="aiInsightsForecastChart"></canvas></div>'
-            : '<div class="aix-empty-panel">Aylık tahmin egrisi için once forecast kosusu gerekli.</div>';
+            : '<div class="aix-empty-panel">Aylık tahmin eğrisi için önce forecast koşusu gerekli.</div>';
 
         const forecastFeatureChartHtml = (executiveForecast?.feature_outlook || []).length > 0
             ? '<div class="aix-chart-canvas"><canvas id="aiInsightsForecastFeatureChart"></canvas></div>'
-            : '<div class="aix-empty-panel">Ozellik talep modeli doldugunda uzun vade HP grafigi burada açılır.</div>';
+            : '<div class="aix-empty-panel">Özellik talep modeli dolduğunda uzun vade HP grafigi burada açılır.</div>';
 
         const forecastNoteTone = forecastOverview?.reference_mode ? 'is-forecast' : 'is-analysis';
 
@@ -10022,7 +10022,7 @@ async function loadAIInsightsPage() {
                 </div>
             </div>
         ` : `
-            <div class="aix-empty-panel">Rakip seçimi yapildiginda rekabet özeti ve benchmark katmani açılır.</div>
+            <div class="aix-empty-panel">Rakip seçimi yapıldığında rekabet özeti ve benchmark katmani açılır.</div>
         `;
 
         // Sayfa-içi sekme şeridi: 4 odaklı katman
@@ -10538,7 +10538,7 @@ const MEDIA_WATCH_DISPLAY_DICTIONARY = [
     ['yonetici', 'yönetici'],
     ['yonetim', 'yönetim'],
     ['yogun', 'yoğun'],
-    ['yogunlugu', 'yoğunluğu'],
+    ['yoğunluğu', 'yoğunluğu'],
     ['yorum', 'yorum'],
     ['yuksek', 'yüksek']
 ];
@@ -10580,7 +10580,7 @@ function localizeMediaWatchDisplayText(value = '') {
         .replace(/\bSikayet \/ ariza\b/g, 'Şikayet / arıza')
         .replace(/\bServis \/ yedek parca\b/g, 'Servis / yedek parça')
         .replace(/\bKritik sikayet\b/g, 'Kritik şikayet')
-        .replace(/\bforum yogunlugu\b/gi, match => mediaWatchPreserveCase(match, 'forum yoğunluğu'))
+        .replace(/\bforum yoğunluğu\b/gi, match => mediaWatchPreserveCase(match, 'forum yoğunluğu'))
         .replace(/\bresmi etki\b/gi, match => mediaWatchPreserveCase(match, 'resmî etki'))
         .replace(/\blansman firsatlarini\b/gi, match => mediaWatchPreserveCase(match, 'lansman fırsatlarını'))
         .replace(/\bresmi kararlar\b/gi, match => mediaWatchPreserveCase(match, 'resmî kararlar'))
@@ -12437,6 +12437,11 @@ function formatNumber(num) {
     return parseInt(num).toLocaleString('tr-TR');
 }
 
+function formatHpTR(value, digits = 1) {
+    if (value == null || value === '' || Number.isNaN(Number(value))) return '-';
+    return Number(value).toLocaleString('tr-TR', { maximumFractionDigits: digits });
+}
+
 function translateLabel(label) {
     const map = {
         tarla: 'Tarla', bahce: 'Bahçe', kabinli: 'Kabinli', rollbar: 'Rollbar',
@@ -12797,7 +12802,7 @@ function renderRegionalIndexReportCharts({ dossier, provinceMetric, climateSumma
         charts.regionalIndexSignature = new Chart(signatureEl, {
             type: 'radar',
             data: {
-                labels: ['Mekanizasyon', '4WD', 'Kabin', 'Bahce', 'HP', 'Pazar'],
+                labels: ['Mekanizasyon', '4WD', 'Kabin', 'Bahçe', 'HP', 'Pazar'],
                 datasets: [{
                     label: `${dossier?.province?.name || 'İl'} imzası`,
                     data: [
@@ -13056,13 +13061,13 @@ async function renderRegionalIndexProvinceReport(provinceId) {
         {
             label: 'Mekanizasyon',
             value: provinceMetric?.mechIndex != null ? Number(provinceMetric.mechIndex).toFixed(1) : '-',
-            note: 'Traktor / 1000 ha endeksi',
+            note: 'Traktör / 1000 ha endeksi',
             tone: (provinceMetric?.mechIndex || 0) >= 6 ? 'is-up' : 'is-analysis'
         },
         {
             label: 'HP omurgası',
             value: dossier?.overview?.dominant_hp || provinceMetric?.dominantHp || '-',
-            note: provinceMetric?.avgHp != null ? `${Number(provinceMetric.avgHp).toFixed(0)} HP agirlikli ort.` : 'Güç tercihi',
+            note: provinceMetric?.avgHp != null ? `${Number(provinceMetric.avgHp).toFixed(0)} HP ağırlıklı ort.` : 'Güç tercihi',
             tone: 'is-analysis'
         },
         {
@@ -13206,7 +13211,7 @@ async function renderRegionalIndexProvinceReport(provinceId) {
                     <div class="rix-panel-head">
                         <div>
                             <h3>${agronomySafe('Tercih edilen traktör seti')}</h3>
-                            <p>İlin tarimsal karakterine en yakin model havuzu.</p>
+                            <p>İlin tarımsal karakterine en yakın model havuzu.</p>
                         </div>
                     </div>
                     <div class="rix-table-wrap">
@@ -14745,13 +14750,13 @@ async function loadBrandComparePage() {
                     label: 'Saha yaygınlığı',
                     winner: (deep1.activeProvinces || 0) >= (deep2.activeProvinces || 0) ? 'brand1' : 'brand2',
                     signal: `${fmtNum(deep1.activeProvinces || 0)} il vs ${fmtNum(deep2.activeProvinces || 0)} il`,
-                    implication: 'Yaygın marka stok ve servis esnekligini daha genis alana yayar.'
+                    implication: 'Yaygın marka stok ve servis esnekliğini daha geniş alana yayar.'
                 },
                 {
                     label: 'HP konumlanmasi',
                     winner: (deep1.salesWeightedHp || 0) >= (deep2.salesWeightedHp || 0) ? 'brand1' : 'brand2',
                     signal: `${Number(deep1.salesWeightedHp || 0).toFixed(1)} HP vs ${Number(deep2.salesWeightedHp || 0).toFixed(1)} HP`,
-                    implication: 'Daha yüksek HP ortalaması saha tipi ve müşterinin kullanım profili hakkinda fikir verir.'
+                    implication: 'Daha yüksek HP ortalaması saha tipi ve müşterinin kullanım profili hakkında fikir verir.'
                 },
                 {
                     label: 'Fiyat verimliligi',
@@ -14760,10 +14765,10 @@ async function loadBrandComparePage() {
                     implication: 'Düşük fiyat/HP seviyesi fiyat savaşı olmadan değer argumanini güçlendirir.'
                 },
                 {
-                    label: 'Portfoy derinligi',
+                    label: 'Portföy derinligi',
                     winner: (deep1.modelCount || 0) >= (deep2.modelCount || 0) ? 'brand1' : 'brand2',
                     signal: `${fmtNum(deep1.modelCount || 0)} model vs ${fmtNum(deep2.modelCount || 0)} model`,
-                    implication: 'Genis portföy daha fazla mikro segmenti kapatir ama stok karmasini da zorlastirir.'
+                    implication: 'Geniş portföy daha fazla mikro segmenti kapatir ama stok karmasini da zorlastirir.'
                 }
             ];
             axisRows[0].implication = 'Lider marka fiyat, bayi ve kampanya baskısını daha rahat yönetir.';
@@ -15080,8 +15085,8 @@ async function loadBrandComparePage() {
                     <section class="bcx-panel-grid bcx-two-up">
                         <div class="bcx-panel">
                             <div class="bcx-panel-head">
-                                <h3>Portfoy ve konfigurasyon dengesi</h3>
-                                <span>Tarla, bahce, çekiş ve kabin resmi</span>
+                                <h3>Portföy ve konfigürasyon dengesi</h3>
+                                <span>Tarla, bahçe, çekiş ve kabin resmi</span>
                             </div>
                             <div class="bcx-mirror-grid">${featureRowsHtml}</div>
                         </div>
@@ -15150,7 +15155,7 @@ async function loadBrandComparePage() {
                         </div>
                         <div class="bcx-panel">
                             <div class="bcx-panel-head">
-                                <h3>Ozellik kesişimi</h3>
+                                <h3>Özellik kesişimi</h3>
                                 <span>Drive, kabin ve kullanım kombinasyonlari</span>
                             </div>
                             <div class="bcx-table-wrap">
@@ -16033,7 +16038,7 @@ function buildWeatherReferenceWindow(climateSummary = {}, prov = {}, dayCount = 
 }
 
 function buildWeatherClimateSummary(climate = [], prov = {}) {
-    const monthNames = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
     const rows = (climate || []).map(item => ({
         ...item,
         year: Number(item.year),
@@ -16157,7 +16162,7 @@ function buildWeatherExecutiveMemo({ prov, forecastSummary, climateSummary, focu
         forecastSummary.windowNote,
         climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} en sıcak pencere, ${climateSummary.wettestMonth?.label || '-'} ise en ıslak dönem.` : 'Uzun dönem iklim verisi geldikce aylık baskı haritasi netleşecek.',
         topCrop ? `${topCrop.crop_name} il genelindeki en büyük ürün deseni. Tavsiye edilen güç penceresi ${topCrop.requires_hp_min || '-'}-${topCrop.requires_hp_max || '-'} HP.` : 'Ürün deseni verisi olmadığında iklim ve toprak baskısı yine okunur.',
-        topSoil ? `${topSoil.soil_type} zemini için ${topSoil.recommended_hp_range || '-'} ve ${translateLabel(topSoil.recommended_tractor_type || '') || 'uygun tip'} öneri katmani hazir.` : 'Toprak verisi yoksa il genel parametreleriyle karar destek devam eder.'
+        topSoil ? `${topSoil.soil_type} zemini için ${topSoil.recommended_hp_range || '-'} ve ${translateLabel(topSoil.recommended_tractor_type || '') || 'uygun tip'} öneri katmani hazır.` : 'Toprak verisi yoksa il genel parametreleriyle karar destek devam eder.'
     ];
 
     return { stance, headline, points };
@@ -16496,21 +16501,21 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
         {
             label: 'Sıcaklık bandi',
             value: `${forecastSummary.avgMin != null ? Number(forecastSummary.avgMin).toFixed(1) : '-'} / ${forecastSummary.avgMax != null ? Number(forecastSummary.avgMax).toFixed(1) : '-'} C`,
-            note: forecastSummary.isReference ? 'Referans kisa vade pencere' : (forecastSummary.dominant.label || 'Kısa vade pencere'),
+            note: forecastSummary.isReference ? 'Referans kısa vade pencere' : (forecastSummary.dominant.label || 'Kısa vade pencere'),
             tone: (forecastSummary.heatDays || 0) >= 3 ? 'is-warning' : 'is-analysis'
         },
         {
             label: 'Nem seviyesi',
             value: forecastSummary.humidityAvg != null ? `${Number(forecastSummary.humidityAvg).toFixed(0)}%` : '-',
             note: forecastSummary.windPeak
-                ? `${forecastSummary.isReference ? 'Referans ruzgar tepe' : 'Rüzgâr tepe'} ${Number(forecastSummary.windPeak).toFixed(0)} km/h`
+                ? `${forecastSummary.isReference ? 'Referans rüzgâr tepe' : 'Rüzgâr tepe'} ${Number(forecastSummary.windPeak).toFixed(0)} km/h`
                 : 'Rüzgâr verisi sinirli',
             tone: (forecastSummary.humidityAvg || 0) >= 70 ? 'is-warning' : 'is-neutral'
         },
         {
             label: 'Isinma sinyali',
             value: climateSummary.warmingSignal != null ? `${climateSummary.warmingSignal >= 0 ? '+' : ''}${Number(climateSummary.warmingSignal).toFixed(1)} C` : '-',
-            note: 'Son yılların sıcaklık kaymasi',
+            note: 'Son yılların sıcaklık kayması',
             tone: climateSummary.warmingSignal != null && climateSummary.warmingSignal > 0 ? 'is-opportunity' : 'is-neutral'
         },
         {
@@ -16538,7 +16543,7 @@ async function renderWeatherCommandCenter(provinceId, provinceSales = []) {
             eyebrow: 'Uzun dönem hafiza',
             title: climateSummary.hottestMonth ? `${climateSummary.hottestMonth.label} / ${climateSummary.wettestMonth?.label || '-'}` : 'Aylık profil bekleniyor',
             value: climateSummary.annualRain ? `${fmtNum(Math.round(climateSummary.annualRain))} mm` : '-',
-            note: climateSummary.hottestMonth ? `En sıcak ay ${climateSummary.hottestMonth.label}, en ıslak ay ${climateSummary.wettestMonth?.label || '-'}.` : 'İklim kaydı olmadığında il metadata paneli calisir.'
+            note: climateSummary.hottestMonth ? `En sıcak ay ${climateSummary.hottestMonth.label}, en ıslak ay ${climateSummary.wettestMonth?.label || '-'}.` : 'İklim kaydı olmadığında il metadata paneli çalışır.'
         },
         {
             eyebrow: 'Toprak ve makina',
@@ -16978,10 +16983,10 @@ function inferProvinceCropArchetype(crop = {}) {
     if (/(meyve|uzum|bag|zeytin|narenciye|ceviz|badem|kiraz|elma|kayisi|fistik|armut|seftali)/.test(cropName) || cropType === 'meyve') {
         return {
             key: 'bahce',
-            title: 'Bahce ve sıra arasi operasyon paketi',
-            tractorTypeLabel: 'Dar izli / bahce traktoru',
+            title: 'Bahçe ve sıra arası operasyon paketi',
+            tractorTypeLabel: 'Dar izli / bahçe traktörü',
             equipment: ['atomizer', 'mulcher', 'sıra arası freze', 'budama platformu', 'bahçe römorku'],
-            note: 'Manevra kabiliyeti ve sıra arasi işlem verimliligi öne çıkar.'
+            note: 'Manevra kabiliyeti ve sıra arası işlem verimliligi öne çıkar.'
         };
     }
 
@@ -16989,8 +16994,8 @@ function inferProvinceCropArchetype(crop = {}) {
         return {
             key: 'hibrit',
             title: 'Sebze ve yoğun işçilik paketi',
-            tractorTypeLabel: 'Kompakt / hibrit saha traktoru',
-            equipment: ['rotovator', 'yatak hazirlama', 'transplanter', 'damla sulama romorku', 'precision sprayer'],
+            tractorTypeLabel: 'Kompakt / hibrit saha traktörü',
+            equipment: ['rotovator', 'yatak hazırlama', 'transplanter', 'damla sulama romorku', 'precision sprayer'],
             note: 'Sik geçiş, hassas ayar ve düşük yakitli operasyon dizilimi gerekir.'
         };
     }
@@ -16999,7 +17004,7 @@ function inferProvinceCropArchetype(crop = {}) {
         return {
             key: 'tarla',
             title: 'Yem ve ot yönetimi paketi',
-            tractorTypeLabel: 'Orta HP tarla traktoru',
+            tractorTypeLabel: 'Orta HP tarla traktörü',
             equipment: ['cayir bicme', 'tirnakli tirmik', 'balya makinesi', 'yem romorku', 'diskaro'],
             note: 'Balya, taşıma ve PTO verimi aynı anda güçlü olmali.'
         };
@@ -17008,8 +17013,8 @@ function inferProvinceCropArchetype(crop = {}) {
     if (/(pamuk|sekerpancari|seker pancari|aycicegi|aycicek|misir|kanola|kolza|tutun|endustri)/.test(cropName) || cropType === 'endustriyel') {
         return {
             key: 'tarla',
-            title: 'Endustriyel ürün saha paketi',
-            tractorTypeLabel: '4WD destekli tarla traktoru',
+            title: 'Endüstriyel ürün saha paketi',
+            tractorTypeLabel: '4WD destekli tarla traktörü',
             equipment: ['hassas ekim makinesi', 'sıra arası kültivatör', 'güç yuklu pulluk', 'geniş boom sprayer', 'taşıma römorku'],
             note: 'Çekiş, sıra hassasiyeti ve yüksek sezon temposu belirleyicidir.'
         };
@@ -17018,7 +17023,7 @@ function inferProvinceCropArchetype(crop = {}) {
     return {
         key: 'tarla',
         title: 'Tahil ve açık tarla paketi',
-        tractorTypeLabel: 'Universal tarla traktoru',
+        tractorTypeLabel: 'Universal tarla traktörü',
         equipment: ['pulluk', 'kultivator', 'hububat mibzeri', 'gubre serpme', 'tarla ilaçlama'],
         note: 'Alan verimliligi, düşük birim maliyet ve gun boyu ritim esastir.'
     };
@@ -17066,7 +17071,7 @@ function getProvinceSoilStressNote(soilItem = {}, climateSummary = {}, forecastS
         return 'Dengeli dokuda çok amacli ekipman kullanımı ve universal HP bandi daha kolay işler.';
     }
 
-    return soilItem?.notes || 'Toprak yapısı, ürün deseniyle birlikte okunduğunda çekiş ve ekipman secimini belirginleştirir.';
+    return soilItem?.notes || 'Toprak yapısı, ürün deseniyle birlikte okunduğunda çekiş ve ekipman seçimini belirginleştirir.';
 }
 
 function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = {}, climateSummary = {}, forecastSummary = {}, overview = {}, cabinMix = []) {
@@ -17099,7 +17104,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
             reasons.push(`${dominantCrop.crop_name || 'Ana ürün'} için beklenen HP koridoruna doğrudan oturuyor.`);
         } else if (cropWindow.mid != null && Math.abs(avgHp - cropWindow.mid) <= 12) {
             score += 9;
-            reasons.push(`${dominantCrop.crop_name || 'Ana ürün'} için yakin HP bandinda konumlaniyor.`);
+            reasons.push(`${dominantCrop.crop_name || 'Ana ürün'} için yakın HP bandinda konumlaniyor.`);
         }
     }
 
@@ -17109,7 +17114,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
             reasons.push(`İlin baskın güç mimarisi olan ${dominantWindow.label} bandini destekliyor.`);
         } else if (dominantWindow.mid != null && Math.abs(avgHp - dominantWindow.mid) <= 10) {
             score += 6;
-            reasons.push('İlin tercih ettigi HP eksenine yakin duruyor.');
+            reasons.push('İlin tercih ettigi HP eksenine yakın duruyor.');
         }
     }
 
@@ -17121,14 +17126,14 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
     if (dominantBundle.key === 'bahce') {
         if (modelCategory === 'bahce' || avgHp <= 80) {
             score += 11;
-            reasons.push('Bahce karakterli ürün desenine manevra ve boyut olarak daha yakin.');
+            reasons.push('Bahçe karakterli ürün desenine manevra ve boyut olarak daha yakın.');
         } else {
             score -= 4;
         }
     } else if (dominantBundle.key === 'hibrit') {
         if (modelCategory === 'hibrit' || (avgHp >= 50 && avgHp <= 95)) {
             score += 8;
-            reasons.push('Karma saha gorevleri için esnek bir platform sunuyor.');
+            reasons.push('Karma saha görevleri için esnek bir platform sunuyor.');
         }
     } else if (modelCategory !== 'bahce') {
         score += 10;
@@ -17150,7 +17155,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
     if ((forecastSummary.rainyDays || 0) >= 2 || (climateSummary.warmingSignal || 0) >= 0.8) {
         if (cabinLabel.includes('kabin') || cabinLabel.includes('cab')) {
             score += 4;
-            reasons.push('Operator konforu ve iklim korumasi bu il temposunda arti yaziyor.');
+            reasons.push('Operator konforu ve iklim koruması bu il temposunda arti yazıyor.');
         }
     }
 
@@ -17158,7 +17163,7 @@ function scoreProvinceModelFit(model = {}, cropRows = [], soilRows = [], prov = 
     return {
         ...model,
         fit_score: fitScore,
-        fit_label: fitScore >= 86 ? 'Yüksek uyum' : fitScore >= 75 ? 'Guclu aday' : fitScore >= 63 ? 'Takip edilmeli' : 'Nis uyum',
+        fit_label: fitScore >= 86 ? 'Yüksek uyum' : fitScore >= 75 ? 'Güçlü aday' : fitScore >= 63 ? 'Takip edilmeli' : 'Nis uyum',
         fit_tone: fitScore >= 86 ? 'is-up' : fitScore >= 75 ? 'is-opportunity' : fitScore >= 63 ? 'is-warning' : 'is-neutral',
         drive_label: drive,
         fit_reasons: reasons.slice(0, 4).map(localizeAgronomyDisplayText)
@@ -18274,7 +18279,7 @@ async function loadTarmakBirPage() {
         ]);
         if (!filteredData || !totalData) return;
 
-        const monthNames = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+        const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
         const selectedYearResolved = setTarmakCommandYear(filteredData.selected_year || totalData.selected_year || targetYear);
         const availableYears = Array.from(new Set([
             ...(filteredData.available_years || []),
@@ -18467,7 +18472,7 @@ async function loadTarmakBirPage() {
                         <strong>${dashboardSafe(gapMonthName)}</strong>
                     </div>
                     <div class="tbx-focus-metric">
-                        <span>Marka sayisi</span>
+                        <span>Marka sayısı</span>
                         <strong>${fmtNum(brandRows.length)}</strong>
                     </div>
                 </div>
