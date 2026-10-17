@@ -15850,6 +15850,8 @@ function reloadTarmakBir2() {
 // ============================================
 function normalizeWeatherKey(value = '') {
     return String(value || '')
+        .replace(/ı/g, 'i')
+        .replace(/İ/g, 'I')
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9]+/gi, '')

@@ -133,7 +133,7 @@ Başarısız CI birleştirmeyi engeller. E2E (tarayıcı) CI'da yoktur; ilgili d
 
 ## 9. MIGRATION KURALLARI
 
-- Yapısal şema değişikliği **yalnızca** `database/migrations/NNN_ad.sql` ile (şu an `001`–`010`; `010` = yönetim konsolu: `staff_roles`, `organizations` ailesi, `feature_flags`, `admin_audit_log`).
+- Yapısal şema değişikliği **yalnızca** `database/migrations/NNN_ad.sql` ile (şu an `001`–`012`; `010` = yönetim konsolu: `staff_roles`, `organizations` ailesi, `feature_flags`, `admin_audit_log`).
 - `010` mevcut yöneticileri (`role='admin'`, `staff_role` NULL) açıkça `super_admin` yapar; `UPDATE` ikinci çalıştırmada etkisizdir. `database/migrate.js` (`runMigrations`): `schema_migrations(version, name, applied_at)` tablosu, `pg_advisory_lock` ile çoklu replika güvenliği, **her dosya kendi transaction'ında**; hata → ROLLBACK + sonraki migration'lar uygulanmaz (sunucu yine de açılır, hata yüksek sesle loglanır).
 - **Numaralı ve sıralı:** sürüm = dosya adının `_` öncesi bölümü; sıradaki numara kullanılır, uygulanmış (birleştirilmiş) bir migration dosyası **asla düzenlenmez**, düzeltme yeni migration olur.
 - **Idempotent yaz:** `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`; veri güncellemeleri tekrar çalışsa zarar vermeyecek biçimde. `tests/migrations.test.js` ikinci çalıştırmanın 0 uyguladığını denetler.

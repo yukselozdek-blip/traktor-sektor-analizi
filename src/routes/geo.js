@@ -133,19 +133,19 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 18.8,
             elevation_m: 140,
             agricultural_area_hectare: 265000,
-            soil_type: 'Aluvyal / killi-tinli',
+            soil_type: 'Aluvyal / killi-tınlı',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'tarla',
             dominant_hp_range: '75-105 HP',
             primary_crops: [
                 { name: 'Pamuk', type: 'endustriyel', share: 0.24, yield_ton_per_ha: 4.8, hp_min: 95, hp_max: 125, planting_season: 'Nis-May', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
-                { name: 'Misir', type: 'tahil', share: 0.22, yield_ton_per_ha: 9.5, hp_min: 85, hp_max: 115, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] },
+                { name: 'Mısır', type: 'tahil', share: 0.22, yield_ton_per_ha: 9.5, hp_min: 85, hp_max: 115, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] },
                 { name: 'Narenciye', type: 'meyve', share: 0.18, yield_ton_per_ha: 25, hp_min: 55, hp_max: 85, planting_season: 'Yıllık', harvest_season: 'Kas-Oca', tractor_types: ['bahce', 'dar'] },
                 { name: 'Açık alan sebze', type: 'sebze', share: 0.16, yield_ton_per_ha: 30, hp_min: 50, hp_max: 75, planting_season: 'Şub-Nis', harvest_season: 'Haz-Eki', tractor_types: ['hibrit', 'bahce'] }
             ],
             soil_layers: [
-                { soil_type: 'Aluvyal tarla zemini', soil_texture: 'Tinli-killi', ph_level: 7.1, organic_matter_pct: 2.2, hp_range: '80-110 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sulama ve ağır ekipman geçişlerinde çekiş kaybı düşürülmeli.' },
-                { soil_type: 'Bahce tabani', soil_texture: 'Tinli', ph_level: 6.8, organic_matter_pct: 2.5, hp_range: '55-80 HP', tractor_type: 'bahce', drive_type: '2WD', note: 'Sıra arası manevra ve düşük ağırlıklı paketler verimlidir.' }
+                { soil_type: 'Aluvyal tarla zemini', soil_texture: 'Tınlı-killi', ph_level: 7.1, organic_matter_pct: 2.2, hp_range: '80-110 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sulama ve ağır ekipman geçişlerinde çekiş kaybı düşürülmeli.' },
+                { soil_type: 'Bahçe tabanı', soil_texture: 'Tınlı', ph_level: 6.8, organic_matter_pct: 2.5, hp_range: '55-80 HP', tractor_type: 'bahce', drive_type: '2WD', note: 'Sıra arası manevra ve düşük ağırlıklı paketler verimlidir.' }
             ],
             monthly_temp: [10, 11, 13, 17, 21, 26, 29, 29, 26, 21, 15, 11],
             monthly_rain: [110, 90, 70, 45, 25, 10, 4, 5, 15, 45, 80, 105],
@@ -161,19 +161,19 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 17.1,
             elevation_m: 180,
             agricultural_area_hectare: 240000,
-            soil_type: 'Tinli / kumlu-tinli',
+            soil_type: 'Tınlı / kumlu-tınlı',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'hibrit',
             dominant_hp_range: '65-95 HP',
             primary_crops: [
                 { name: 'Zeytin', type: 'meyve', share: 0.20, yield_ton_per_ha: 3.8, hp_min: 50, hp_max: 80, planting_season: 'Yıllık', harvest_season: 'Kas-Oca', tractor_types: ['bahce', 'dar'] },
-                { name: 'Uzum', type: 'meyve', share: 0.16, yield_ton_per_ha: 9, hp_min: 45, hp_max: 75, planting_season: 'Yıllık', harvest_season: 'Ağu-Eyl', tractor_types: ['bahce', 'dar'] },
+                { name: 'Üzüm', type: 'meyve', share: 0.16, yield_ton_per_ha: 9, hp_min: 45, hp_max: 75, planting_season: 'Yıllık', harvest_season: 'Ağu-Eyl', tractor_types: ['bahce', 'dar'] },
                 { name: 'Pamuk', type: 'endustriyel', share: 0.18, yield_ton_per_ha: 4.4, hp_min: 90, hp_max: 120, planting_season: 'Nis-May', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
-                { name: 'Misir silaj', type: 'yem', share: 0.14, yield_ton_per_ha: 10.5, hp_min: 75, hp_max: 105, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', 'hibrit'] }
+                { name: 'Mısır silajı', type: 'yem', share: 0.14, yield_ton_per_ha: 10.5, hp_min: 75, hp_max: 105, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', 'hibrit'] }
             ],
             soil_layers: [
-                { soil_type: 'Bag-bahce zemini', soil_texture: 'Tinli', ph_level: 6.9, organic_matter_pct: 2.1, hp_range: '50-80 HP', tractor_type: 'bahce', drive_type: '2WD', note: 'Dar iz ve PTO operasyonları ön plandadır.' },
-                { soil_type: 'Ova tarla zemini', soil_texture: 'Kumlu-tinli', ph_level: 7.0, organic_matter_pct: 1.9, hp_range: '75-105 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Yüksek sezon temposunda çekiş ve taşıma kapasitesi kritik olur.' }
+                { soil_type: 'Bağ-bahçe zemini', soil_texture: 'Tınlı', ph_level: 6.9, organic_matter_pct: 2.1, hp_range: '50-80 HP', tractor_type: 'bahce', drive_type: '2WD', note: 'Dar iz ve PTO operasyonları ön plandadır.' },
+                { soil_type: 'Ova tarla zemini', soil_texture: 'Kumlu-tınlı', ph_level: 7.0, organic_matter_pct: 1.9, hp_range: '75-105 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Yüksek sezon temposunda çekiş ve taşıma kapasitesi kritik olur.' }
             ],
             monthly_temp: [8, 9, 12, 16, 21, 26, 29, 29, 24, 19, 13, 9],
             monthly_rain: [95, 80, 65, 45, 30, 15, 6, 6, 15, 45, 75, 95],
@@ -189,19 +189,19 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 14.6,
             elevation_m: 220,
             agricultural_area_hectare: 210000,
-            soil_type: 'Tinli / killi-tinli',
+            soil_type: 'Tınlı / killi-tınlı',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'tarla',
             dominant_hp_range: '70-100 HP',
             primary_crops: [
                 { name: 'Buğday', type: 'tahil', share: 0.22, yield_ton_per_ha: 5.6, hp_min: 70, hp_max: 95, planting_season: 'Eki-Kas', harvest_season: 'Haz-Tem', tractor_types: ['tarla'] },
-                { name: 'Aycicegi', type: 'endustriyel', share: 0.20, yield_ton_per_ha: 2.6, hp_min: 75, hp_max: 105, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] },
-                { name: 'Misir', type: 'tahil', share: 0.16, yield_ton_per_ha: 9.2, hp_min: 80, hp_max: 110, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['tarla', '4wd'] },
+                { name: 'Ayçiçeği', type: 'endustriyel', share: 0.20, yield_ton_per_ha: 2.6, hp_min: 75, hp_max: 105, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] },
+                { name: 'Mısır', type: 'tahil', share: 0.16, yield_ton_per_ha: 9.2, hp_min: 80, hp_max: 110, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['tarla', '4wd'] },
                 { name: 'Sebze', type: 'sebze', share: 0.12, yield_ton_per_ha: 26, hp_min: 45, hp_max: 70, planting_season: 'Şub-Nis', harvest_season: 'Haz-Eki', tractor_types: ['hibrit'] }
             ],
             soil_layers: [
-                { soil_type: 'Ova tarla zemini', soil_texture: 'Killi-tinli', ph_level: 6.8, organic_matter_pct: 2.4, hp_range: '75-105 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sonbahar ve ilkbahar yağışları çekiş tarafını belirginleştirir.' },
-                { soil_type: 'Bahce-parsel zemini', soil_texture: 'Tinli', ph_level: 6.6, organic_matter_pct: 2.7, hp_range: '50-75 HP', tractor_type: 'hibrit', drive_type: '2WD', note: 'Kompakt ve manevrası güçlü setup daha verimli olur.' }
+                { soil_type: 'Ova tarla zemini', soil_texture: 'Killi-tınlı', ph_level: 6.8, organic_matter_pct: 2.4, hp_range: '75-105 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sonbahar ve ilkbahar yağışları çekiş tarafını belirginleştirir.' },
+                { soil_type: 'Bahçe-parsel zemini', soil_texture: 'Tınlı', ph_level: 6.6, organic_matter_pct: 2.7, hp_range: '50-75 HP', tractor_type: 'hibrit', drive_type: '2WD', note: 'Kompakt ve manevrası güçlü setup daha verimli olur.' }
             ],
             monthly_temp: [5, 6, 9, 14, 18, 23, 26, 26, 21, 16, 10, 7],
             monthly_rain: [85, 70, 65, 55, 45, 35, 25, 20, 35, 60, 75, 90],
@@ -217,7 +217,7 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 11.5,
             elevation_m: 980,
             agricultural_area_hectare: 380000,
-            soil_type: 'Kireçli / killi-tinli',
+            soil_type: 'Kireçli / killi-tınlı',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'tarla',
             dominant_hp_range: '80-110 HP',
@@ -228,8 +228,8 @@ module.exports = function registerGeo(app, ctx) {
                 { name: 'Yonca', type: 'yem', share: 0.12, yield_ton_per_ha: 8.5, hp_min: 65, hp_max: 90, planting_season: 'Mar-Nis', harvest_season: 'Haz-Eyl', tractor_types: ['tarla', 'hibrit'] }
             ],
             soil_layers: [
-                { soil_type: 'Kireçli ova zemini', soil_texture: 'Killi-tinli', ph_level: 7.8, organic_matter_pct: 1.5, hp_range: '85-115 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Kuraklık ve ağır çekiş gerektiren ekipmanlar güç rezervini ön plana çıkarır.' },
-                { soil_type: 'Kuru tarım parçası', soil_texture: 'Tinli', ph_level: 7.5, organic_matter_pct: 1.4, hp_range: '70-95 HP', tractor_type: 'tarla', drive_type: '2WD', note: 'Düşük yakıtlı, ekonomik ve uzun iş günlerine uygun platformlar tercih edilir.' }
+                { soil_type: 'Kireçli ova zemini', soil_texture: 'Killi-tınlı', ph_level: 7.8, organic_matter_pct: 1.5, hp_range: '85-115 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Kuraklık ve ağır çekiş gerektiren ekipmanlar güç rezervini ön plana çıkarır.' },
+                { soil_type: 'Kuru tarım parçası', soil_texture: 'Tınlı', ph_level: 7.5, organic_matter_pct: 1.4, hp_range: '70-95 HP', tractor_type: 'tarla', drive_type: '2WD', note: 'Düşük yakıtlı, ekonomik ve uzun iş günlerine uygun platformlar tercih edilir.' }
             ],
             monthly_temp: [-1, 1, 5, 11, 16, 21, 25, 25, 19, 12, 5, 0],
             monthly_rain: [40, 35, 38, 45, 50, 30, 12, 10, 18, 28, 32, 38],
@@ -245,19 +245,19 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 13.2,
             elevation_m: 420,
             agricultural_area_hectare: 145000,
-            soil_type: 'Asidik tinli / organik zengin',
+            soil_type: 'Asidik tınlı / organik zengin',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'bahce',
             dominant_hp_range: '55-80 HP',
             primary_crops: [
-                { name: 'Findik', type: 'meyve', share: 0.24, yield_ton_per_ha: 2.2, hp_min: 45, hp_max: 70, planting_season: 'Yıllık', harvest_season: 'Ağu-Eyl', tractor_types: ['bahce', 'dar'] },
-                { name: 'Misir', type: 'tahil', share: 0.18, yield_ton_per_ha: 7.4, hp_min: 60, hp_max: 85, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['hibrit', '4wd'] },
-                { name: 'Cay', type: 'meyve', share: 0.16, yield_ton_per_ha: 4.1, hp_min: 40, hp_max: 60, planting_season: 'Yıllık', harvest_season: 'May-Eki', tractor_types: ['bahce', 'dar'] },
+                { name: 'Fındık', type: 'meyve', share: 0.24, yield_ton_per_ha: 2.2, hp_min: 45, hp_max: 70, planting_season: 'Yıllık', harvest_season: 'Ağu-Eyl', tractor_types: ['bahce', 'dar'] },
+                { name: 'Mısır', type: 'tahil', share: 0.18, yield_ton_per_ha: 7.4, hp_min: 60, hp_max: 85, planting_season: 'Nis-May', harvest_season: 'Eyl', tractor_types: ['hibrit', '4wd'] },
+                { name: 'Çay', type: 'meyve', share: 0.16, yield_ton_per_ha: 4.1, hp_min: 40, hp_max: 60, planting_season: 'Yıllık', harvest_season: 'May-Eki', tractor_types: ['bahce', 'dar'] },
                 { name: 'Yem bitkileri', type: 'yem', share: 0.14, yield_ton_per_ha: 8, hp_min: 55, hp_max: 80, planting_season: 'Mar-Nis', harvest_season: 'Haz-Eyl', tractor_types: ['hibrit'] }
             ],
             soil_layers: [
-                { soil_type: 'Yamac bahce zemini', soil_texture: 'Tinli', ph_level: 6.3, organic_matter_pct: 3.1, hp_range: '45-70 HP', tractor_type: 'bahce', drive_type: '4WD', note: 'Eğim ve nem, 4WD dar şasi platformlarını öne çıkarır.' },
-                { soil_type: 'Nemli ova zemini', soil_texture: 'Milli-tinli', ph_level: 6.5, organic_matter_pct: 3.4, hp_range: '60-85 HP', tractor_type: 'hibrit', drive_type: '4WD', note: 'Yağışlı dönemlerde çekiş ve zemin basıncı dikkatle yönetilmelidir.' }
+                { soil_type: 'Yamaç bahçe zemini', soil_texture: 'Tınlı', ph_level: 6.3, organic_matter_pct: 3.1, hp_range: '45-70 HP', tractor_type: 'bahce', drive_type: '4WD', note: 'Eğim ve nem, 4WD dar şasi platformlarını öne çıkarır.' },
+                { soil_type: 'Nemli ova zemini', soil_texture: 'Milli-tınlı', ph_level: 6.5, organic_matter_pct: 3.4, hp_range: '60-85 HP', tractor_type: 'hibrit', drive_type: '4WD', note: 'Yağışlı dönemlerde çekiş ve zemin basıncı dikkatle yönetilmelidir.' }
             ],
             monthly_temp: [7, 7, 8, 11, 15, 20, 23, 24, 21, 17, 13, 9],
             monthly_rain: [95, 80, 75, 65, 60, 55, 45, 45, 55, 80, 95, 105],
@@ -284,8 +284,8 @@ module.exports = function registerGeo(app, ctx) {
                 { name: 'Yem bitkileri', type: 'yem', share: 0.16, yield_ton_per_ha: 7.2, hp_min: 60, hp_max: 85, planting_season: 'May', harvest_season: 'Tem-Eyl', tractor_types: ['tarla'] }
             ],
             soil_layers: [
-                { soil_type: 'Yuksek rakim tarla zemini', soil_texture: 'Killi', ph_level: 7.3, organic_matter_pct: 2.0, hp_range: '80-110 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Kısa sezon ve çekiş ihtiyacı nedeniyle güç rezervi önemlidir.' },
-                { soil_type: 'Serin mera / yem parcasi', soil_texture: 'Tinli', ph_level: 7.0, organic_matter_pct: 2.4, hp_range: '60-85 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Balya ve taşıma için PTO verimi güçlü setuplar daha anlamlıdır.' }
+                { soil_type: 'Yüksek rakım tarla zemini', soil_texture: 'Killi', ph_level: 7.3, organic_matter_pct: 2.0, hp_range: '80-110 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Kısa sezon ve çekiş ihtiyacı nedeniyle güç rezervi önemlidir.' },
+                { soil_type: 'Serin mera / yem parçası', soil_texture: 'Tınlı', ph_level: 7.0, organic_matter_pct: 2.4, hp_range: '60-85 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Balya ve taşıma için PTO verimi güçlü setuplar daha anlamlıdır.' }
             ],
             monthly_temp: [-6, -4, 1, 8, 13, 18, 22, 22, 17, 10, 2, -3],
             monthly_rain: [55, 50, 55, 70, 75, 40, 18, 12, 20, 35, 45, 52],
@@ -301,7 +301,7 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 16.9,
             elevation_m: 640,
             agricultural_area_hectare: 330000,
-            soil_type: 'Kirecli / milli-killi',
+            soil_type: 'Kireçli / milli-killi',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'tarla',
             dominant_hp_range: '85-120 HP',
@@ -309,11 +309,11 @@ module.exports = function registerGeo(app, ctx) {
                 { name: 'Buğday', type: 'tahil', share: 0.28, yield_ton_per_ha: 4.4, hp_min: 80, hp_max: 110, planting_season: 'Eki-Kas', harvest_season: 'Haz', tractor_types: ['tarla'] },
                 { name: 'Mercimek', type: 'tahil', share: 0.14, yield_ton_per_ha: 1.9, hp_min: 70, hp_max: 95, planting_season: 'Kas-Ara', harvest_season: 'Haz', tractor_types: ['tarla'] },
                 { name: 'Pamuk', type: 'endustriyel', share: 0.18, yield_ton_per_ha: 4.6, hp_min: 95, hp_max: 125, planting_season: 'Nis-May', harvest_season: 'Eyl-Eki', tractor_types: ['tarla', '4wd'] },
-                { name: 'Misir', type: 'tahil', share: 0.16, yield_ton_per_ha: 9.1, hp_min: 85, hp_max: 115, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] }
+                { name: 'Mısır', type: 'tahil', share: 0.16, yield_ton_per_ha: 9.1, hp_min: 85, hp_max: 115, planting_season: 'Mar-Nis', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] }
             ],
             soil_layers: [
-                { soil_type: 'Sulamali ova zemini', soil_texture: 'Milli-killi', ph_level: 7.6, organic_matter_pct: 1.7, hp_range: '90-120 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sıra arası ve ağır ekipman operasyonları aynı dönemde yoğunlaşır.' },
-                { soil_type: 'Kuru tarim parcasi', soil_texture: 'Tinli', ph_level: 7.7, organic_matter_pct: 1.3, hp_range: '75-100 HP', tractor_type: 'tarla', drive_type: '2WD', note: 'Ekonomik çekiş ve düşük yakıt ön plana çıkar.' }
+                { soil_type: 'Sulamalı ova zemini', soil_texture: 'Milli-killi', ph_level: 7.6, organic_matter_pct: 1.7, hp_range: '90-120 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Sıra arası ve ağır ekipman operasyonları aynı dönemde yoğunlaşır.' },
+                { soil_type: 'Kuru tarım parçası', soil_texture: 'Tınlı', ph_level: 7.7, organic_matter_pct: 1.3, hp_range: '75-100 HP', tractor_type: 'tarla', drive_type: '2WD', note: 'Ekonomik çekiş ve düşük yakıt ön plana çıkar.' }
             ],
             monthly_temp: [4, 6, 10, 16, 22, 29, 33, 33, 28, 21, 12, 6],
             monthly_rain: [75, 65, 55, 40, 25, 8, 2, 2, 5, 20, 40, 68],
@@ -329,17 +329,17 @@ module.exports = function registerGeo(app, ctx) {
             avg_temperature: 13.5,
             elevation_m: 360,
             agricultural_area_hectare: 180000,
-            soil_type: 'Tinli',
+            soil_type: 'Tınlı',
             dominant_drive_type: '4WD',
             dominant_tractor_type: 'tarla',
             dominant_hp_range: '70-95 HP',
             primary_crops: [
                 { name: 'Buğday', type: 'tahil', share: 0.26, yield_ton_per_ha: 4.6, hp_min: 70, hp_max: 95, planting_season: 'Eki-Kas', harvest_season: 'Haz-Tem', tractor_types: ['tarla'] },
-                { name: 'Misir', type: 'tahil', share: 0.18, yield_ton_per_ha: 8.5, hp_min: 75, hp_max: 105, planting_season: 'Nis-May', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] },
+                { name: 'Mısır', type: 'tahil', share: 0.18, yield_ton_per_ha: 8.5, hp_min: 75, hp_max: 105, planting_season: 'Nis-May', harvest_season: 'Ağu-Eyl', tractor_types: ['tarla', '4wd'] },
                 { name: 'Yem bitkileri', type: 'yem', share: 0.14, yield_ton_per_ha: 7.3, hp_min: 60, hp_max: 85, planting_season: 'Mar-Nis', harvest_season: 'Haz-Eyl', tractor_types: ['tarla', 'hibrit'] }
             ],
             soil_layers: [
-                { soil_type: 'Genel tarla zemini', soil_texture: 'Tinli', ph_level: 7.0, organic_matter_pct: 2.0, hp_range: '70-95 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Çok amaçlı saha operasyonları için dengeli kurulum gerekir.' }
+                { soil_type: 'Genel tarla zemini', soil_texture: 'Tınlı', ph_level: 7.0, organic_matter_pct: 2.0, hp_range: '70-95 HP', tractor_type: 'tarla', drive_type: '4WD', note: 'Çok amaçlı saha operasyonları için dengeli kurulum gerekir.' }
             ],
             monthly_temp: [4, 5, 8, 13, 18, 23, 27, 27, 22, 16, 10, 6],
             monthly_rain: [70, 60, 55, 50, 45, 30, 15, 12, 20, 38, 55, 65],
@@ -429,7 +429,7 @@ module.exports = function registerGeo(app, ctx) {
             id: -(province.id * 100 + index + 1),
             province_id: province.id,
             soil_type: soil.soil_type || province.soil_type || referenceProfile.soil_type,
-            soil_texture: soil.soil_texture || 'Tinli',
+            soil_texture: soil.soil_texture || 'Tınlı',
             ph_level: soil.ph_level,
             organic_matter_pct: soil.organic_matter_pct,
             suitable_crops: (referenceProfile.primary_crops || []).slice(index, index + 2).map(item => item.name),

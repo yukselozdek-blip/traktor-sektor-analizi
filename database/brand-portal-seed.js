@@ -187,7 +187,7 @@ module.exports = {
         items: [
             {
                 item_type: 'news',
-                title: 'COSIAS Konsorsiyumu TUMOSANi Konya ve Istanbulda ziyaret etti',
+                title: 'COSIAS Konsorsiyumu TÜMOSAN\'ı Konya ve İstanbul\'da ziyaret etti',
                 summary: '24 Aralık 2025 tarihli resmi haber, markanın teknoloji ve iş birliği aksını öne çıkarıyor.',
                 cta_label: 'Haberi oku',
                 cta_url: 'https://www.tumosan.com.tr/tr/haberler',
@@ -198,7 +198,7 @@ module.exports = {
             },
             {
                 item_type: 'news',
-                title: 'ULAQ platformunda TUMOSAN imzali yerli marin motoru devrede',
+                title: 'ULAQ platformunda TÜMOSAN imzalı yerli marin motoru devrede',
                 summary: '20 Aralık 2025 tarihli resmi güncelleme, markanın tarım dışı motor kabiliyetini ve teknoloji anlatısını güçlendiriyor.',
                 cta_label: 'Detay',
                 cta_url: 'https://www.tumosan.com.tr/tr/haberler',
@@ -209,7 +209,7 @@ module.exports = {
             },
             {
                 item_type: 'network',
-                title: '542 noktalik bayi ve servis haritasi',
+                title: '542 noktalık bayi ve servis haritası',
                 summary: 'Bayi, servis, yedek parça ve marin motor ağı için taranabilir resmi saha haritası.',
                 cta_label: 'Ağı aç',
                 cta_url: 'https://www.tumosan.com.tr/tr/bayi-ve-servis-haritasi',
@@ -220,7 +220,7 @@ module.exports = {
             },
             {
                 item_type: 'product',
-                title: 'Tarla ve bahce icin seri bazli urun kurgusu',
+                title: 'Tarla ve bahçe için seri bazlı ürün kurgusu',
                 summary: '8000, 6000 Stage V, 4000 Stage V ile tarla; 4200, 5200S ve 5200N ile bahçe sınıfları tek vitrinde toplanmış durumda.',
                 cta_label: 'Ürünleri incele',
                 cta_url: 'https://www.tumosan.com.tr/tr',
@@ -234,7 +234,7 @@ module.exports = {
             {
                 contact_type: 'hq',
                 label: 'Merkez ofis',
-                city: 'Istanbul',
+                city: 'İstanbul',
                 title: 'Kurumsal iletişim',
                 phone: '444 19 75',
                 email: 'info@tumosan.com.tr',
@@ -243,7 +243,7 @@ module.exports = {
             },
             {
                 contact_type: 'factory',
-                label: 'Konya fabrikasi',
+                label: 'Konya fabrikası',
                 city: 'Konya',
                 title: 'Üretim ve saha bağlantısı',
                 phone: '444 19 75',
@@ -253,8 +253,8 @@ module.exports = {
             },
             {
                 contact_type: 'network',
-                label: 'Bayi ve servis haritasi',
-                city: 'Turkiye',
+                label: 'Bayi ve servis haritası',
+                city: 'Türkiye',
                 title: 'Tüm ülke kapsamı',
                 phone: '444 19 75',
                 email: 'info@tumosan.com.tr',
@@ -305,7 +305,7 @@ module.exports = {
         items: [
             {
                 item_type: 'news',
-                title: 'BASAK Traktor Konya Tarim Fuarinda ziyaretcileriyle bulusuyor',
+                title: 'BAŞAK Traktör Konya Tarım Fuarında ziyaretçileriyle buluşuyor',
                 summary: 'Resmi habere göre 7-11 Nisan 2026 tarihlerinde Salon 6 Stant 605’te 26 HP’den 165 HP’ye uzanan ürün gamını sergiliyor.',
                 cta_label: 'Fuarı incele',
                 cta_url: 'https://basaktraktor.com.tr/news/basak-tractor-at-the-konya-agricultural-exhibition',
@@ -316,7 +316,7 @@ module.exports = {
             },
             {
                 item_type: 'news',
-                title: 'BASAK Traktor AGROEXPO Izmirde yeni modellerini sergiledi',
+                title: 'BAŞAK Traktör AGROEXPO İzmir\'de yeni modellerini sergiledi',
                 summary: '3-7 Şubat 2026 etkinliğinde 26 HP BASAK 3026’dan 165 HP 5165 Red Power’a uzanan geniş aile öne çıkıyor.',
                 cta_label: 'Detay',
                 cta_url: 'https://basaktraktor.com.tr/haberler/basak-traktor-izmir-fuarinda',
@@ -327,7 +327,7 @@ module.exports = {
             },
             {
                 item_type: 'product',
-                title: 'Red Power serisi yuksek gorunurlukte konumlaniyor',
+                title: 'Red Power serisi yüksek görünürlükte konumlanıyor',
                 summary: '5115, 5120 ve 5165 Red Power hattının güç, teknoloji ve tasarım vurgusu marka hikayesinin merkezinde yer alıyor.',
                 cta_label: 'Ürünleri aç',
                 cta_url: 'https://basaktraktor.com.tr/',
@@ -338,7 +338,7 @@ module.exports = {
             },
             {
                 item_type: 'network',
-                title: 'Bayi, servis ve yedek parca agi tek merkezde',
+                title: 'Bayi, servis ve yedek parça ağı tek merkezde',
                 summary: 'Yurt içi bayi, servis ve yedek parça erişimi için resmi ağ sayfaları kullanılıyor.',
                 cta_label: 'Ağı aç',
                 cta_url: 'https://basaktraktor.com.tr/yurtici-bayi-agi',
@@ -361,8 +361,8 @@ module.exports = {
             },
             {
                 contact_type: 'network',
-                label: 'Yurt ici bayi agi',
-                city: 'Turkiye',
+                label: 'Yurt içi bayi ağı',
+                city: 'Türkiye',
                 title: 'Satış ve servis erişimi',
                 phone: '444 8 588',
                 email: 'info@basaktraktor.com.tr',
