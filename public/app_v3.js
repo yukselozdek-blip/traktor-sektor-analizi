@@ -5166,6 +5166,9 @@ function buildBrandStageHtml(brand, options = {}) {
     const userName = currentUser?.full_name || currentUser?.email || '';
     const userRole = currentUser?.role === 'admin' ? 'Sistem Yöneticisi' : (currentUser?.company_name || 'Marka Kullanıcısı');
     const periodChip = periodLabel ? `<span class="bh-mc-period">${dashboardSafe(periodLabel)}</span>` : '';
+    const adminLinkHtml = currentUser?.role === 'admin'
+        ? `<a class="bh-admin-link" href="/admin" title="Yönetim Paneli" aria-label="Yönetim Paneli"><i class="fas fa-user-gear" aria-hidden="true"></i><span>Yönetim Paneli</span></a>`
+        : '';
 
     const brandSelector = brandOptions
         ? `<label class="bh-mc-brand-select">
@@ -5198,6 +5201,7 @@ function buildBrandStageHtml(brand, options = {}) {
             <div class="bh-mc-actions">
                 ${periodChip}
                 ${brandSelector}
+                ${adminLinkHtml}
                 ${userName ? `<div class="bh-mc-user-block"><span class="bh-mc-user">${dashboardSafe(userName)}</span><small class="bh-mc-user-role">${dashboardSafe(userRole)}</small></div>` : ''}
             </div>
         </header>
@@ -11902,7 +11906,16 @@ function renderPaywallOverlay(featureKeys, pageLabel) {
 async function loadSettingsPage() {
     const content = document.getElementById('pageContent');
     const showDeployTools = currentUser?.role === 'admin' && isLocalAppHost();
+    const adminPanelCardHtml = currentUser?.role === 'admin' ? `
+        <div class="card settings-admin-card" id="settingsAdminCard" style="margin-bottom:24px;">
+            <div class="card-header"><h3><i class="fas fa-user-gear"></i> Yönetim Paneli</h3></div>
+            <div class="card-body settings-admin-card-body">
+                <p>Kurumlar, kullanıcılar, ekip yetkileri, özellikler ve denetim kaydı.</p>
+                <a class="admin-entry-btn" href="/admin"><i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i> Yönetim Paneli'ni aç</a>
+            </div>
+        </div>` : '';
     content.innerHTML = `
+        ${adminPanelCardHtml}
         <div class="grid-2">
             <div class="card">
                 <div class="card-header"><h3><i class="fas fa-user"></i> Hesap Bilgileri</h3></div>

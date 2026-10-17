@@ -14270,3 +14270,66 @@ body.is-brand-banner .be-kpi-grid {
     background: color-mix(in srgb, var(--brand-dot, #64748b) 24%, transparent);
     color: var(--text-primary);
 }
+
+/* ============================================================
+   Yönetim Paneli girişleri (admin): sol menü, marka banner'ı, Ayarlar kartı
+   ============================================================ */
+.menu-item.menu-item--admin {
+    color: #fde68a;
+    background: rgba(251, 191, 36, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.6), 0 0 0 1px rgba(251, 191, 36, 0.18);
+}
+.menu-item.menu-item--admin i { color: #fbbf24; }
+.menu-item.menu-item--admin:hover {
+    background: rgba(251, 191, 36, 0.22);
+    color: #fef3c7;
+}
+.menu-item.menu-item--admin:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+
+.bh-admin-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(2, 6, 23, 0.55);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(2, 6, 23, 0.25);
+    transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.bh-admin-link i { font-size: 13px; }
+.bh-admin-link:hover {
+    transform: translateY(-1px);
+    background: rgba(2, 6, 23, 0.72);
+    box-shadow: 0 6px 14px rgba(2, 6, 23, 0.35);
+}
+.bh-admin-link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (max-width: 899px) {
+    .bh-admin-link { padding: 7px 9px; gap: 0; }
+    .bh-admin-link span { display: none; }
+}
+
+.settings-admin-card { border: 1px solid rgba(251, 191, 36, 0.45); background: linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(2, 6, 23, 0.4)); }
+.settings-admin-card-body { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.settings-admin-card-body p { margin: 0; flex: 1 1 280px; font-size: 13px; color: var(--text-muted, #94a3b8); }
+.admin-entry-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: var(--brand-primary, #3b82f6);
+    color: var(--brand-text, #fff);
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.admin-entry-btn:hover { filter: brightness(1.08); }
+.admin-entry-btn:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
