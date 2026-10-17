@@ -57,7 +57,10 @@ const ok = (c, m) => { console.log((c ? 'OK   ' : 'FAIL ') + m); if (!c) process
     ok(!after, 'çıkış sonrası çerez silindi');
     await page.goto(s.baseUrl + '/', { waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
-    ok(/login|giris/.test(page.url()), 'çıkıştan sonra panel erişimi girişe atıyor');
+    // Anonim kök adres artık tanıtım sayfası (public/landing.html); giriş bağlantısı içermeli.
+    const rootUrl = new URL(page.url());
+    const hasLoginLink = await page.locator('a[href*="login.html"]').count() > 0;
+    ok((rootUrl.pathname === '/' && hasLoginLink) || /login|giris/.test(page.url()), 'çıkıştan sonra kök adres tanıtım sayfası (giriş bağlantılı) gösteriyor: ' + page.url());
 
     console.log('Konsol/sayfa hataları:', errs.length); errs.slice(0, 10).forEach(e => console.log('  -', e.slice(0, 200)));
     await browser.close(); await s.stop();

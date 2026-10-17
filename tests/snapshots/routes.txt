@@ -7,9 +7,11 @@ MW helmetMiddleware /^\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
 MW rawParser /^\/api\/billing\/webhook\/stripe\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
+GET "/" [serveLandingForAnonymous]
 MW serveStatic /^\/?(?=\/|$)/i
 MW <anonymous> /^\/?(?=\/|$)/i
 GET ["/giris/:brandSlug","/login/:brandSlug","/portal/:brandSlug"] [<anonymous>]
+GET ["/tanitim","/tanitim/"] [<anonymous>]
 GET ["/admin","/admin/"] [<anonymous>]
 GET ["/kurum","/kurum/"] [<anonymous>]
 MW <anonymous> /^\/api\/?(?=\/|$)/i

@@ -125,7 +125,7 @@ app.use((req, res, next) => {
 // under the original URLs so HTML and ?v= cache-busting keep working.
 const MINIFIED_ASSETS = new Map();
 if (process.env.NODE_ENV === 'production' || process.env.SERVE_MINIFIED === '1') {
-    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js', 'style.css', 'billing.css', 'media-watch.css', 'admin.js', 'kurum.js', 'admin.css']) {
+    for (const f of ['app_v3.js', 'api_v3.js', 'brand_experience.js', 'report_registry.js', 'inline-actions.js', 'login.js', 'signup.js', 'reset-password.js', 'style.css', 'billing.css', 'media-watch.css', 'admin.js', 'kurum.js', 'admin.css', 'landing.js', 'landing.css']) {
         const min = f.replace(/\.(js|css)$/, '.min.$1');
         if (fs.existsSync(path.join(__dirname, 'public', 'dist', min))) MINIFIED_ASSETS.set('/' + f, '/dist/' + min);
     }
@@ -139,6 +139,17 @@ if (process.env.NODE_ENV === 'production' || process.env.SERVE_MINIFIED === '1')
         });
     }
 }
+// Giriş yapmamış ziyaretçi kök adreste tanıtım sayfasını görür; oturum çerezi olan kullanıcı uygulamaya (index.html) devam eder.
+function serveLandingForAnonymous(req, res, next) {
+    const { parseCookies, COOKIE_NAME } = require('./src/lib/session');
+    const hasCookie = Boolean(parseCookies(req.headers.cookie)[COOKIE_NAME]);
+    const hasBearer = /^Bearer\s+\S/i.test(String(req.headers.authorization || ''));
+    if (hasCookie || hasBearer) return next();
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.sendFile(path.join(__dirname, 'public', 'landing.html'));
+}
+app.get('/', serveLandingForAnonymous);
+
 app.use(express.static(path.join(__dirname, 'public'), {
     etag: true,
     lastModified: true,
@@ -177,6 +188,7 @@ app.use((req, res, next) => {
 app.get(['/giris/:brandSlug', '/login/:brandSlug', '/portal/:brandSlug'], (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
+app.get(['/tanitim', '/tanitim/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
 app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get(['/kurum', '/kurum/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'kurum.html')));
 
