@@ -5699,14 +5699,14 @@ function buildMediaWatchAlertKey(brandId, alertType, scopeValue = '') {
 }
 
 function buildMediaWatchAlertTitle(alertType, scopeLabel, count, brandName = '') {
-    const label = scopeLabel || brandName || 'Genel gundem';
-    if (alertType === 'complaint-pressure') return `${label} için toplam şikayet baskisi ${count} kayda ulasti`;
+    const label = scopeLabel || brandName || 'Genel gündem';
+    if (alertType === 'complaint-pressure') return `${label} için toplam şikayet baskısı ${count} kayda ulaştı`;
     if (alertType === 'complaint-cluster') return `${label} ekseninde ${count} tekrar eden şikayet sinyali`;
     if (alertType === 'service-backlog') return `${label} ekseninde satış sonrası baskısı artıyor`;
-    if (alertType === 'forum-buzz') return `${label} için forum tartismasi hizlandi`;
-    if (alertType === 'launch-buzz') return `${label} için lansman ve sosyal gorunurluk firsati`;
+    if (alertType === 'forum-buzz') return `${label} için forum tartışması hızlandı`;
+    if (alertType === 'launch-buzz') return `${label} için lansman ve sosyal görünürlük fırsatı`;
     if (alertType === 'official-impact') return `${label} için resmi karar / destek etkisi`;
-    return `${label} için medya alarmi`;
+    return `${label} için medya alarmı`;
 }
 
 function buildMediaWatchAlertSummary(alertType, rows = [], scopeLabel = '', brandName = '') {
@@ -5723,24 +5723,24 @@ function buildMediaWatchAlertSummary(alertType, rows = [], scopeLabel = '', bran
         .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
 
     if (alertType === 'complaint-pressure') {
-        return `${brandName || 'Marka'} için son dönemde toplam ${rows.length} şikayet / ariza kaydı toplandi. Kanal karması: ${channelMix || 'veri yok'}. ${modelMix ? `Dağılan ürün / model izi: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
+        return `${brandName || 'Marka'} için son dönemde toplam ${rows.length} şikayet / arıza kaydı toplandı. Kanal karması: ${channelMix || 'veri yok'}. ${modelMix ? `Dağılan ürün / model izi: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
     }
     if (alertType === 'complaint-cluster') {
-        return `${brandName || 'Marka'} için ${scopeLabel || 'saha'} ekseninde ${rows.length} şikayet / ariza sinyali toplandi. Kanal karması: ${channelMix || 'veri yok'}. ${modelMix ? `Ürün / model yoğunluğu: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
+        return `${brandName || 'Marka'} için ${scopeLabel || 'saha'} ekseninde ${rows.length} şikayet / arıza sinyali toplandı. Kanal karması: ${channelMix || 'veri yok'}. ${modelMix ? `Ürün / model yoğunluğu: ${modelMix}. ` : ''}${lastSeen ? `Son sinyal: ${new Date(lastSeen).toLocaleString('tr-TR')}.` : ''}`;
     }
     if (alertType === 'service-backlog') {
-        return `${scopeLabel || 'Satış sonrasi'} tarafında servis, garanti veya yedek parca baskisi görülüyor. Kanal karması: ${channelMix || 'veri yok'}.`;
+        return `${scopeLabel || 'Satış sonrası'} tarafında servis, garanti veya yedek parça baskısı görülüyor. Kanal karması: ${channelMix || 'veri yok'}.`;
     }
     if (alertType === 'forum-buzz') {
-        return `${scopeLabel || 'Kullanıcı gundemi'} etrafinda forum / tartisma yoğunluğu var. ${modelMix ? `Konusulan modeller: ${modelMix}. ` : ''}Kanal karması: ${channelMix || 'veri yok'}.`;
+        return `${scopeLabel || 'Kullanıcı gündemi'} etrafında forum / tartışma yoğunluğu var. ${modelMix ? `Konuşulan modeller: ${modelMix}. ` : ''}Kanal karması: ${channelMix || 'veri yok'}.`;
     }
     if (alertType === 'launch-buzz') {
-        return `${scopeLabel || brandName || 'Marka'} için lansman, video veya sosyal web gorunurlugu toplandi. ${modelMix ? `One cikan ürünler: ${modelMix}. ` : ''}Kanal karması: ${channelMix || 'veri yok'}.`;
+        return `${scopeLabel || brandName || 'Marka'} için lansman, video veya sosyal web görünürlüğü toplandı. ${modelMix ? `Öne çıkan ürünler: ${modelMix}. ` : ''}Kanal karması: ${channelMix || 'veri yok'}.`;
     }
     if (alertType === 'official-impact') {
         return `${brandName || 'Marka'} ile ilgili resmi karar, destek veya mevzuat sinyali bulundu. Kaynaklar: ${channelMix || 'veri yok'}.`;
     }
-    return `${brandName || 'Marka'} için medya alarmi toplandi.`;
+    return `${brandName || 'Marka'} için medya alarmı toplandı.`;
 }
 
 function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
@@ -5800,8 +5800,8 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
         item.sentiment_label === 'negative'
     );
     if (complaintRows.length >= 4) {
-        pushAlert('complaint-pressure', `${brand.name || 'Marka'} genel baski`, complaintRows, {
-            actionOwner: 'Satış sonrasi',
+        pushAlert('complaint-pressure', `${brand.name || 'Marka'} genel baskı`, complaintRows, {
+            actionOwner: 'Satış sonrası',
             alertLevel: complaintRows.length >= 8 ? 'critical' : 'warning'
         });
     }
@@ -5817,14 +5817,14 @@ function buildMediaWatchAlertsFromItems(brand = {}, items = []) {
         const issueKey = normalizeSearchText(scopeLabel);
         const actionOwner = ['motor', 'sanziman', 'hidrolik', 'elektrik', 'teknik'].some(token => issueKey.includes(token))
             ? 'Ar-Ge'
-            : 'Satış sonrasi';
+            : 'Satış sonrası';
         pushAlert('complaint-cluster', scopeLabel, rows, { actionOwner });
     });
 
     const serviceRows = complaintRows.filter(item => (item.complaint_area || '').includes('satis') || (item.issue_type || '').includes('servis'));
     if (serviceRows.length >= 2) {
         pushAlert('service-backlog', 'Servis / garanti', serviceRows, {
-            actionOwner: 'Satış sonrasi',
+            actionOwner: 'Satış sonrası',
             alertLevel: serviceRows.length >= 4 ? 'critical' : 'warning'
         });
     }

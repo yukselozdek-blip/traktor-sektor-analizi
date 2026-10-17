@@ -105,6 +105,7 @@ Yeni bir sekmeye 3 harfli benzersiz bir prefix atayın (Önce mevcutları kontro
 ### 4.2 İçerik
 - Etiket bir KAVRAM olmalıdır (ör. "Marka Momentumu"), bir başlık değil.
 - Ana değer SAYI veya KISA İFADE olmalıdır (formatNumber, formatSignedPct, formatDashboardPercent ile).
+- **Yüzde biçimi Türkçe:** ondalık ayracı virgül, yüzde işareti başta: `%33,58`. Ön yüzde `formatSignedPct` ve `fmtPct` (`public/app_v3.js`); marka merkezi hikâye metinlerinde `fmtPctTR` (`src/lib/brand-storyline.js`) kullanılır. Ham `toFixed()` çıktısı UI'a yazılmaz.
 - Not değeri açıklama veya kıyaslamadır (ör. "Pazar +%4,2", "12 ay öncesine göre").
 - Tahmin / forecast değerleri her zaman kaynaklı belirtilmelidir.
 
@@ -138,6 +139,9 @@ Bir sayfa 4'ten fazla bağımsız anlatı katmanı içeriyorsa (ör. AI Öngör�
 - Tüm grafikler Chart.js ile çizilir; başka kütüphane eklenmez.
 - Canvas yüksekliği `.{prefix}-chart-canvas` sınıfı ile sabitlenir (genelde 280–360px).
 - Çoklu grafik aynı sayfada Chart instance'ı `_chartInstances` global haritasında tutulur ve sekme değişiminde `destroy` edilmelidir.
+- Sayı ve tarih biçimi için Chart.js yerelleştirmesi `locale: 'tr-TR'` olur.
+- Cari yılın aylık çizgileri son veri ayında durur: `maskMonthsAfter(values, lastIndex)` (`public/app_v3.js`) son veri ayından sonraki değerleri `null` yapar; gelecek aylar çizgiye girmez.
+- Marka merkezi hikâye kartlarının başlıkları verinin yönüne göre seçilir (`buildPerformanceCard` ve diğer kart üreticileri, `buildStorylineCards`, `src/lib/brand-storyline.js`): pazar daralırken pozitif farkla kalan marka "Daralan pazarda göreli olarak daha sağlam kaldı", pazar büyürken negatif farkla kalan marka "Büyüyen pazarda geride kaldı" gibi okunur. Başlık sabit metin olarak yazılmaz; yön ters olduğunda başlık da değişir.
 
 ### 6.2 Renk
 - Marka serisi her zaman **aktif markanın primary** rengi.

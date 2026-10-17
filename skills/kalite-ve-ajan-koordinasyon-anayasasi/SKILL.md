@@ -28,6 +28,7 @@ description: Traktör Sektör Analizi deposunda kalite kapıları (npm test, lin
 | Operasyonel | `restore-drill.yml` (aylık), `uptime.yml` (10 dk) | Zamanlanmış | Otomatik |
 
 - Yönetim konsolu tarayıcı denetimi: `e2e/admin-console.js` (`npm run e2e:admin`; `TEST_DATABASE_URL` ve isteğe bağlı `CHROMIUM_PATH`). Elle çalıştırılır; CI'da değildir.
+- **Yan etki uyarısı (`e2e:a11y`):** `e2e/a11y.js` mobil taramada depo kökündeki `mobil.png` dosyasının üzerine yazar (izlenen bir dosyadır). Çalıştırdıktan sonra commit öncesi `git checkout -- mobil.png` ile geri alınmalıdır; aksi halde ekran görüntüsü değişikliği commit'e karışır.
 - Çalıştırma: `npm test` = `node --test "tests/*.test.js"`. DB'li testler için `TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm test` (`startServer` her çağrıda ayrı geçici veritabanı açar ve sonunda siler). `TEST_DATABASE_URL`/`DATABASE_URL` yoksa DB'li testler **atlanır** (`# SKIP ... DB testleri atlandı`) ve çıktı yine yeşil görünür: **DB'siz yeşil = doğrulanmış değil.**
 - Yeni davranış = yeni test. Hata düzeltmesi = o hatayı yakalayan regresyon testi.
 
@@ -35,7 +36,7 @@ description: Traktör Sektör Analizi deposunda kalite kapıları (npm test, lin
 
 ## 2. MEVCUT TESTLERİN HARİTASI (`tests/`)
 
-42 test dosyası + `helpers.js`, `support/` (`dump-routes.js`, `golden-diff.js`, `route-table.js`), `snapshots/routes.txt`. "Test sayısı" `grep -cE "\b(test|it)\(" dosya` ile yaklaşık çıkarılmıştır (döngüyle üretilen testler az sayılır); kesin sayı için `npm test` özetine bakın. Güvenlik odaklı dosyaların ayrıntısı güvenlik anayasası §14'tedir.
+44 test dosyası + `helpers.js`, `support/` (`dump-routes.js`, `golden-diff.js`, `route-table.js`), `snapshots/routes.txt`. "Test sayısı" `grep -cE "\b(test|it)\(" dosya` ile yaklaşık çıkarılmıştır (döngüyle üretilen testler az sayılır); kesin sayı için `npm test` özetine bakın. Güvenlik odaklı dosyaların ayrıntısı güvenlik anayasası §14'tedir.
 
 | Dosya | ~Test | Ne yapar |
 |-------|------:|----------|
@@ -45,6 +46,7 @@ description: Traktör Sektör Analizi deposunda kalite kapıları (npm test, lin
 | `billing-change-plan.test.js` | 2 | `change-plan` checkout'a delege (429 döngüsü yok) |
 | `billing-plan-change.test.js` | 5 | Entitled aboneliğin plan değişiminde erişimi korunur |
 | `billing-security.test.js` | 7 | Ödemesiz aktivasyon yok, mock üretimde kapalı, bank-info XSS |
+| `brand-storyline.test.js` | 14 | Marka merkezi hikâye kartları (`buildStorylineCards`): kart 1-4'ün veri yönüne göre başlıkları, eksik karşılaştırmada geri düşüş; Türkçe sayı/yüzde biçimi (`fmtPctTR`, `fmtNumTR`, `fmtSignedNumTR`, `fmtPpTR`) |
 | `domain-redirect.test.js` | 2 | `REDIRECT_HOSTS` 301, `/health` hariç |
 | `dos-limits.test.js` | 5 | JSON gövde, AI girdi, giriş genel 401/zamanlama |
 | `email-verification.test.js` | 5 | Doğrulama zorunlu giriş, resend |
@@ -52,6 +54,7 @@ description: Traktör Sektör Analizi deposunda kalite kapıları (npm test, lin
 | `html-quality.test.js` | 4 | Statik HTML: lang, viewport, main, a11y.js, etiketli şifre alanı |
 | `input-validation.test.js` | 8 | `SAFE_EMAIL`, `validateProfileText`, `isPrivateHost`, kayıt girdileri |
 | `invite-codes.test.js` | 10 | Davet kodu akışı ve admin API |
+| `landing-route.test.js` | 5 | Oturumsuz `/` tanıtım sayfasını döner; oturum çerezi veya Bearer taşıyan `/` uygulamaya (`index.html`) gider; `/tanitim` her zaman tanıtım sayfası; `/health` JSON kalır (`serveLandingForAnonymous`) |
 | `mailer-brevo.test.js` | 1 | Brevo HTTPS API gönderimi |
 | `migrations.test.js` | 2 | Gerçek migration'lar boş DB'de uygulanır, ikinci çalıştırmada 0; hatalı migration geri alınır ve sonrakileri durdurur |
 | `organizations.test.js` | 11 | Kurumsal sözleşme: domain ile davetsiz kayıt, koltuk kotası (`ORG_SEATS_FULL`), sözleşme bitişi, `FEATURE_DISABLED`, `ORG_MANAGED`, alan adı doğrulaması, `org_admin` |

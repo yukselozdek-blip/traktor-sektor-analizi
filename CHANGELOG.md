@@ -11,6 +11,14 @@
 - Testler: `tests/organizations.test.js` (11), `tests/admin-console.test.js` (9). `npm test`: 257/257 yeşil, 0 başarısız.
 - Henüz yapılmadı: tarayıcı denetimi (`e2e/admin-console.js`) bu kayıtta çalıştırılmadı. Kod `claude/lucid-hawking-31ypnl` dalında commit'li; `master`'a birleşme bekliyor.
 
+### 17 Ekim 2026 (ikinci bölüm) — tanıtım sayfası, önizleme, grafik ve Türkçe düzeltmeleri
+- Herkese açık tanıtım sayfası: oturumsuz ziyaretçi `/` adresinde tanıtım sayfasını görür; `/tanitim` her zaman tanıtım sayfasını açar (`public/landing.html`, `landing.css`, `landing.js`; sunucuda `serveLandingForAnonymous`). Gerçek veriden alınmış ekran görüntüleri `public/img/landing/` altında; `public/favicon.svg` ve `public/robots.txt` eklendi. Testler: `tests/landing-route.test.js` (5).
+- Süper kullanıcı plan önizlemesi kayan kutudan Ayarlar kartına taşındı; önizleme aktifken üst başlıkta rozet (`superuser-preview-pill`) görünür.
+- Grafik, sayı, kontrast ve Türkçe kopya düzeltmeleri: Chart.js `locale: 'tr-TR'`; cari yılın aylık çizgileri son veri ayında biter (`maskMonthsAfter`); yüzdeler Türkçe biçimde (`%33,58`, `formatSignedPct`); görünür ASCII Türkçe kalıntıları düzeltildi (geo verisi, marka portalı seed metinleri, uyarı özetleri).
+- Yön farkındalıklı marka merkezi hikâye kartları: başlıklar verinin yönüne göre seçilir (`src/lib/brand-storyline.js`, `buildStorylineCards`, `fmtPctTR`); testler: `tests/brand-storyline.test.js` (14).
+- Marka portalı seed'inde (`database/brand-portal-seed.js`) görünen metinler düzeltildi. Seed her açılışta `initDB` içinde çalışır ve profil alanlarını `ON CONFLICT DO UPDATE` ile günceller; ancak öğe başlıkları ve kişi etiketleri/şehirleri benzersiz anahtar olduğu için ASCII bırakıldı (aksi halde mükerrer satır oluşur).
+- Doğrulama: `npm run lint:syntax` ve `npm run lint:undef` temiz; `TEST_DATABASE_URL` ile `npm test`: 274 test, 54 suite, 274 başarılı, 0 başarısız, 0 atlanan.
+
 ## Ekim 2026 sertleştirme dönemi
 
 Kaynak: `git log` (3-4 Ekim 2026) ve PR #24 açıklaması. Sıra: en yeni dönem üstte; dönem içinde eskiden yeniye. Commit kimlikleri yazılmamıştır; ilgili ayrıntı için skill belgelerine bakın (`skills/guvenlik-anayasasi`, `skills/kalite-ve-ajan-koordinasyon-anayasasi`, `skills/erisilebilirlik-tasarim-anayasasi`).
